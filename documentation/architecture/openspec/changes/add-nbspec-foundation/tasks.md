@@ -1,6 +1,8 @@
 ## 1. Foundation
 
-- [ ] 1.1 Add `nb-api` git dependency (pinned rev) and `clap` to Cargo.toml
+- [x] 1.1 Add `nb-api` dependency (crates.io 0.1.0 — published before
+      implementation began, superseding the planned pinned-rev git
+      dependency) and `clap` to Cargo.toml
 - [ ] 1.2 Implement CLI skeleton over library-boundary core functions:
       `nbspec change new|show|status`, `nbspec render`, `nbspec merge`,
       `nbspec validate`
