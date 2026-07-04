@@ -1,0 +1,9 @@
+# agentsmgr populates generated coder content in these directories.
+agent/
+command/
+prompt/
+skills/
+node_modules/
+bun.lock
+package.json
+package-lock.json

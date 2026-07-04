@@ -1,0 +1,5 @@
+# agentsmgr populates generated coder content in these directories.
+settings.local.json
+agents/
+commands/
+skills/
