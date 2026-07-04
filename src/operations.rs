@@ -18,12 +18,16 @@ use std::path::PathBuf;
 use nb_api::NbClient;
 use thiserror::Error;
 
+use crate::archives::{ArchiveEntry, ArchiveError, build_archive, gitattributes_covers_lfs};
 use crate::changes::{
     ChangeError, ChangeMetadata, META_NOTE, PROPOSALS_FOLDER, WORK_NOTE, change_folder,
     namespace_folders, namespace_notes, parse_meta_note, render_meta_note, validate_change_id,
 };
-use crate::configuration::{ConfigurationError, load_configuration};
+use crate::configuration::{Configuration, ConfigurationError, load_configuration};
+use crate::merging::{MergeError, merge_documents, target_status};
+use crate::rendering::{RenderError, render_documents, review_diff, write_tree};
 use crate::schemata::{SchemaError, WorkflowSchema, resolve_schema};
+use crate::worknotes::{WorkChecklist, WorkNoteError, parse_work_note};
 
 /// Tag applied to nbspec-managed control-plane notes.
 const META_TAG: &str = "nbspec";
@@ -36,6 +40,15 @@ pub enum OperationError {
 
     #[error("change already exists: {0}")]
     AlreadyExists(String),
+
+    #[error("change not found in notebook {notebook}: {change_id}")]
+    ChangeNotFound { notebook: String, change_id: String },
+
+    #[error("cannot read note file {path}: {source}")]
+    NoteRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error(
         "notebook not configured; pass --notebook or run within a Git repository \
@@ -54,6 +67,24 @@ pub enum OperationError {
 
     #[error(transparent)]
     Schema(#[from] SchemaError),
+
+    #[error(transparent)]
+    WorkNote(#[from] WorkNoteError),
+
+    #[error(transparent)]
+    Render(#[from] RenderError),
+
+    #[error(transparent)]
+    Merge(#[from] MergeError),
+
+    #[error(transparent)]
+    Archive(#[from] ArchiveError),
+
+    #[error("cannot write archive {path}: {source}")]
+    ArchiveWrite {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 /// Result alias for core operations.
@@ -184,35 +215,227 @@ pub async fn display(
     }
 
     output.push_str("\n## work\n\n");
-    match client.tasks(Some(&folder), None, false, notebook).await {
-        Ok(tasks) => output.push_str(&format!("{}\n", tasks.trim_end())),
-        Err(nb_api::NbError::CommandFailed(message)) => {
-            output.push_str(&format!("{}\n", message.trim_end()));
-        }
-        Err(error) => return Err(error.into()),
-    }
+    let change_directory = client
+        .notebook_path(notebook)
+        .await?
+        .join(change_folder(change_id));
+    output.push_str(&work_report(&change_directory));
 
-    output
-        .push_str("\n## drift\n\nnot yet tracked (merge drift detection arrives with task 3.5)\n");
+    output.push_str("\n## drift\n\n");
+    output.push_str(&drift_report(
+        &change_directory,
+        &folder,
+        &schema,
+        change_id,
+    )?);
+    Ok(output)
+}
+
+/// Reports the merge-target status of every durable document for
+/// `display`.
+fn drift_report(
+    change_directory: &std::path::Path,
+    folder: &str,
+    schema: &WorkflowSchema,
+    change_id: &str,
+) -> Result<String, OperationError> {
+    let root = project_root();
+    let documents = render_documents(change_directory, folder, schema)?;
+    let mut output = String::new();
+    for document in &documents {
+        let Some(target_path) = &document.target_path else {
+            continue;
+        };
+        let status = target_status(document, &root, change_id)?;
+        output.push_str(&format!("- {}: {status}\n", target_path.display()));
+    }
+    if output.is_empty() {
+        output.push_str("no durable documents with merge targets yet\n");
+    }
     Ok(output)
 }
 
 /// Renders a change to a scratch workspace for review.
 ///
+/// Reads artifact notes from the notebook directory and writes the
+/// tree the schema `generates` paths declare, replacing any previous
+/// render of the same change. With `diff`, the returned output is a
+/// unified diff against current merge targets — nothing else — so it
+/// pipes cleanly into review tooling; otherwise it reports the
+/// scratch destination. The repository working tree is never
+/// modified.
+///
 /// # Errors
 ///
-/// Returns [`OperationError::Unimplemented`] until tasks 3.1 and 3.2 land.
-pub async fn render(_client: &NbClient, _change_id: &str, _diff: bool) -> OperationResult {
-    Err(OperationError::Unimplemented("render"))
+/// Returns [`OperationError::ChangeNotFound`] when the change
+/// namespace is absent, and notebook, configuration, schema, or IO
+/// errors otherwise.
+pub async fn render(
+    client: &NbClient,
+    notebook: Option<&str>,
+    change_id: &str,
+    diff: bool,
+) -> OperationResult {
+    validate_change_id(change_id)?;
+    let notebook_name = resolve_notebook_name(notebook)?;
+    let notebook = Some(notebook_name.as_str());
+    let root = project_root();
+    let configuration = load_configuration(&root)?;
+    let folder = change_folder(change_id);
+    let change_directory = client.notebook_path(notebook).await?.join(&folder);
+    if !change_directory.is_dir() {
+        return Err(OperationError::ChangeNotFound {
+            notebook: notebook_name.clone(),
+            change_id: change_id.to_string(),
+        });
+    }
+    let metadata = read_metadata(&change_directory)?;
+    let schema = resolve_schema(Some(&metadata.schema), &configuration)?;
+    let documents = render_documents(&change_directory, &folder, &schema)?;
+    let destination = render_destination(&configuration, &notebook_name, change_id);
+    write_tree(&documents, &destination)?;
+    if diff {
+        return Ok(review_diff(&documents, &root)?);
+    }
+    Ok(format!(
+        "Rendered {count} documents of change {change_id} to {destination}.",
+        count = documents.len(),
+        destination = destination.display(),
+    ))
 }
 
 /// Transfers a change's durable artifacts into the repository.
 ///
+/// Renders the change from its notes and writes the target-bearing
+/// documents to their configured repository destinations with
+/// provenance headers. Planning collects every violation before any
+/// write, so a refused merge modifies nothing; `force` overrides
+/// target-state refusals (drift, unmanaged files, foreign ownership)
+/// but never unsupported delta operations or non-file occupants.
+/// This is the only nbspec operation that writes to the repository,
+/// and it creates no git commits. Archive writing happens after the
+/// documents transfer: an archive IO failure therefore leaves
+/// already-merged documents in place — an accepted trade-off, since
+/// rerunning merge is idempotent and completes the archive.
+///
 /// # Errors
 ///
-/// Returns [`OperationError::Unimplemented`] until tasks 3.4 through 3.6 land.
-pub async fn merge(_client: &NbClient, _change_id: &str, _force: bool) -> OperationResult {
-    Err(OperationError::Unimplemented("merge"))
+/// Returns [`OperationError::ChangeNotFound`] when the change
+/// namespace is absent, [`MergeError::Refused`] (wrapped) listing
+/// every violating target, and notebook, configuration, schema, or
+/// IO errors otherwise.
+pub async fn merge(
+    client: &NbClient,
+    notebook: Option<&str>,
+    change_id: &str,
+    force: bool,
+) -> OperationResult {
+    validate_change_id(change_id)?;
+    let notebook_name = resolve_notebook_name(notebook)?;
+    let notebook = Some(notebook_name.as_str());
+    let root = project_root();
+    let configuration = load_configuration(&root)?;
+    let folder = change_folder(change_id);
+    let change_directory = client.notebook_path(notebook).await?.join(&folder);
+    if !change_directory.is_dir() {
+        return Err(OperationError::ChangeNotFound {
+            notebook: notebook_name.clone(),
+            change_id: change_id.to_string(),
+        });
+    }
+    let metadata = read_metadata(&change_directory)?;
+    let schema = resolve_schema(Some(&metadata.schema), &configuration)?;
+    let documents = render_documents(&change_directory, &folder, &schema)?;
+    let report = merge_documents(&documents, &root, change_id, &notebook_name, force)?;
+
+    let mut output = String::new();
+    for path in &report.written {
+        output.push_str(&format!("wrote {}\n", path.display()));
+    }
+    for path in &report.unchanged {
+        output.push_str(&format!("unchanged {}\n", path.display()));
+    }
+    if report.written.is_empty() && report.unchanged.is_empty() {
+        output.push_str("no durable documents to merge\n");
+    }
+    if configuration.archives {
+        output.push_str(&write_change_archive(
+            &configuration,
+            &root,
+            &change_directory,
+            change_id,
+            &documents,
+        )?);
+    }
+    output.push_str(&format!(
+        "Merged change {change_id}: {written} written, {unchanged} unchanged.",
+        written = report.written.len(),
+        unchanged = report.unchanged.len(),
+    ));
+    Ok(output)
+}
+
+/// Writes the merge-time change archive: the rendered artifact tree
+/// plus `meta.md` and a `work.md` checklist snapshot, packed
+/// deterministically under a top-level `<change-id>/` prefix.
+/// Returns report lines, including a warning when no `.gitattributes`
+/// rule marks the archive path for Git LFS.
+fn write_change_archive(
+    configuration: &Configuration,
+    root: &std::path::Path,
+    change_directory: &std::path::Path,
+    change_id: &str,
+    documents: &[crate::rendering::RenderedDocument],
+) -> Result<String, OperationError> {
+    let prefix = PathBuf::from(change_id);
+    let mut entries: Vec<ArchiveEntry> = documents
+        .iter()
+        .map(|document| ArchiveEntry {
+            path: prefix.join(&document.tree_path),
+            content: document.content.clone(),
+        })
+        .collect();
+    let meta_path = change_directory.join(format!("{META_NOTE}.md"));
+    let meta_content =
+        std::fs::read_to_string(&meta_path).map_err(|source| OperationError::NoteRead {
+            path: meta_path,
+            source,
+        })?;
+    entries.push(ArchiveEntry {
+        path: prefix.join(format!("{META_NOTE}.md")),
+        content: meta_content,
+    });
+    if let Some(work_content) = read_work_note(change_directory) {
+        entries.push(ArchiveEntry {
+            path: prefix.join(format!("{WORK_NOTE}.md")),
+            content: work_content,
+        });
+    }
+    let bytes = build_archive(&entries)?;
+
+    let archive_path = configuration
+        .archive_directory
+        .join(format!("{change_id}.tar.zst"));
+    let absolute = root.join(&archive_path);
+    if let Some(parent) = absolute.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| OperationError::ArchiveWrite {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(&absolute, &bytes).map_err(|source| OperationError::ArchiveWrite {
+        path: absolute.clone(),
+        source,
+    })?;
+
+    let mut output = format!("archived {}\n", archive_path.display());
+    if !gitattributes_covers_lfs(root, &archive_path) {
+        output.push_str(&format!(
+            "warning: no .gitattributes rule marks {} for Git LFS\n",
+            archive_path.display()
+        ));
+    }
+    Ok(output)
 }
 
 /// Validates a change against the OpenSpec grammar.
@@ -241,6 +464,31 @@ fn resolve_notebook_name(notebook: Option<&str>) -> Result<String, OperationErro
 /// directory outside a Git repository.
 fn project_root() -> PathBuf {
     nb_api::git_rev_parse(&["--show-toplevel"]).unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Reads and parses a change's meta note from the notebook
+/// filesystem.
+fn read_metadata(change_directory: &std::path::Path) -> Result<ChangeMetadata, OperationError> {
+    let path = change_directory.join(format!("{META_NOTE}.md"));
+    let content = std::fs::read_to_string(&path)
+        .map_err(|source| OperationError::NoteRead { path, source })?;
+    Ok(parse_meta_note(&content)?)
+}
+
+/// Resolves the scratch destination for a change's rendered tree:
+/// the configured scratch directory, or the platform cache directory,
+/// namespaced by notebook and change so renders never collide.
+fn render_destination(
+    configuration: &Configuration,
+    notebook_name: &str,
+    change_id: &str,
+) -> PathBuf {
+    let base = configuration.scratch_directory.clone().unwrap_or_else(|| {
+        directories::ProjectDirs::from("", "", "nbspec")
+            .map(|dirs| dirs.cache_dir().join("renders"))
+            .unwrap_or_else(|| PathBuf::from(".auxiliary/temporary/nbspec/renders"))
+    });
+    base.join(notebook_name).join(change_id)
 }
 
 async fn load_metadata(
@@ -303,6 +551,58 @@ async fn folder_listing(client: &NbClient, folder: &str, notebook: Option<&str>)
         }
         Err(_) => "(empty)".to_string(),
     }
+}
+
+/// Reports the `work` checklist section for `display`: progress
+/// counts and the item list, or a loud per-section diagnostic when
+/// the note is missing or malformed — never misreported numbers.
+fn work_report(change_directory: &std::path::Path) -> String {
+    let Some(content) = read_work_note(change_directory) else {
+        return "(no work todo note found)\n".to_string();
+    };
+    match parse_work_note(&content) {
+        Ok(checklist) => render_work_checklist(&checklist),
+        Err(error) => format!("{error}\n"),
+    }
+}
+
+/// Reads the change's work todo note from the notebook filesystem:
+/// the `*.todo.md` file whose checkbox title is [`WORK_NOTE`].
+/// Parsing the file directly avoids scraping `nb tasks` output,
+/// which embeds terminal control sequences even with `--no-color`.
+fn read_work_note(change_directory: &std::path::Path) -> Option<String> {
+    let entries = std::fs::read_dir(change_directory).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().ends_with(".todo.md") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let open_title = format!("# [ ] {WORK_NOTE}");
+        let done_title = format!("# [x] {WORK_NOTE}");
+        if content
+            .lines()
+            .any(|line| line == open_title || line == done_title)
+        {
+            return Some(content);
+        }
+    }
+    None
+}
+
+fn render_work_checklist(checklist: &WorkChecklist) -> String {
+    let (complete, total) = checklist.progress();
+    if total == 0 {
+        return "no task items yet\n".to_string();
+    }
+    let mut output = format!("{complete}/{total} items complete\n");
+    for item in &checklist.items {
+        let marker = if item.complete { "x" } else { " " };
+        output.push_str(&format!("- [{marker}] {}\n", item.text));
+    }
+    output
 }
 
 /// Reports whether an artifact has authored content: notes must have

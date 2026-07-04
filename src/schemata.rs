@@ -24,15 +24,15 @@ use thiserror::Error;
 use crate::configuration::Configuration;
 
 /// Name of the embedded default schema.
-pub const DEFAULT_SCHEMA_NAME: &str = "nbspec-default";
+pub const SCHEMA_NAME_DEFAULT: &str = "nbspec-default";
 
 /// Schema file name within a named schema's directory.
 pub const SCHEMA_FILE: &str = "schema.toml";
 
-const DEFAULT_SCHEMA_TOML: &str = include_str!("schemata/default.toml");
+const SCHEMA_TOML_DEFAULT: &str = include_str!("schemata/default.toml");
 
-static DEFAULT_SCHEMA: LazyLock<WorkflowSchema> =
-    LazyLock::new(|| parse_schema(DEFAULT_SCHEMA_TOML).expect("embedded default schema is valid"));
+static SCHEMA_DEFAULT: LazyLock<WorkflowSchema> =
+    LazyLock::new(|| parse_schema(SCHEMA_TOML_DEFAULT).expect("embedded default schema is valid"));
 
 /// Errors from schema parsing and resolution.
 #[derive(Debug, Error)]
@@ -141,7 +141,7 @@ pub fn parse_schema(content: &str) -> Result<WorkflowSchema, SchemaError> {
 
 /// Returns the embedded nbspec default schema.
 pub fn default_schema() -> WorkflowSchema {
-    DEFAULT_SCHEMA.clone()
+    SCHEMA_DEFAULT.clone()
 }
 
 /// Resolves the workflow schema for a change.
@@ -161,8 +161,8 @@ pub fn resolve_schema(
 ) -> Result<WorkflowSchema, SchemaError> {
     let name = explicit
         .or(configuration.schema.as_deref())
-        .unwrap_or(DEFAULT_SCHEMA_NAME);
-    if name == DEFAULT_SCHEMA_NAME {
+        .unwrap_or(SCHEMA_NAME_DEFAULT);
+    if name == SCHEMA_NAME_DEFAULT {
         return Ok(default_schema());
     }
     let path = configuration
@@ -187,6 +187,10 @@ fn validate_schema(schema: &WorkflowSchema) -> Result<(), SchemaError> {
         }
     }
     for artifact in &schema.artifacts {
+        validate_artifact_path(&artifact.id, "generates", &artifact.generates)?;
+        if let Some(target) = &artifact.target {
+            validate_artifact_path(&artifact.id, "target", target)?;
+        }
         for dependency in &artifact.requires {
             if !indices.contains_key(dependency.as_str()) {
                 return Err(SchemaError::Invalid(format!(
@@ -197,6 +201,21 @@ fn validate_schema(schema: &WorkflowSchema) -> Result<(), SchemaError> {
         }
     }
     detect_cycles(schema, &indices)
+}
+
+/// Validates a schema-declared path. `generates` paths anchor the
+/// rendered scratch tree and `target` paths anchor repository
+/// writes, so both must stay inside their roots. The shared
+/// confinement rules live in [`crate::configuration`], beside the
+/// archive-directory check that guards the other configured write
+/// path.
+fn validate_artifact_path(artifact_id: &str, field: &str, path: &str) -> Result<(), SchemaError> {
+    match crate::configuration::confinement_violation(path) {
+        Some(detail) => Err(SchemaError::Invalid(format!(
+            "artifact {artifact_id} {field} path {path:?} {detail}"
+        ))),
+        None => Ok(()),
+    }
 }
 
 fn detect_cycles(

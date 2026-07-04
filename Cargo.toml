@@ -44,6 +44,16 @@ directories = "6.0"
 # Timestamps for the meta note control plane
 jiff = { version = "0.2", features = ["serde"] }
 
+# Provenance content hashes
+sha2 = "0.10"
+
+# Unified diffs for review output
+similar = "2.6"
+
+# Merge-time change archives
+tar = "0.4"
+zstd = "0.13"
+
 # Error handling
 anyhow = "1.0"
 thiserror = "2.0"

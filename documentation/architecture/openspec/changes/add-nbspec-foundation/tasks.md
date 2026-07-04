@@ -30,17 +30,17 @@
 
 ## 3. Rendering and Merge
 
-- [ ] 3.1 Implement deterministic scratch-workspace rendering to schema
+- [x] 3.1 Implement deterministic scratch-workspace rendering to schema
       `generates` paths (repository never touched)
-- [ ] 3.2 Implement review output: rendered tree plus unified diff suitable
+- [x] 3.2 Implement review output: rendered tree plus unified diff suitable
       for external review tooling (e.g., difit)
-- [ ] 3.3 Implement `work` todo note grammar and parser for status reporting
-- [ ] 3.4 Implement `nbspec merge`: transfer durable artifacts (new
+- [x] 3.3 Implement `work` todo note grammar and parser for status reporting
+- [x] 3.4 Implement `nbspec merge`: transfer durable artifacts (new
       documents) to configured targets with provenance headers and content
       hashes; error on MODIFIED deltas (deferred capability)
-- [ ] 3.5 Implement drift detection on merge targets with `--force`
+- [x] 3.5 Implement drift detection on merge targets with `--force`
       override; surface drift in `nbspec display`
-- [ ] 3.6 Implement merge-time change archives: deterministic tar + zstd of
+- [x] 3.6 Implement merge-time change archives: deterministic tar + zstd of
       rendered tree, meta, and `work` snapshot to the configured archive
       directory; configuration toggle; warn when `.gitattributes` lacks an
       LFS rule for the archive path

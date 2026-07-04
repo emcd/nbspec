@@ -18,7 +18,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 /// Default repository-relative directory holding nbspec configuration.
-pub const DEFAULT_PROJECT_CONFIGURATION_DIR: &str = ".auxiliary/configuration/nbspec";
+pub const PROJECT_CONFIGURATION_DIR_DEFAULT: &str = ".auxiliary/configuration/nbspec";
 
 /// Environment variable relocating the per-project configuration
 /// directory.
@@ -27,14 +27,58 @@ pub const CONFIGURATION_DIR_ENV: &str = "NBSPEC_CONFIG_DIR";
 /// Settings file name at every layer.
 pub const SETTINGS_FILE: &str = "general.toml";
 
+/// Default repository-relative directory receiving change archives.
+pub const ARCHIVE_DIR_DEFAULT: &str = "documentation/archives";
+
 /// Errors from configuration loading.
 #[derive(Debug, Error)]
 pub enum ConfigurationError {
     #[error("configuration parse failure: {0}")]
     Parse(#[from] toml::de::Error),
 
+    #[error("configuration invalid: {0}")]
+    Invalid(String),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// Reports why a path would escape its confining root, or `None`
+/// for confined relative paths. Shared by configuration and schema
+/// validation for every path that anchors a repository or scratch
+/// write: rejects empty, absolute, parent-directory,
+/// current-directory, backslash, and drive-prefixed values.
+pub(crate) fn confinement_violation(path: &str) -> Option<&'static str> {
+    if path.is_empty() {
+        return Some("is empty");
+    }
+    if path.contains('\\') {
+        return Some("contains a backslash");
+    }
+    let parsed = Path::new(path);
+    if parsed.is_absolute() || path.starts_with('/') {
+        return Some("is absolute; paths must stay inside their root");
+    }
+    for component in parsed.components() {
+        match component {
+            std::path::Component::Normal(_) => {}
+            std::path::Component::ParentDir => {
+                return Some("contains a parent-directory component");
+            }
+            std::path::Component::CurDir => {
+                return Some("contains a current-directory component");
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return Some("is absolute; paths must stay inside their root");
+            }
+        }
+    }
+    // Reject Windows drive prefixes even when parsing on Unix, where
+    // "c:" is a normal component.
+    if path.split('/').any(|segment| segment.contains(':')) {
+        return Some("contains a drive or scheme prefix");
+    }
+    None
 }
 
 /// Raw contents of one `general.toml` settings file.
@@ -50,6 +94,21 @@ pub struct SettingsDocument {
     /// root.
     #[serde(default)]
     pub project_configuration_directory: Option<PathBuf>,
+
+    /// Scratch directory for rendered change trees. Relative paths
+    /// resolve against the project root; unset selects the platform
+    /// cache directory.
+    #[serde(default)]
+    pub scratch_directory: Option<PathBuf>,
+
+    /// Whether merge writes a change archive (default: enabled).
+    #[serde(default)]
+    pub archives: Option<bool>,
+
+    /// Directory receiving merge-time change archives. Relative
+    /// paths are repository-relative.
+    #[serde(default)]
+    pub archive_directory: Option<PathBuf>,
 }
 
 /// Resolved configuration after layering.
@@ -62,6 +121,17 @@ pub struct Configuration {
     /// Project configuration directory holding the settings file and
     /// the `schemata/` subdirectory.
     pub project_directory: PathBuf,
+
+    /// Scratch directory for rendered change trees. `None` selects
+    /// the platform cache directory.
+    pub scratch_directory: Option<PathBuf>,
+
+    /// Whether merge writes a change archive.
+    pub archives: bool,
+
+    /// Directory receiving merge-time change archives. Relative
+    /// paths are repository-relative.
+    pub archive_directory: PathBuf,
 }
 
 /// Loads layered configuration for a project: the user-global settings
@@ -87,8 +157,10 @@ pub fn load_configuration(project_root: &Path) -> Result<Configuration, Configur
 ///
 /// # Errors
 ///
-/// Returns [`ConfigurationError::Parse`] for malformed TOML and
-/// [`ConfigurationError::Io`] for unreadable files.
+/// Returns [`ConfigurationError::Parse`] for malformed TOML,
+/// [`ConfigurationError::Invalid`] for an `archive_directory` that
+/// would escape the repository, and [`ConfigurationError::Io`] for
+/// unreadable files.
 pub fn resolve_configuration(
     project_root: &Path,
     global: SettingsDocument,
@@ -96,16 +168,43 @@ pub fn resolve_configuration(
 ) -> Result<Configuration, ConfigurationError> {
     let directory = environment_directory
         .or_else(|| global.project_configuration_directory.clone())
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_PROJECT_CONFIGURATION_DIR));
+        .unwrap_or_else(|| PathBuf::from(PROJECT_CONFIGURATION_DIR_DEFAULT));
     let directory = if directory.is_absolute() {
         directory
     } else {
         project_root.join(directory)
     };
     let project = load_settings_document(&directory.join(SETTINGS_FILE))?;
+    let scratch_directory = project
+        .scratch_directory
+        .or(global.scratch_directory)
+        .map(|scratch| {
+            if scratch.is_absolute() {
+                scratch
+            } else {
+                project_root.join(scratch)
+            }
+        });
+    let archive_directory = project
+        .archive_directory
+        .or(global.archive_directory)
+        .unwrap_or_else(|| PathBuf::from(ARCHIVE_DIR_DEFAULT));
+    // Archives are documented as repository-resident (and LFS
+    // candidates), so the directory must stay inside the repository —
+    // the same confinement schema paths receive. The scratch
+    // directory is exempt by design: its default already lives
+    // outside the repository, in the platform cache.
+    if let Some(detail) = confinement_violation(&archive_directory.to_string_lossy()) {
+        return Err(ConfigurationError::Invalid(format!(
+            "archive_directory {archive_directory:?} {detail}"
+        )));
+    }
     Ok(Configuration {
         schema: project.schema.or(global.schema),
         project_directory: directory,
+        scratch_directory,
+        archives: project.archives.or(global.archives).unwrap_or(true),
+        archive_directory,
     })
 }
 

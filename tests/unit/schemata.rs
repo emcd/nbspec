@@ -2,11 +2,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use nbspec::configuration::{
-    Configuration, DEFAULT_PROJECT_CONFIGURATION_DIR, SETTINGS_FILE, SettingsDocument,
+    Configuration, PROJECT_CONFIGURATION_DIR_DEFAULT, SETTINGS_FILE, SettingsDocument,
     resolve_configuration,
 };
 use nbspec::schemata::{
-    DEFAULT_SCHEMA_NAME, SCHEMA_FILE, SchemaError, default_schema, parse_schema, resolve_schema,
+    SCHEMA_FILE, SCHEMA_NAME_DEFAULT, SchemaError, default_schema, parse_schema, resolve_schema,
 };
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -26,14 +26,17 @@ fn unique_temp_root(label: &str) -> PathBuf {
 fn default_configuration(root: &std::path::Path) -> Configuration {
     Configuration {
         schema: None,
-        project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
+        project_directory: root.join(PROJECT_CONFIGURATION_DIR_DEFAULT),
+        scratch_directory: None,
+        archives: true,
+        archive_directory: PathBuf::from("documentation/archives"),
     }
 }
 
 #[test]
 fn default_schema_declares_expected_artifacts() {
     let schema = default_schema();
-    assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
+    assert_eq!(schema.name, SCHEMA_NAME_DEFAULT);
     let ids: Vec<&str> = schema
         .artifacts
         .iter()
@@ -138,6 +141,70 @@ requires = [\"phantom\"]
     ));
 }
 
+fn single_artifact_schema(generates: &str, target: Option<&str>) -> String {
+    let target_line = target
+        .map(|value| format!("target = \"{value}\"\n"))
+        .unwrap_or_default();
+    format!(
+        "\
+name = \"paths\"
+version = 1
+
+[[artifacts]]
+id = \"artifact\"
+generates = \"{generates}\"
+{target_line}"
+    )
+}
+
+#[test]
+fn absolute_generates_path_is_invalid() {
+    let error = parse_schema(&single_artifact_schema("/tmp/escape.md", None)).unwrap_err();
+    assert!(matches!(error, SchemaError::Invalid(_)));
+    assert!(error.to_string().contains("absolute"));
+}
+
+#[test]
+fn parent_directory_target_is_invalid() {
+    let error =
+        parse_schema(&single_artifact_schema("artifact.md", Some("../outside"))).unwrap_err();
+    assert!(matches!(error, SchemaError::Invalid(_)));
+    assert!(error.to_string().contains("parent-directory"));
+}
+
+#[test]
+fn absolute_target_is_invalid() {
+    let error =
+        parse_schema(&single_artifact_schema("artifact.md", Some("/etc/nbspec"))).unwrap_err();
+    assert!(matches!(error, SchemaError::Invalid(_)));
+}
+
+#[test]
+fn nested_parent_directory_generates_is_invalid() {
+    let error = parse_schema(&single_artifact_schema("docs/../../escape.md", None)).unwrap_err();
+    assert!(matches!(error, SchemaError::Invalid(_)));
+}
+
+#[test]
+fn backslash_and_drive_prefix_paths_are_invalid() {
+    // TOML escaping: "docs\\\\escape.md" in the document parses to a
+    // value containing one literal backslash.
+    for path in ["docs\\\\escape.md", "c:/escape.md"] {
+        let error = parse_schema(&single_artifact_schema(path, None)).unwrap_err();
+        assert!(matches!(error, SchemaError::Invalid(_)), "path: {path}");
+    }
+}
+
+#[test]
+fn glob_generates_paths_remain_valid() {
+    let schema = parse_schema(&single_artifact_schema(
+        "specifications/**/*.md",
+        Some("documentation/specifications"),
+    ))
+    .unwrap();
+    assert_eq!(schema.artifacts.len(), 1);
+}
+
 #[test]
 fn dependency_cycle_is_invalid() {
     let content = "\
@@ -164,7 +231,7 @@ fn resolution_falls_back_to_embedded_default() {
     let root = unique_temp_root("schemata-default");
     fs::create_dir_all(&root).unwrap();
     let schema = resolve_schema(None, &default_configuration(&root)).unwrap();
-    assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
+    assert_eq!(schema.name, SCHEMA_NAME_DEFAULT);
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -174,10 +241,13 @@ fn resolution_prefers_explicit_name_over_configuration() {
     fs::create_dir_all(&root).unwrap();
     let configuration = Configuration {
         schema: Some("missing-config-schema".to_string()),
-        project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
+        project_directory: root.join(PROJECT_CONFIGURATION_DIR_DEFAULT),
+        scratch_directory: None,
+        archives: true,
+        archive_directory: PathBuf::from("documentation/archives"),
     };
-    let schema = resolve_schema(Some(DEFAULT_SCHEMA_NAME), &configuration).unwrap();
-    assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
+    let schema = resolve_schema(Some(SCHEMA_NAME_DEFAULT), &configuration).unwrap();
+    assert_eq!(schema.name, SCHEMA_NAME_DEFAULT);
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -222,7 +292,7 @@ fn configuration_defaults_when_no_files_present() {
     assert_eq!(configuration.schema, None);
     assert_eq!(
         configuration.project_directory,
-        root.join(DEFAULT_PROJECT_CONFIGURATION_DIR)
+        root.join(PROJECT_CONFIGURATION_DIR_DEFAULT)
     );
     fs::remove_dir_all(&root).unwrap();
 }
@@ -230,7 +300,7 @@ fn configuration_defaults_when_no_files_present() {
 #[test]
 fn project_settings_override_global_settings() {
     let root = unique_temp_root("configuration-layering");
-    let project_dir = root.join(DEFAULT_PROJECT_CONFIGURATION_DIR);
+    let project_dir = root.join(PROJECT_CONFIGURATION_DIR_DEFAULT);
     fs::create_dir_all(&project_dir).unwrap();
     fs::write(
         project_dir.join(SETTINGS_FILE),
@@ -239,7 +309,7 @@ fn project_settings_override_global_settings() {
     .unwrap();
     let global = SettingsDocument {
         schema: Some("from-global".to_string()),
-        project_configuration_directory: None,
+        ..SettingsDocument::default()
     };
     let configuration = resolve_configuration(&root, global, None).unwrap();
     assert_eq!(configuration.schema.as_deref(), Some("from-project"));
@@ -252,10 +322,78 @@ fn global_settings_apply_when_project_is_silent() {
     fs::create_dir_all(&root).unwrap();
     let global = SettingsDocument {
         schema: Some("from-global".to_string()),
-        project_configuration_directory: None,
+        ..SettingsDocument::default()
     };
     let configuration = resolve_configuration(&root, global, None).unwrap();
     assert_eq!(configuration.schema.as_deref(), Some("from-global"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn archives_default_enabled_at_default_directory() {
+    let root = unique_temp_root("configuration-archives-default");
+    fs::create_dir_all(&root).unwrap();
+    let configuration = resolve_configuration(&root, SettingsDocument::default(), None).unwrap();
+    assert!(configuration.archives);
+    assert_eq!(
+        configuration.archive_directory,
+        PathBuf::from("documentation/archives")
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn project_settings_disable_and_relocate_archives() {
+    let root = unique_temp_root("configuration-archives-project");
+    let project_dir = root.join(PROJECT_CONFIGURATION_DIR_DEFAULT);
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::write(
+        project_dir.join(SETTINGS_FILE),
+        "archives = false\narchive_directory = \"records/archives\"\n",
+    )
+    .unwrap();
+    let configuration = resolve_configuration(&root, SettingsDocument::default(), None).unwrap();
+    assert!(!configuration.archives);
+    assert_eq!(
+        configuration.archive_directory,
+        PathBuf::from("records/archives")
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn escaping_archive_directory_is_invalid() {
+    use nbspec::configuration::ConfigurationError;
+    let root = unique_temp_root("configuration-archive-escape");
+    let project_dir = root.join(PROJECT_CONFIGURATION_DIR_DEFAULT);
+    fs::create_dir_all(&project_dir).unwrap();
+    for directory in ["/tmp/nbspec-escape", "../../outside"] {
+        fs::write(
+            project_dir.join(SETTINGS_FILE),
+            format!("archive_directory = \"{directory}\"\n"),
+        )
+        .unwrap();
+        let error = resolve_configuration(&root, SettingsDocument::default(), None).unwrap_err();
+        assert!(
+            matches!(error, ConfigurationError::Invalid(_)),
+            "directory: {directory}"
+        );
+        assert!(error.to_string().contains("archive_directory"));
+    }
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn escaping_global_archive_directory_is_invalid() {
+    use nbspec::configuration::ConfigurationError;
+    let root = unique_temp_root("configuration-archive-escape-global");
+    fs::create_dir_all(&root).unwrap();
+    let global = SettingsDocument {
+        archive_directory: Some(PathBuf::from("/var/archives")),
+        ..SettingsDocument::default()
+    };
+    let error = resolve_configuration(&root, global, None).unwrap_err();
+    assert!(matches!(error, ConfigurationError::Invalid(_)));
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -289,8 +427,8 @@ fn global_setting_relocates_project_directory_below_environment() {
     fs::write(from_global.join(SETTINGS_FILE), "schema = \"global-dir\"\n").unwrap();
     fs::write(from_env.join(SETTINGS_FILE), "schema = \"env-dir\"\n").unwrap();
     let global = SettingsDocument {
-        schema: None,
         project_configuration_directory: Some(PathBuf::from("global-choice")),
+        ..SettingsDocument::default()
     };
 
     let without_env = resolve_configuration(&root, global.clone(), None).unwrap();
