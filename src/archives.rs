@@ -56,71 +56,27 @@ pub fn build_archive(entries: &[ArchiveEntry]) -> Result<Vec<u8>, ArchiveError> 
     Ok(zstd::encode_all(tar_bytes.as_slice(), COMPRESSION_LEVEL)?)
 }
 
-/// Reports whether the project `.gitattributes` marks `path` for Git
-/// LFS. Understands the pattern subset LFS rules use in practice —
-/// literal paths, `*`, `?`, and `**` (with basename matching for
-/// slash-free patterns) — not full gitattributes semantics.
+/// Reports whether Git attributes mark `path` for Git LFS, by asking
+/// `git check-attr filter` in the project root. Delegating to git
+/// gives full gitattributes semantics — nested `.gitattributes`
+/// files along the path, precedence, macros, `core.attributesFile` —
+/// without hand-rolled pattern matching or a git library dependency.
+/// Outside a git repository (or without git available) nothing is
+/// LFS-tracked, so the answer is `false`.
 pub fn gitattributes_covers_lfs(project_root: &Path, path: &Path) -> bool {
-    let Ok(content) = std::fs::read_to_string(project_root.join(".gitattributes")) else {
+    let Ok(output) = std::process::Command::new("git")
+        .args(["check-attr", "filter", "--"])
+        .arg(path)
+        .current_dir(project_root)
+        .output()
+    else {
         return false;
     };
-    let path = path.to_string_lossy();
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let Some((pattern, attributes)) = line.split_once(char::is_whitespace) else {
-            continue;
-        };
-        if !attributes
-            .split_whitespace()
-            .any(|attribute| attribute == "filter=lfs")
-        {
-            continue;
-        }
-        if pattern_matches(pattern, &path) {
-            return true;
-        }
+    if !output.status.success() {
+        return false;
     }
-    false
-}
-
-/// Matches a gitattributes-style pattern against a repository-
-/// relative path: slash-free patterns match the basename, patterns
-/// with slashes match the whole path.
-fn pattern_matches(pattern: &str, path: &str) -> bool {
-    if pattern.contains('/') {
-        let pattern = pattern.strip_prefix('/').unwrap_or(pattern);
-        glob_match(pattern.as_bytes(), path.as_bytes())
-    } else {
-        let basename = path.rsplit('/').next().unwrap_or(path);
-        glob_match(pattern.as_bytes(), basename.as_bytes())
-    }
-}
-
-/// Glob matcher: `**` crosses path segments, `*` and `?` do not.
-fn glob_match(pattern: &[u8], text: &[u8]) -> bool {
-    if let Some(rest) = pattern.strip_prefix(b"**") {
-        // `**/` may also consume nothing (match zero directories).
-        let rest = rest.strip_prefix(b"/").unwrap_or(rest);
-        return (0..=text.len()).any(|split| {
-            (split == 0 || text[split - 1] == b'/' || split == text.len())
-                && glob_match(rest, &text[split..])
-        });
-    }
-    match (pattern.first(), text.first()) {
-        (None, None) => true,
-        (None, Some(_)) => false,
-        (Some(b'*'), _) => (0..=text.len()).any(|length| {
-            !text[..length].contains(&b'/') && glob_match(&pattern[1..], &text[length..])
-        }),
-        (Some(b'?'), Some(&character)) => {
-            character != b'/' && glob_match(&pattern[1..], &text[1..])
-        }
-        (Some(&expected), Some(&character)) => {
-            expected == character && glob_match(&pattern[1..], &text[1..])
-        }
-        (Some(_), None) => false,
-    }
+    // Output format: `<path>: filter: <value>`.
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.ends_with(": filter: lfs"))
 }

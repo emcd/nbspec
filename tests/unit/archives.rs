@@ -85,66 +85,68 @@ fn archives_round_trip_through_tar_and_zstd() {
     assert_eq!(alpha.1, "# alpha\n");
 }
 
-fn project_with_gitattributes(label: &str, rules: &str) -> PathBuf {
+/// Initializes a git repository for `git check-attr`-backed tests.
+fn git_project(label: &str) -> PathBuf {
     let root = unique_temp_root(label);
     fs::create_dir_all(&root).unwrap();
-    fs::write(root.join(".gitattributes"), rules).unwrap();
+    let status = std::process::Command::new("git")
+        .args(["init", "--quiet"])
+        .current_dir(&root)
+        .status()
+        .unwrap();
+    assert!(status.success());
     root
 }
 
 const ARCHIVE: &str = "documentation/archives/add-demo.tar.zst";
 
 #[test]
-fn basename_pattern_covers_archive() {
-    let root = project_with_gitattributes(
-        "gitattributes-basename",
+fn root_gitattributes_rule_covers_archive() {
+    let root = git_project("gitattributes-root");
+    fs::write(
+        root.join(".gitattributes"),
         "*.tar.zst filter=lfs diff=lfs merge=lfs -text\n",
-    );
+    )
+    .unwrap();
     assert!(gitattributes_covers_lfs(&root, Path::new(ARCHIVE)));
     fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
-fn directory_glob_pattern_covers_archive() {
-    let root = project_with_gitattributes(
-        "gitattributes-directory",
-        "documentation/archives/** filter=lfs diff=lfs merge=lfs -text\n",
-    );
+fn nested_gitattributes_rule_covers_archive() {
+    let root = git_project("gitattributes-nested");
+    let archives_dir = root.join("documentation/archives");
+    fs::create_dir_all(&archives_dir).unwrap();
+    fs::write(
+        archives_dir.join(".gitattributes"),
+        "*.tar.zst filter=lfs diff=lfs merge=lfs -text\n",
+    )
+    .unwrap();
     assert!(gitattributes_covers_lfs(&root, Path::new(ARCHIVE)));
-    fs::remove_dir_all(&root).unwrap();
-}
-
-#[test]
-fn single_star_does_not_cross_directories() {
-    let root = project_with_gitattributes(
-        "gitattributes-single-star",
-        "documentation/*.tar.zst filter=lfs\n",
-    );
-    assert!(!gitattributes_covers_lfs(&root, Path::new(ARCHIVE)));
     fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
 fn rule_without_lfs_filter_does_not_cover() {
-    let root = project_with_gitattributes("gitattributes-no-lfs", "*.tar.zst -text\n");
+    let root = git_project("gitattributes-no-lfs");
+    fs::write(root.join(".gitattributes"), "*.tar.zst -text\n").unwrap();
     assert!(!gitattributes_covers_lfs(&root, Path::new(ARCHIVE)));
     fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
 fn missing_gitattributes_does_not_cover() {
-    let root = unique_temp_root("gitattributes-missing");
-    fs::create_dir_all(&root).unwrap();
+    let root = git_project("gitattributes-missing");
     assert!(!gitattributes_covers_lfs(&root, Path::new(ARCHIVE)));
     fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
-fn comments_and_blank_lines_are_ignored() {
-    let root = project_with_gitattributes(
-        "gitattributes-comments",
-        "# archives belong in LFS\n\n*.tar.zst filter=lfs\n",
-    );
-    assert!(gitattributes_covers_lfs(&root, Path::new(ARCHIVE)));
+fn rule_scoped_to_other_directory_does_not_cover() {
+    let root = git_project("gitattributes-scoped");
+    let other_dir = root.join("documentation/datasets");
+    fs::create_dir_all(&other_dir).unwrap();
+    fs::write(other_dir.join(".gitattributes"), "*.tar.zst filter=lfs\n").unwrap();
+    assert!(!gitattributes_covers_lfs(&root, Path::new(ARCHIVE)));
     fs::remove_dir_all(&root).unwrap();
 }
