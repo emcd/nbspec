@@ -23,6 +23,7 @@ use crate::changes::{
     namespace_folders, namespace_notes, parse_meta_note, render_meta_note, validate_change_id,
 };
 use crate::configuration::{Configuration, ConfigurationError, load_configuration};
+use crate::merging::{MergeError, merge_documents, target_status};
 use crate::rendering::{RenderError, render_documents, review_diff, write_tree};
 use crate::schemata::{SchemaError, WorkflowSchema, resolve_schema};
 use crate::worknotes::{WorkChecklist, WorkNoteError, parse_work_note};
@@ -71,6 +72,9 @@ pub enum OperationError {
 
     #[error(transparent)]
     Render(#[from] RenderError),
+
+    #[error(transparent)]
+    Merge(#[from] MergeError),
 }
 
 /// Result alias for core operations.
@@ -207,8 +211,37 @@ pub async fn display(
         .join(change_folder(change_id));
     output.push_str(&work_report(&change_directory));
 
-    output
-        .push_str("\n## drift\n\nnot yet tracked (merge drift detection arrives with task 3.5)\n");
+    output.push_str("\n## drift\n\n");
+    output.push_str(&drift_report(
+        &change_directory,
+        &folder,
+        &schema,
+        change_id,
+    )?);
+    Ok(output)
+}
+
+/// Reports the merge-target status of every durable document for
+/// `display`.
+fn drift_report(
+    change_directory: &std::path::Path,
+    folder: &str,
+    schema: &WorkflowSchema,
+    change_id: &str,
+) -> Result<String, OperationError> {
+    let root = project_root();
+    let documents = render_documents(change_directory, folder, schema)?;
+    let mut output = String::new();
+    for document in &documents {
+        let Some(target_path) = &document.target_path else {
+            continue;
+        };
+        let status = target_status(document, &root, change_id)?;
+        output.push_str(&format!("- {}: {status}\n", target_path.display()));
+    }
+    if output.is_empty() {
+        output.push_str("no durable documents with merge targets yet\n");
+    }
     Ok(output)
 }
 
@@ -263,11 +296,61 @@ pub async fn render(
 
 /// Transfers a change's durable artifacts into the repository.
 ///
+/// Renders the change from its notes and writes the target-bearing
+/// documents to their configured repository destinations with
+/// provenance headers. Planning collects every violation before any
+/// write, so a refused merge modifies nothing; `force` overrides
+/// target-state refusals (drift, unmanaged files, foreign ownership)
+/// but never unsupported delta operations. This is the only nbspec
+/// operation that writes to the repository, and it creates no git
+/// commits.
+///
 /// # Errors
 ///
-/// Returns [`OperationError::Unimplemented`] until tasks 3.4 through 3.6 land.
-pub async fn merge(_client: &NbClient, _change_id: &str, _force: bool) -> OperationResult {
-    Err(OperationError::Unimplemented("merge"))
+/// Returns [`OperationError::ChangeNotFound`] when the change
+/// namespace is absent, [`MergeError::Refused`] (wrapped) listing
+/// every violating target, and notebook, configuration, schema, or
+/// IO errors otherwise.
+pub async fn merge(
+    client: &NbClient,
+    notebook: Option<&str>,
+    change_id: &str,
+    force: bool,
+) -> OperationResult {
+    validate_change_id(change_id)?;
+    let notebook_name = resolve_notebook_name(notebook)?;
+    let notebook = Some(notebook_name.as_str());
+    let root = project_root();
+    let configuration = load_configuration(&root)?;
+    let folder = change_folder(change_id);
+    let change_directory = client.notebook_path(notebook).await?.join(&folder);
+    if !change_directory.is_dir() {
+        return Err(OperationError::ChangeNotFound {
+            notebook: notebook_name.clone(),
+            change_id: change_id.to_string(),
+        });
+    }
+    let metadata = read_metadata(&change_directory)?;
+    let schema = resolve_schema(Some(&metadata.schema), &configuration)?;
+    let documents = render_documents(&change_directory, &folder, &schema)?;
+    let report = merge_documents(&documents, &root, change_id, &notebook_name, force)?;
+
+    let mut output = String::new();
+    for path in &report.written {
+        output.push_str(&format!("wrote {}\n", path.display()));
+    }
+    for path in &report.unchanged {
+        output.push_str(&format!("unchanged {}\n", path.display()));
+    }
+    if report.written.is_empty() && report.unchanged.is_empty() {
+        output.push_str("no durable documents to merge\n");
+    }
+    output.push_str(&format!(
+        "Merged change {change_id}: {written} written, {unchanged} unchanged.",
+        written = report.written.len(),
+        unchanged = report.unchanged.len(),
+    ));
+    Ok(output)
 }
 
 /// Validates a change against the OpenSpec grammar.

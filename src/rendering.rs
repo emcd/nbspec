@@ -142,7 +142,9 @@ pub fn write_tree(documents: &[RenderedDocument], destination: &Path) -> Result<
 /// Builds a unified diff between a change's durable documents (those
 /// with merge targets) and the current contents of their repository
 /// targets, in `git diff` format suitable for external review
-/// tooling. Unchanged targets are omitted; absent targets diff from
+/// tooling. Target provenance headers are stripped before comparing,
+/// so the diff shows document changes rather than header churn.
+/// Unchanged targets are omitted; absent targets diff from
 /// `/dev/null`.
 ///
 /// # Errors
@@ -160,10 +162,10 @@ pub fn review_diff(
         };
         let absolute = project_root.join(target_path);
         let current = if absolute.is_file() {
-            Some(
-                std::fs::read_to_string(&absolute)
-                    .map_err(|error| RenderError::io(&absolute, error))?,
-            )
+            let raw = std::fs::read_to_string(&absolute)
+                .map_err(|error| RenderError::io(&absolute, error))?;
+            let (_, body) = crate::provenance::split_document(&raw);
+            Some(body.to_string())
         } else {
             None
         };

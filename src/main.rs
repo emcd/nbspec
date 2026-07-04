@@ -24,7 +24,7 @@ async fn main() -> anyhow::Result<()> {
             operations::render(&client, notebook, change_id, *diff).await?
         }
         Command::Merge { change_id, force } => {
-            operations::merge(&client, change_id, *force).await?
+            operations::merge(&client, notebook, change_id, *force).await?
         }
         Command::Validate { change_id } => operations::validate(&client, change_id).await?,
     };
