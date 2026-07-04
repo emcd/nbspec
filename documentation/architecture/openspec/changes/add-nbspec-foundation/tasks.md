@@ -3,7 +3,7 @@
 - [x] 1.1 Add `nb-api` dependency (crates.io 0.1.0 — published before
       implementation began, superseding the planned pinned-rev git
       dependency) and `clap` to Cargo.toml
-- [ ] 1.2 Implement CLI skeleton over library-boundary core functions:
+- [x] 1.2 Implement CLI skeleton over library-boundary core functions:
       `nbspec change new|show|status`, `nbspec render`, `nbspec merge`,
       `nbspec validate`
 - [ ] 1.3 Implement the OpenSpec grammar module: requirement/scenario/delta
