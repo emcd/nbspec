@@ -1,7 +1,7 @@
 //! Notebook-first OpenSpec orchestration.
 
 use clap::Parser;
-use nbspec::cli::{ChangeCommand, Cli, Command};
+use nbspec::cli::{Cli, Command};
 use nbspec::operations;
 
 #[tokio::main]
@@ -12,20 +12,13 @@ async fn main() -> anyhow::Result<()> {
         ..nb_api::Config::default()
     };
     let client = nb_api::NbClient::new(&config)?;
+    let notebook = arguments.notebook.as_deref();
     let output = match &arguments.command {
-        Command::Change(change_command) => {
-            let notebook = arguments.notebook.as_deref();
-            match change_command {
-                ChangeCommand::New { change_id, title } => {
-                    operations::change_new(&client, notebook, change_id, title.as_deref()).await?
-                }
-                ChangeCommand::Show { change_id } => {
-                    operations::change_show(&client, notebook, change_id).await?
-                }
-                ChangeCommand::Status { change_id } => {
-                    operations::change_status(&client, notebook, change_id).await?
-                }
-            }
+        Command::Create { change_id, title } => {
+            operations::create(&client, notebook, change_id, title.as_deref()).await?
+        }
+        Command::Display { change_id, full } => {
+            operations::display(&client, notebook, change_id, *full).await?
         }
         Command::Render { change_id, diff } => {
             operations::render(&client, change_id, *diff).await?

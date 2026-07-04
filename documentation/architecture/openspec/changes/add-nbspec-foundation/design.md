@@ -93,7 +93,7 @@ its first external consumer.
   (`meta`, `work`) stay short; the convention binds folder names, not
   notes.
 - **Tasks never materialize.** The `work` todo note is the live execution
-  record, surfaced through `nbspec change status`; there is no generated
+  record, surfaced through `nbspec display`; there is no generated
   `tasks.md`. The checklist ends with the change.
 - **Format compatibility, not binary dependency.** nbspec keeps the OpenSpec
   1.x requirement/scenario/delta grammar (as of the 1.4 parser rules) and
@@ -130,7 +130,7 @@ its first external consumer.
   drifted target without `--force`. Rule of thumb: hand edits belong in
   notes; merge targets are nbspec's to write.
 - **Single repository-write path, no commits.** Only `merge` writes to the
-  repository — durable documents and the change archive. `change new`
+  repository — durable documents and the change archive. `create`
   scaffolds nothing on the filesystem, and `render` targets scratch
   workspaces exclusively. `merge` never creates git commits: committing
   stays a human/agent act under the existing commit conventions; a future
@@ -161,7 +161,7 @@ its first external consumer.
   are a planned follow-up) → nbspec keeps its own thin parsing layer
   initially and sheds it as typed accessors land upstream.
 - **Hand edits to merge targets between merges** → provenance headers with
-  content hashes detect drift; `nbspec change status` reports it; `merge`
+  content hashes detect drift; `nbspec display` reports it; `merge`
   refuses without `--force`. Drift pressure is lower than in the old
   write-tree model since targets change only at merge time.
 - **Review without repository commits** — reviewers no longer get a proposal

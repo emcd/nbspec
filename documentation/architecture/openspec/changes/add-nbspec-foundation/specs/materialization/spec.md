@@ -79,7 +79,7 @@ the rendered body.
 ### Requirement: Drift refusal
 nbspec SHALL detect divergence between a merge target and what it last wrote
 (via the provenance content hash) and SHALL refuse to overwrite drifted
-targets unless `--force` is given. `nbspec change status` SHALL report
+targets unless `--force` is given. `nbspec display` SHALL report
 drift.
 
 #### Scenario: Hand-edited target protected

@@ -1,7 +1,8 @@
 //! Command-line interface definitions.
 //!
 //! Declares the argument grammar only; command execution lives in
-//! [`crate::operations`].
+//! [`crate::operations`]. All commands are flat verbs operating on a
+//! change, mirroring the tool vocabulary planned for the MCP surface.
 
 use clap::{Parser, Subcommand};
 
@@ -20,9 +21,26 @@ pub struct Cli {
 /// Top-level nbspec commands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Manages notebook-resident changes.
-    #[command(subcommand)]
-    Change(ChangeCommand),
+    /// Creates a change namespace in the project notebook.
+    Create {
+        /// Change identifier (becomes the folder name under `proposals/`).
+        change_id: String,
+
+        /// Human-readable change title.
+        #[arg(long)]
+        title: Option<String>,
+    },
+
+    /// Displays a change: status summary by default, note contents
+    /// with --full.
+    Display {
+        /// Change identifier (notebook folder under `proposals/`).
+        change_id: String,
+
+        /// Includes artifact note contents and folder listings.
+        #[arg(long)]
+        full: bool,
+    },
 
     /// Renders a change to a scratch workspace for review.
     Render {
@@ -46,32 +64,6 @@ pub enum Command {
 
     /// Validates a change against the OpenSpec grammar.
     Validate {
-        /// Change identifier (notebook folder under `proposals/`).
-        change_id: String,
-    },
-}
-
-/// Change lifecycle subcommands.
-#[derive(Debug, Subcommand)]
-pub enum ChangeCommand {
-    /// Creates a change namespace in the project notebook.
-    New {
-        /// Change identifier (becomes the folder name under `proposals/`).
-        change_id: String,
-
-        /// Human-readable change title.
-        #[arg(long)]
-        title: Option<String>,
-    },
-
-    /// Shows a change's notes.
-    Show {
-        /// Change identifier (notebook folder under `proposals/`).
-        change_id: String,
-    },
-
-    /// Reports a change's artifact, todo, and drift state.
-    Status {
         /// Change identifier (notebook folder under `proposals/`).
         change_id: String,
     },

@@ -4,7 +4,7 @@
       implementation began, superseding the planned pinned-rev git
       dependency) and `clap` to Cargo.toml
 - [x] 1.2 Implement CLI skeleton over library-boundary core functions:
-      `nbspec change new|show|status`, `nbspec render`, `nbspec merge`,
+      `nbspec create`, `nbspec display`, `nbspec render`, `nbspec merge`,
       `nbspec validate`
 - [x] 1.3 Implement the OpenSpec grammar module: requirement/scenario/delta
       parsing (shared by validation and diagnostic mapping)
@@ -22,9 +22,9 @@
       note naming, tags)
 - [x] 2.4 Implement meta note read/write with JSON schema, status lifecycle,
       and schema selection
-- [x] 2.5 Implement `nbspec change new` (scaffold namespace + meta +
+- [x] 2.5 Implement `nbspec create` (scaffold namespace + meta +
       artifact notes; no filesystem writes)
-- [x] 2.6 Implement `nbspec change show` and `nbspec change status`
+- [x] 2.6 Implement `nbspec display` (short and `--full` forms)
       (artifact readiness per `requires` graph, `work` todo progress)
 
 ## 3. Rendering and Merge
@@ -38,7 +38,7 @@
       documents) to configured targets with provenance headers and content
       hashes; error on MODIFIED deltas (deferred capability)
 - [ ] 3.5 Implement drift detection on merge targets with `--force`
-      override; surface drift in `nbspec change status`
+      override; surface drift in `nbspec display`
 - [ ] 3.6 Implement merge-time change archives: deterministic tar + zstd of
       rendered tree, meta, and `work` snapshot to the configured archive
       directory; configuration toggle; warn when `.gitattributes` lacks an
@@ -60,7 +60,7 @@
 
 - [ ] 5.1 Unit tests: schema parsing, todo grammar, provenance/drift, meta
       lifecycle
-- [ ] 5.2 Integration tests: end-to-end change new → author → render →
+- [ ] 5.2 Integration tests: end-to-end create → author → render →
       validate → merge against a fixture notebook
 - [ ] 5.3 Update README status section; document CLI usage
 - [ ] 5.4 `cargo clippy --all-targets --all-features -- -D warnings` and

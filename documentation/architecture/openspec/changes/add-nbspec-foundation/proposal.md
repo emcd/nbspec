@@ -42,11 +42,12 @@ record recoverable and searchable by later tooling.
 - Implement `nbspec validate`: native validation of the requirement,
   scenario, and delta grammar with note-level diagnostics — no runtime
   dependency on the `openspec` binary.
-- Provide the CLI skeleton (`nbspec change new|show|status`, `render`,
-  `merge`, `validate`) over the `nb-api` crate.
+- Provide the CLI skeleton (`nbspec create`, `display`, `render`,
+  `merge`, `validate` — flat verbs, matching the tool vocabulary planned
+  for the MCP surface) over the `nb-api` crate.
 
 Task checklists are never materialized: the `work` todo note is the live
-execution record, surfaces through `nbspec change status`, and simply ends
+execution record, surfaces through `nbspec display`, and simply ends
 with the change. There is no generated `tasks.md`.
 
 ## Capabilities

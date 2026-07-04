@@ -51,20 +51,21 @@ commit SHAs at status transitions that correspond to repository writes.
   refreshed, and no other note content is modified
 
 ### Requirement: Change lifecycle CLI
-nbspec SHALL provide CLI verbs to create a change (`nbspec change new`),
-inspect its content (`nbspec change show`), and report its artifact, todo,
-and drift state (`nbspec change status`). Creating a change SHALL NOT write
-to the repository working tree.
+nbspec SHALL provide flat CLI verbs to create a change (`nbspec create`)
+and to display one (`nbspec display`): the short form SHALL report the
+change's artifact, todo, and drift state, and a `--full` option SHALL
+additionally include artifact note contents. Creating a change SHALL NOT
+write to the repository working tree.
 
 #### Scenario: Creating a change
-- **WHEN** `nbspec change new add-foo --title "Add foo"` runs against a
+- **WHEN** `nbspec create add-foo --title "Add foo"` runs against a
   project notebook
 - **THEN** the notebook namespace `proposals/add-foo/` is created with a
   populated `meta` note and empty artifact notes per the resolved schema,
   and the repository working tree is unmodified
 
-#### Scenario: Status of a change
-- **WHEN** `nbspec change status add-foo` runs
+#### Scenario: Displaying a change
+- **WHEN** `nbspec display add-foo` runs
 - **THEN** the output reports which artifact notes have content, which are
   blocked by unsatisfied dependencies, `work` todo progress, and the meta
   status

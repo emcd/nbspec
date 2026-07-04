@@ -70,7 +70,7 @@ pub type OperationResult = Result<String, OperationError>;
 /// Returns [`OperationError::AlreadyExists`] when the namespace is
 /// already present, and notebook, schema, or validation errors
 /// otherwise.
-pub async fn change_new(
+pub async fn create(
     client: &NbClient,
     notebook: Option<&str>,
     change_id: &str,
@@ -128,16 +128,19 @@ pub async fn change_new(
     ))
 }
 
-/// Shows a change's notes: the meta summary, the proposal body, and
-/// per-artifact-folder listings.
+/// Displays a change. The short form reports the meta summary,
+/// artifact readiness against the schema `requires` graph, `work`
+/// todo progress, and drift; `full` additionally includes root
+/// artifact note contents and per-artifact-folder listings.
 ///
 /// # Errors
 ///
 /// Returns notebook access errors and meta note parse failures.
-pub async fn change_show(
+pub async fn display(
     client: &NbClient,
     notebook: Option<&str>,
     change_id: &str,
+    full: bool,
 ) -> OperationResult {
     validate_change_id(change_id)?;
     let notebook_name = resolve_notebook_name(notebook)?;
@@ -147,36 +150,12 @@ pub async fn change_show(
     let schema = schema_for(&metadata)?;
 
     let mut output = metadata_summary(&metadata);
-    for note in namespace_notes(&schema) {
-        let content = client.show(&format!("{folder}/{note}"), notebook).await?;
-        output.push_str(&format!("\n## {note}\n\n{}\n", content.trim_end()));
+    if full {
+        for note in namespace_notes(&schema) {
+            let content = client.show(&format!("{folder}/{note}"), notebook).await?;
+            output.push_str(&format!("\n## {note}\n\n{}\n", content.trim_end()));
+        }
     }
-    for subfolder in namespace_folders(&schema) {
-        let listing = folder_listing(client, &format!("{folder}/{subfolder}"), notebook).await;
-        output.push_str(&format!("\n## {subfolder}/\n\n{listing}\n"));
-    }
-    Ok(output)
-}
-
-/// Reports a change's artifact readiness, todo progress, and meta
-/// status.
-///
-/// # Errors
-///
-/// Returns notebook access errors and meta note parse failures.
-pub async fn change_status(
-    client: &NbClient,
-    notebook: Option<&str>,
-    change_id: &str,
-) -> OperationResult {
-    validate_change_id(change_id)?;
-    let notebook_name = resolve_notebook_name(notebook)?;
-    let notebook = Some(notebook_name.as_str());
-    let folder = change_folder(change_id);
-    let metadata = load_metadata(client, &folder, notebook).await?;
-    let schema = schema_for(&metadata)?;
-
-    let mut output = metadata_summary(&metadata);
     output.push_str("\n## artifacts\n\n");
     let mut authored: Vec<&str> = Vec::new();
     for artifact in schema.authoring_order() {
@@ -197,6 +176,12 @@ pub async fn change_status(
             format!("blocked on {}", unmet.join(", "))
         };
         output.push_str(&format!("- {}: {state}\n", artifact.id));
+    }
+    if full {
+        for subfolder in namespace_folders(&schema) {
+            let listing = folder_listing(client, &format!("{folder}/{subfolder}"), notebook).await;
+            output.push_str(&format!("\n## {subfolder}/\n\n{listing}\n"));
+        }
     }
 
     output.push_str("\n## work\n\n");
