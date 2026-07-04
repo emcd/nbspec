@@ -70,8 +70,8 @@ None (greenfield project).
 ## Impact
 
 - Affected code: new `nbspec` binary crate (this repository); depends on the
-  `nb-api` crate being extracted from `nb-mcp-server` (git dependency until
-  its first crates.io publish).
+  `nb-api` crate (crates.io version dependency — published before
+  implementation began, mooting the planned interim git pin).
 - No runtime dependency on the `openspec` CLI: nbspec keeps the OpenSpec
   requirement/scenario grammar and the workflow schema mechanism, but
   deliberately diverges from the `spec-driven` default layout (no

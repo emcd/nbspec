@@ -156,12 +156,11 @@ its first external consumer.
   git repo) and project repo cannot commit atomically. Compensation: the
   meta note records project-repo commit SHAs at status transitions; the
   linkage is recoverable, not transactional.
-- **`nb-api` via git dependency** pinned to the `nb-mcp-server` repository
-  until the crate's first crates.io publish (which the extract-nb-api change
-  guarantees no later than the first post-split server release), then a
-  version dependency.
-- **CLI skeleton with clap**, subcommand layout `nbspec change <verb>` and
-  top-level `nbspec render|merge|validate`. Core operations live in library
+- **`nb-api` via crates.io version dependency.** The plan was a git pin
+  until the crate's first publish, but publication (0.1.0) landed before
+  implementation began, so nbspec uses a version dependency from the start.
+- **CLI skeleton with clap**, flat verbs `nbspec
+  create|display|render|merge|validate`. Core operations live in library
   functions the CLI wraps thinly, keeping the fast-follow MCP surface a
   second thin wrapper rather than a rework.
 - **Rendering is deterministic.** Same notes in, byte-identical tree out;
