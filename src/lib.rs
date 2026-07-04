@@ -5,4 +5,5 @@
 //! same core functions.
 
 pub mod cli;
+pub mod grammar;
 pub mod operations;
