@@ -40,7 +40,7 @@
       hashes; error on MODIFIED deltas (deferred capability)
 - [x] 3.5 Implement drift detection on merge targets with `--force`
       override; surface drift in `nbspec display`
-- [ ] 3.6 Implement merge-time change archives: deterministic tar + zstd of
+- [x] 3.6 Implement merge-time change archives: deterministic tar + zstd of
       rendered tree, meta, and `work` snapshot to the configured archive
       directory; configuration toggle; warn when `.gitattributes` lacks an
       LFS rule for the archive path

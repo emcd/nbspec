@@ -27,6 +27,9 @@ pub const CONFIGURATION_DIR_ENV: &str = "NBSPEC_CONFIG_DIR";
 /// Settings file name at every layer.
 pub const SETTINGS_FILE: &str = "general.toml";
 
+/// Default repository-relative directory receiving change archives.
+pub const DEFAULT_ARCHIVE_DIR: &str = "documentation/archives";
+
 /// Errors from configuration loading.
 #[derive(Debug, Error)]
 pub enum ConfigurationError {
@@ -56,6 +59,15 @@ pub struct SettingsDocument {
     /// cache directory.
     #[serde(default)]
     pub scratch_directory: Option<PathBuf>,
+
+    /// Whether merge writes a change archive (default: enabled).
+    #[serde(default)]
+    pub archives: Option<bool>,
+
+    /// Directory receiving merge-time change archives. Relative
+    /// paths are repository-relative.
+    #[serde(default)]
+    pub archive_directory: Option<PathBuf>,
 }
 
 /// Resolved configuration after layering.
@@ -72,6 +84,13 @@ pub struct Configuration {
     /// Scratch directory for rendered change trees. `None` selects
     /// the platform cache directory.
     pub scratch_directory: Option<PathBuf>,
+
+    /// Whether merge writes a change archive.
+    pub archives: bool,
+
+    /// Directory receiving merge-time change archives. Relative
+    /// paths are repository-relative.
+    pub archive_directory: PathBuf,
 }
 
 /// Loads layered configuration for a project: the user-global settings
@@ -127,6 +146,11 @@ pub fn resolve_configuration(
         schema: project.schema.or(global.schema),
         project_directory: directory,
         scratch_directory,
+        archives: project.archives.or(global.archives).unwrap_or(true),
+        archive_directory: project
+            .archive_directory
+            .or(global.archive_directory)
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_ARCHIVE_DIR)),
     })
 }
 

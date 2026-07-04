@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use nb_api::NbClient;
 use thiserror::Error;
 
+use crate::archives::{ArchiveEntry, ArchiveError, build_archive, gitattributes_covers_lfs};
 use crate::changes::{
     ChangeError, ChangeMetadata, META_NOTE, PROPOSALS_FOLDER, WORK_NOTE, change_folder,
     namespace_folders, namespace_notes, parse_meta_note, render_meta_note, validate_change_id,
@@ -75,6 +76,15 @@ pub enum OperationError {
 
     #[error(transparent)]
     Merge(#[from] MergeError),
+
+    #[error(transparent)]
+    Archive(#[from] ArchiveError),
+
+    #[error("cannot write archive {path}: {source}")]
+    ArchiveWrite {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 }
 
 /// Result alias for core operations.
@@ -301,9 +311,12 @@ pub async fn render(
 /// provenance headers. Planning collects every violation before any
 /// write, so a refused merge modifies nothing; `force` overrides
 /// target-state refusals (drift, unmanaged files, foreign ownership)
-/// but never unsupported delta operations. This is the only nbspec
-/// operation that writes to the repository, and it creates no git
-/// commits.
+/// but never unsupported delta operations or non-file occupants.
+/// This is the only nbspec operation that writes to the repository,
+/// and it creates no git commits. Archive writing happens after the
+/// documents transfer: an archive IO failure therefore leaves
+/// already-merged documents in place — an accepted trade-off, since
+/// rerunning merge is idempotent and completes the archive.
 ///
 /// # Errors
 ///
@@ -345,11 +358,83 @@ pub async fn merge(
     if report.written.is_empty() && report.unchanged.is_empty() {
         output.push_str("no durable documents to merge\n");
     }
+    if configuration.archives {
+        output.push_str(&write_change_archive(
+            &configuration,
+            &root,
+            &change_directory,
+            change_id,
+            &documents,
+        )?);
+    }
     output.push_str(&format!(
         "Merged change {change_id}: {written} written, {unchanged} unchanged.",
         written = report.written.len(),
         unchanged = report.unchanged.len(),
     ));
+    Ok(output)
+}
+
+/// Writes the merge-time change archive: the rendered artifact tree
+/// plus `meta.md` and a `work.md` checklist snapshot, packed
+/// deterministically under a top-level `<change-id>/` prefix.
+/// Returns report lines, including a warning when no `.gitattributes`
+/// rule marks the archive path for Git LFS.
+fn write_change_archive(
+    configuration: &Configuration,
+    root: &std::path::Path,
+    change_directory: &std::path::Path,
+    change_id: &str,
+    documents: &[crate::rendering::RenderedDocument],
+) -> Result<String, OperationError> {
+    let prefix = PathBuf::from(change_id);
+    let mut entries: Vec<ArchiveEntry> = documents
+        .iter()
+        .map(|document| ArchiveEntry {
+            path: prefix.join(&document.tree_path),
+            content: document.content.clone(),
+        })
+        .collect();
+    let meta_path = change_directory.join(format!("{META_NOTE}.md"));
+    let meta_content =
+        std::fs::read_to_string(&meta_path).map_err(|source| OperationError::NoteRead {
+            path: meta_path,
+            source,
+        })?;
+    entries.push(ArchiveEntry {
+        path: prefix.join(format!("{META_NOTE}.md")),
+        content: meta_content,
+    });
+    if let Some(work_content) = read_work_note(change_directory) {
+        entries.push(ArchiveEntry {
+            path: prefix.join(format!("{WORK_NOTE}.md")),
+            content: work_content,
+        });
+    }
+    let bytes = build_archive(&entries)?;
+
+    let archive_path = configuration
+        .archive_directory
+        .join(format!("{change_id}.tar.zst"));
+    let absolute = root.join(&archive_path);
+    if let Some(parent) = absolute.parent() {
+        std::fs::create_dir_all(parent).map_err(|source| OperationError::ArchiveWrite {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    std::fs::write(&absolute, &bytes).map_err(|source| OperationError::ArchiveWrite {
+        path: absolute.clone(),
+        source,
+    })?;
+
+    let mut output = format!("archived {}\n", archive_path.display());
+    if !gitattributes_covers_lfs(root, &archive_path) {
+        output.push_str(&format!(
+            "warning: no .gitattributes rule marks {} for Git LFS\n",
+            archive_path.display()
+        ));
+    }
     Ok(output)
 }
 

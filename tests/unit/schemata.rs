@@ -28,6 +28,8 @@ fn default_configuration(root: &std::path::Path) -> Configuration {
         schema: None,
         project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
         scratch_directory: None,
+        archives: true,
+        archive_directory: PathBuf::from("documentation/archives"),
     }
 }
 
@@ -177,6 +179,8 @@ fn resolution_prefers_explicit_name_over_configuration() {
         schema: Some("missing-config-schema".to_string()),
         project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
         scratch_directory: None,
+        archives: true,
+        archive_directory: PathBuf::from("documentation/archives"),
     };
     let schema = resolve_schema(Some(DEFAULT_SCHEMA_NAME), &configuration).unwrap();
     assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
@@ -258,6 +262,38 @@ fn global_settings_apply_when_project_is_silent() {
     };
     let configuration = resolve_configuration(&root, global, None).unwrap();
     assert_eq!(configuration.schema.as_deref(), Some("from-global"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn archives_default_enabled_at_default_directory() {
+    let root = unique_temp_root("configuration-archives-default");
+    fs::create_dir_all(&root).unwrap();
+    let configuration = resolve_configuration(&root, SettingsDocument::default(), None).unwrap();
+    assert!(configuration.archives);
+    assert_eq!(
+        configuration.archive_directory,
+        PathBuf::from("documentation/archives")
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn project_settings_disable_and_relocate_archives() {
+    let root = unique_temp_root("configuration-archives-project");
+    let project_dir = root.join(DEFAULT_PROJECT_CONFIGURATION_DIR);
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::write(
+        project_dir.join(SETTINGS_FILE),
+        "archives = false\narchive_directory = \"records/archives\"\n",
+    )
+    .unwrap();
+    let configuration = resolve_configuration(&root, SettingsDocument::default(), None).unwrap();
+    assert!(!configuration.archives);
+    assert_eq!(
+        configuration.archive_directory,
+        PathBuf::from("records/archives")
+    );
     fs::remove_dir_all(&root).unwrap();
 }
 

@@ -4,6 +4,7 @@
 //! binary and the planned MCP surface are both thin wrappers over the
 //! same core functions.
 
+pub mod archives;
 pub mod changes;
 pub mod cli;
 pub mod configuration;
