@@ -362,6 +362,42 @@ fn project_settings_disable_and_relocate_archives() {
 }
 
 #[test]
+fn escaping_archive_directory_is_invalid() {
+    use nbspec::configuration::ConfigurationError;
+    let root = unique_temp_root("configuration-archive-escape");
+    let project_dir = root.join(PROJECT_CONFIGURATION_DIR_DEFAULT);
+    fs::create_dir_all(&project_dir).unwrap();
+    for directory in ["/tmp/nbspec-escape", "../../outside"] {
+        fs::write(
+            project_dir.join(SETTINGS_FILE),
+            format!("archive_directory = \"{directory}\"\n"),
+        )
+        .unwrap();
+        let error = resolve_configuration(&root, SettingsDocument::default(), None).unwrap_err();
+        assert!(
+            matches!(error, ConfigurationError::Invalid(_)),
+            "directory: {directory}"
+        );
+        assert!(error.to_string().contains("archive_directory"));
+    }
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn escaping_global_archive_directory_is_invalid() {
+    use nbspec::configuration::ConfigurationError;
+    let root = unique_temp_root("configuration-archive-escape-global");
+    fs::create_dir_all(&root).unwrap();
+    let global = SettingsDocument {
+        archive_directory: Some(PathBuf::from("/var/archives")),
+        ..SettingsDocument::default()
+    };
+    let error = resolve_configuration(&root, global, None).unwrap_err();
+    assert!(matches!(error, ConfigurationError::Invalid(_)));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn environment_override_relocates_project_directory() {
     let root = unique_temp_root("configuration-env");
     let relocated = root.join("elsewhere/nbspec");
