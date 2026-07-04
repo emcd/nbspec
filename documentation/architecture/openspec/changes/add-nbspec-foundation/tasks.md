@@ -63,7 +63,7 @@
       lifecycle
 - [ ] 5.2 Integration tests: end-to-end create → author → render →
       validate → merge against a fixture notebook
-- [ ] 5.3 Update README status section; document CLI usage
+- [x] 5.3 Update README status section; document CLI usage
 - [ ] 5.4 `cargo clippy --all-targets --all-features -- -D warnings` and
       full test suite pass
 
