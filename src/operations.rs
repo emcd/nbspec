@@ -24,6 +24,7 @@ use crate::changes::{
 };
 use crate::configuration::{ConfigurationError, load_configuration};
 use crate::schemata::{SchemaError, WorkflowSchema, resolve_schema};
+use crate::worknotes::{WorkChecklist, WorkNoteError, parse_work_note};
 
 /// Tag applied to nbspec-managed control-plane notes.
 const META_TAG: &str = "nbspec";
@@ -54,6 +55,9 @@ pub enum OperationError {
 
     #[error(transparent)]
     Schema(#[from] SchemaError),
+
+    #[error(transparent)]
+    WorkNote(#[from] WorkNoteError),
 }
 
 /// Result alias for core operations.
@@ -184,13 +188,11 @@ pub async fn display(
     }
 
     output.push_str("\n## work\n\n");
-    match client.tasks(Some(&folder), None, false, notebook).await {
-        Ok(tasks) => output.push_str(&format!("{}\n", tasks.trim_end())),
-        Err(nb_api::NbError::CommandFailed(message)) => {
-            output.push_str(&format!("{}\n", message.trim_end()));
-        }
-        Err(error) => return Err(error.into()),
-    }
+    let change_directory = client
+        .notebook_path(notebook)
+        .await?
+        .join(change_folder(change_id));
+    output.push_str(&work_report(&change_directory));
 
     output
         .push_str("\n## drift\n\nnot yet tracked (merge drift detection arrives with task 3.5)\n");
@@ -303,6 +305,58 @@ async fn folder_listing(client: &NbClient, folder: &str, notebook: Option<&str>)
         }
         Err(_) => "(empty)".to_string(),
     }
+}
+
+/// Reports the `work` checklist section for `display`: progress
+/// counts and the item list, or a loud per-section diagnostic when
+/// the note is missing or malformed — never misreported numbers.
+fn work_report(change_directory: &std::path::Path) -> String {
+    let Some(content) = read_work_note(change_directory) else {
+        return "(no work todo note found)\n".to_string();
+    };
+    match parse_work_note(&content) {
+        Ok(checklist) => render_work_checklist(&checklist),
+        Err(error) => format!("{error}\n"),
+    }
+}
+
+/// Reads the change's work todo note from the notebook filesystem:
+/// the `*.todo.md` file whose checkbox title is [`WORK_NOTE`].
+/// Parsing the file directly avoids scraping `nb tasks` output,
+/// which embeds terminal control sequences even with `--no-color`.
+fn read_work_note(change_directory: &std::path::Path) -> Option<String> {
+    let entries = std::fs::read_dir(change_directory).ok()?;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if !name.to_string_lossy().ends_with(".todo.md") {
+            continue;
+        }
+        let Ok(content) = std::fs::read_to_string(entry.path()) else {
+            continue;
+        };
+        let open_title = format!("# [ ] {WORK_NOTE}");
+        let done_title = format!("# [x] {WORK_NOTE}");
+        if content
+            .lines()
+            .any(|line| line == open_title || line == done_title)
+        {
+            return Some(content);
+        }
+    }
+    None
+}
+
+fn render_work_checklist(checklist: &WorkChecklist) -> String {
+    let (complete, total) = checklist.progress();
+    if total == 0 {
+        return "no task items yet\n".to_string();
+    }
+    let mut output = format!("{complete}/{total} items complete\n");
+    for item in &checklist.items {
+        let marker = if item.complete { "x" } else { " " };
+        output.push_str(&format!("- [{marker}] {}\n", item.text));
+    }
+    output
 }
 
 /// Reports whether an artifact has authored content: notes must have
