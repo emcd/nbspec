@@ -30,9 +30,9 @@
 
 ## 3. Rendering and Merge
 
-- [ ] 3.1 Implement deterministic scratch-workspace rendering to schema
+- [x] 3.1 Implement deterministic scratch-workspace rendering to schema
       `generates` paths (repository never touched)
-- [ ] 3.2 Implement review output: rendered tree plus unified diff suitable
+- [x] 3.2 Implement review output: rendered tree plus unified diff suitable
       for external review tooling (e.g., difit)
 - [x] 3.3 Implement `work` todo note grammar and parser for status reporting
 - [ ] 3.4 Implement `nbspec merge`: transfer durable artifacts (new

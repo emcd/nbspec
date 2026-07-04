@@ -22,7 +22,8 @@ use crate::changes::{
     ChangeError, ChangeMetadata, META_NOTE, PROPOSALS_FOLDER, WORK_NOTE, change_folder,
     namespace_folders, namespace_notes, parse_meta_note, render_meta_note, validate_change_id,
 };
-use crate::configuration::{ConfigurationError, load_configuration};
+use crate::configuration::{Configuration, ConfigurationError, load_configuration};
+use crate::rendering::{RenderError, render_documents, review_diff, write_tree};
 use crate::schemata::{SchemaError, WorkflowSchema, resolve_schema};
 use crate::worknotes::{WorkChecklist, WorkNoteError, parse_work_note};
 
@@ -37,6 +38,15 @@ pub enum OperationError {
 
     #[error("change already exists: {0}")]
     AlreadyExists(String),
+
+    #[error("change not found in notebook {notebook}: {change_id}")]
+    ChangeNotFound { notebook: String, change_id: String },
+
+    #[error("cannot read note file {path}: {source}")]
+    NoteRead {
+        path: PathBuf,
+        source: std::io::Error,
+    },
 
     #[error(
         "notebook not configured; pass --notebook or run within a Git repository \
@@ -58,6 +68,9 @@ pub enum OperationError {
 
     #[error(transparent)]
     WorkNote(#[from] WorkNoteError),
+
+    #[error(transparent)]
+    Render(#[from] RenderError),
 }
 
 /// Result alias for core operations.
@@ -201,11 +214,51 @@ pub async fn display(
 
 /// Renders a change to a scratch workspace for review.
 ///
+/// Reads artifact notes from the notebook directory and writes the
+/// tree the schema `generates` paths declare, replacing any previous
+/// render of the same change. With `diff`, the returned output is a
+/// unified diff against current merge targets — nothing else — so it
+/// pipes cleanly into review tooling; otherwise it reports the
+/// scratch destination. The repository working tree is never
+/// modified.
+///
 /// # Errors
 ///
-/// Returns [`OperationError::Unimplemented`] until tasks 3.1 and 3.2 land.
-pub async fn render(_client: &NbClient, _change_id: &str, _diff: bool) -> OperationResult {
-    Err(OperationError::Unimplemented("render"))
+/// Returns [`OperationError::ChangeNotFound`] when the change
+/// namespace is absent, and notebook, configuration, schema, or IO
+/// errors otherwise.
+pub async fn render(
+    client: &NbClient,
+    notebook: Option<&str>,
+    change_id: &str,
+    diff: bool,
+) -> OperationResult {
+    validate_change_id(change_id)?;
+    let notebook_name = resolve_notebook_name(notebook)?;
+    let notebook = Some(notebook_name.as_str());
+    let root = project_root();
+    let configuration = load_configuration(&root)?;
+    let folder = change_folder(change_id);
+    let change_directory = client.notebook_path(notebook).await?.join(&folder);
+    if !change_directory.is_dir() {
+        return Err(OperationError::ChangeNotFound {
+            notebook: notebook_name.clone(),
+            change_id: change_id.to_string(),
+        });
+    }
+    let metadata = read_metadata(&change_directory)?;
+    let schema = resolve_schema(Some(&metadata.schema), &configuration)?;
+    let documents = render_documents(&change_directory, &folder, &schema)?;
+    let destination = render_destination(&configuration, &notebook_name, change_id);
+    write_tree(&documents, &destination)?;
+    if diff {
+        return Ok(review_diff(&documents, &root)?);
+    }
+    Ok(format!(
+        "Rendered {count} documents of change {change_id} to {destination}.",
+        count = documents.len(),
+        destination = destination.display(),
+    ))
 }
 
 /// Transfers a change's durable artifacts into the repository.
@@ -243,6 +296,31 @@ fn resolve_notebook_name(notebook: Option<&str>) -> Result<String, OperationErro
 /// directory outside a Git repository.
 fn project_root() -> PathBuf {
     nb_api::git_rev_parse(&["--show-toplevel"]).unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// Reads and parses a change's meta note from the notebook
+/// filesystem.
+fn read_metadata(change_directory: &std::path::Path) -> Result<ChangeMetadata, OperationError> {
+    let path = change_directory.join(format!("{META_NOTE}.md"));
+    let content = std::fs::read_to_string(&path)
+        .map_err(|source| OperationError::NoteRead { path, source })?;
+    Ok(parse_meta_note(&content)?)
+}
+
+/// Resolves the scratch destination for a change's rendered tree:
+/// the configured scratch directory, or the platform cache directory,
+/// namespaced by notebook and change so renders never collide.
+fn render_destination(
+    configuration: &Configuration,
+    notebook_name: &str,
+    change_id: &str,
+) -> PathBuf {
+    let base = configuration.scratch_directory.clone().unwrap_or_else(|| {
+        directories::ProjectDirs::from("", "", "nbspec")
+            .map(|dirs| dirs.cache_dir().join("renders"))
+            .unwrap_or_else(|| PathBuf::from(".auxiliary/temporary/nbspec/renders"))
+    });
+    base.join(notebook_name).join(change_id)
 }
 
 async fn load_metadata(

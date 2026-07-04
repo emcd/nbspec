@@ -1,0 +1,216 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use nbspec::rendering::{render_documents, review_diff, write_tree};
+use nbspec::schemata::default_schema;
+
+const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
+
+fn unique_temp_root(label: &str) -> PathBuf {
+    let unique = format!(
+        "{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    PathBuf::from(TEMP_TEST_ROOT).join(unique)
+}
+
+/// Builds a fixture change directory shaped like an authored change
+/// namespace on the notebook filesystem.
+fn fixture_change(root: &Path) -> PathBuf {
+    let change = root.join("notebook/proposals/add-demo");
+    fs::create_dir_all(change.join("specifications/nested")).unwrap();
+    fs::create_dir_all(change.join("designs")).unwrap();
+    fs::create_dir_all(change.join("decisions")).unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\nWhy: reasons.\n").unwrap();
+    fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
+    fs::write(
+        change.join("20260101000000.todo.md"),
+        "# [ ] work\n\n- [ ] Do it.\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/alpha.md"),
+        "# alpha\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/nested/beta.md"),
+        "# beta\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+    fs::write(change.join("designs/gamma.md"), "# gamma\n\nDesign.\n").unwrap();
+    change
+}
+
+#[test]
+fn renders_documents_in_schema_and_path_order() {
+    let root = unique_temp_root("rendering-order");
+    let change = fixture_change(&root);
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let paths: Vec<String> = documents
+        .iter()
+        .map(|document| document.tree_path.to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        paths,
+        vec![
+            "proposal.md",
+            "specifications/alpha.md",
+            "specifications/nested/beta.md",
+            "designs/gamma.md",
+        ]
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn excludes_control_plane_files() {
+    let root = unique_temp_root("rendering-control-plane");
+    let change = fixture_change(&root);
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    assert!(
+        documents
+            .iter()
+            .all(|document| !document.tree_path.to_string_lossy().contains("meta"))
+    );
+    assert!(
+        documents
+            .iter()
+            .all(|document| !document.tree_path.to_string_lossy().contains("todo"))
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn copies_content_verbatim_with_provenance_paths() {
+    let root = unique_temp_root("rendering-content");
+    let change = fixture_change(&root);
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let alpha = documents
+        .iter()
+        .find(|document| document.tree_path == Path::new("specifications/alpha.md"))
+        .unwrap();
+    assert_eq!(alpha.content, "# alpha\n\n## ADDED Requirements\n");
+    assert_eq!(alpha.artifact_id, "specifications");
+    assert_eq!(
+        alpha.source_note,
+        "proposals/add-demo/specifications/alpha.md"
+    );
+    assert_eq!(
+        alpha.target_path.as_deref(),
+        Some(Path::new("documentation/specifications/alpha.md"))
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn proposal_renders_without_merge_target() {
+    let root = unique_temp_root("rendering-proposal");
+    let change = fixture_change(&root);
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let proposal = documents
+        .iter()
+        .find(|document| document.artifact_id == "proposal")
+        .unwrap();
+    assert_eq!(proposal.target_path, None);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn skips_unauthored_artifacts() {
+    let root = unique_temp_root("rendering-unauthored");
+    let change = root.join("notebook/proposals/add-bare");
+    fs::create_dir_all(change.join("specifications")).unwrap();
+    let documents = render_documents(&change, "proposals/add-bare", &default_schema()).unwrap();
+    assert!(documents.is_empty());
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn rendering_is_deterministic() {
+    let root = unique_temp_root("rendering-deterministic");
+    let change = fixture_change(&root);
+    let first = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let second = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    assert_eq!(first, second);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn write_tree_replaces_stale_contents() {
+    let root = unique_temp_root("rendering-write");
+    let change = fixture_change(&root);
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let destination = root.join("render");
+    fs::create_dir_all(&destination).unwrap();
+    fs::write(destination.join("stale.md"), "left over\n").unwrap();
+    write_tree(&documents, &destination).unwrap();
+    assert!(!destination.join("stale.md").exists());
+    assert!(destination.join("specifications/nested/beta.md").is_file());
+    assert_eq!(
+        fs::read_to_string(destination.join("proposal.md")).unwrap(),
+        "# proposal\n\nWhy: reasons.\n"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn diff_reports_new_documents_from_dev_null() {
+    let root = unique_temp_root("rendering-diff-new");
+    let change = fixture_change(&root);
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let project = root.join("project");
+    fs::create_dir_all(&project).unwrap();
+    let diff = review_diff(&documents, &project).unwrap();
+    assert!(diff.contains(
+        "diff --git a/documentation/specifications/alpha.md \
+         b/documentation/specifications/alpha.md"
+    ));
+    assert!(diff.contains("new file mode 100644"));
+    assert!(diff.contains("--- /dev/null"));
+    assert!(diff.contains("+# alpha"));
+    assert!(!diff.contains("proposal.md"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn diff_omits_unchanged_targets() {
+    let root = unique_temp_root("rendering-diff-unchanged");
+    let change = fixture_change(&root);
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let project = root.join("project");
+    fs::create_dir_all(project.join("documentation/specifications")).unwrap();
+    fs::write(
+        project.join("documentation/specifications/alpha.md"),
+        "# alpha\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+    let diff = review_diff(&documents, &project).unwrap();
+    assert!(!diff.contains("alpha.md"));
+    assert!(diff.contains("nested/beta.md"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn diff_shows_changed_targets() {
+    let root = unique_temp_root("rendering-diff-changed");
+    let change = fixture_change(&root);
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let project = root.join("project");
+    fs::create_dir_all(project.join("documentation/designs")).unwrap();
+    fs::write(
+        project.join("documentation/designs/gamma.md"),
+        "# gamma\n\nOld design.\n",
+    )
+    .unwrap();
+    let diff = review_diff(&documents, &project).unwrap();
+    assert!(diff.contains("a/documentation/designs/gamma.md"));
+    assert!(diff.contains("-Old design."));
+    assert!(diff.contains("+Design."));
+    assert!(!diff.contains("new file mode 100644\n--- a/documentation/designs"));
+    fs::remove_dir_all(&root).unwrap();
+}

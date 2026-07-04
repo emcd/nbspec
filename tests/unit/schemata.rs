@@ -27,6 +27,7 @@ fn default_configuration(root: &std::path::Path) -> Configuration {
     Configuration {
         schema: None,
         project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
+        scratch_directory: None,
     }
 }
 
@@ -175,6 +176,7 @@ fn resolution_prefers_explicit_name_over_configuration() {
     let configuration = Configuration {
         schema: Some("missing-config-schema".to_string()),
         project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
+        scratch_directory: None,
     };
     let schema = resolve_schema(Some(DEFAULT_SCHEMA_NAME), &configuration).unwrap();
     assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
@@ -239,7 +241,7 @@ fn project_settings_override_global_settings() {
     .unwrap();
     let global = SettingsDocument {
         schema: Some("from-global".to_string()),
-        project_configuration_directory: None,
+        ..SettingsDocument::default()
     };
     let configuration = resolve_configuration(&root, global, None).unwrap();
     assert_eq!(configuration.schema.as_deref(), Some("from-project"));
@@ -252,7 +254,7 @@ fn global_settings_apply_when_project_is_silent() {
     fs::create_dir_all(&root).unwrap();
     let global = SettingsDocument {
         schema: Some("from-global".to_string()),
-        project_configuration_directory: None,
+        ..SettingsDocument::default()
     };
     let configuration = resolve_configuration(&root, global, None).unwrap();
     assert_eq!(configuration.schema.as_deref(), Some("from-global"));
@@ -289,8 +291,8 @@ fn global_setting_relocates_project_directory_below_environment() {
     fs::write(from_global.join(SETTINGS_FILE), "schema = \"global-dir\"\n").unwrap();
     fs::write(from_env.join(SETTINGS_FILE), "schema = \"env-dir\"\n").unwrap();
     let global = SettingsDocument {
-        schema: None,
         project_configuration_directory: Some(PathBuf::from("global-choice")),
+        ..SettingsDocument::default()
     };
 
     let without_env = resolve_configuration(&root, global.clone(), None).unwrap();

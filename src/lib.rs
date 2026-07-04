@@ -9,5 +9,6 @@ pub mod cli;
 pub mod configuration;
 pub mod grammar;
 pub mod operations;
+pub mod rendering;
 pub mod schemata;
 pub mod worknotes;

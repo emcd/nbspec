@@ -50,6 +50,12 @@ pub struct SettingsDocument {
     /// root.
     #[serde(default)]
     pub project_configuration_directory: Option<PathBuf>,
+
+    /// Scratch directory for rendered change trees. Relative paths
+    /// resolve against the project root; unset selects the platform
+    /// cache directory.
+    #[serde(default)]
+    pub scratch_directory: Option<PathBuf>,
 }
 
 /// Resolved configuration after layering.
@@ -62,6 +68,10 @@ pub struct Configuration {
     /// Project configuration directory holding the settings file and
     /// the `schemata/` subdirectory.
     pub project_directory: PathBuf,
+
+    /// Scratch directory for rendered change trees. `None` selects
+    /// the platform cache directory.
+    pub scratch_directory: Option<PathBuf>,
 }
 
 /// Loads layered configuration for a project: the user-global settings
@@ -103,9 +113,20 @@ pub fn resolve_configuration(
         project_root.join(directory)
     };
     let project = load_settings_document(&directory.join(SETTINGS_FILE))?;
+    let scratch_directory = project
+        .scratch_directory
+        .or(global.scratch_directory)
+        .map(|scratch| {
+            if scratch.is_absolute() {
+                scratch
+            } else {
+                project_root.join(scratch)
+            }
+        });
     Ok(Configuration {
         schema: project.schema.or(global.schema),
         project_directory: directory,
+        scratch_directory,
     })
 }
 
