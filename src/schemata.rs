@@ -1,0 +1,238 @@
+//! Workflow schema model: artifact sets, dependency graphs, merge targets.
+//!
+//! Follows the OpenSpec 1.x `schema.yaml` mechanism (artifact list with
+//! `generates` paths and a `requires` dependency graph) and extends it
+//! with a per-artifact `target` field naming the repository directory
+//! that receives the artifact's documents at merge. Artifacts without a
+//! `target` render for review but never merge. Unknown fields (such as
+//! the upstream `apply` block) are ignored, so upstream schema files
+//! parse unchanged.
+//!
+//! Schema resolution order: an explicit name (from a change's meta
+//! note), then the project configuration, then the embedded nbspec
+//! default schema. Named schemas load from
+//! `.auxiliary/configuration/nbspec/schemata/<name>/schema.yaml`.
+
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::sync::LazyLock;
+
+use serde::Deserialize;
+use thiserror::Error;
+
+use crate::configuration::{CONFIGURATION_DIR, ProjectConfiguration};
+
+/// Name of the embedded default schema.
+pub const DEFAULT_SCHEMA_NAME: &str = "nbspec-default";
+
+const DEFAULT_SCHEMA_YAML: &str = include_str!("schemata/default.yaml");
+
+static DEFAULT_SCHEMA: LazyLock<WorkflowSchema> =
+    LazyLock::new(|| parse_schema(DEFAULT_SCHEMA_YAML).expect("embedded default schema is valid"));
+
+/// Errors from schema parsing and resolution.
+#[derive(Debug, Error)]
+pub enum SchemaError {
+    #[error("schema not found: {0}")]
+    NotFound(String),
+
+    #[error("schema parse failure: {0}")]
+    Parse(#[from] serde_norway::Error),
+
+    #[error("schema invalid: {0}")]
+    Invalid(String),
+
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// A workflow schema: the artifact set and authoring order for changes.
+#[derive(Clone, Debug, Deserialize)]
+pub struct WorkflowSchema {
+    /// Schema name, referenced by meta notes and project configuration.
+    pub name: String,
+    /// Schema format version.
+    pub version: u32,
+    /// Human-readable summary.
+    #[serde(default)]
+    pub description: String,
+    /// Artifacts in declaration order.
+    pub artifacts: Vec<Artifact>,
+}
+
+/// One artifact declared by a workflow schema.
+#[derive(Clone, Debug, Deserialize)]
+pub struct Artifact {
+    /// Artifact identifier, referenced by `requires` lists.
+    pub id: String,
+    /// Rendered path (or glob) within a rendered change tree.
+    pub generates: String,
+    /// Human-readable summary.
+    #[serde(default)]
+    pub description: String,
+    /// Authoring guidance surfaced to agents.
+    #[serde(default)]
+    pub instruction: Option<String>,
+    /// Template file name, when the schema ships one.
+    #[serde(default)]
+    pub template: Option<String>,
+    /// Artifact ids that must be authored first.
+    #[serde(default)]
+    pub requires: Vec<String>,
+    /// nbspec extension: repository directory receiving this artifact's
+    /// documents at merge. `None` means the artifact never merges.
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+impl WorkflowSchema {
+    /// Returns the artifact with the given id.
+    pub fn artifact(&self, id: &str) -> Option<&Artifact> {
+        self.artifacts.iter().find(|artifact| artifact.id == id)
+    }
+
+    /// Returns artifacts in a dependency-respecting authoring order:
+    /// every artifact appears after all artifacts it requires, with
+    /// declaration order preserved among peers.
+    pub fn authoring_order(&self) -> Vec<&Artifact> {
+        let mut ordered = Vec::with_capacity(self.artifacts.len());
+        let mut placed: HashSet<&str> = HashSet::new();
+        while ordered.len() < self.artifacts.len() {
+            let mut progressed = false;
+            for artifact in &self.artifacts {
+                if placed.contains(artifact.id.as_str()) {
+                    continue;
+                }
+                if artifact
+                    .requires
+                    .iter()
+                    .all(|dependency| placed.contains(dependency.as_str()))
+                {
+                    placed.insert(artifact.id.as_str());
+                    ordered.push(artifact);
+                    progressed = true;
+                }
+            }
+            debug_assert!(progressed, "validated schemas have no cycles");
+            if !progressed {
+                break;
+            }
+        }
+        ordered
+    }
+}
+
+/// Parses and validates a workflow schema from YAML content.
+///
+/// # Errors
+///
+/// Returns [`SchemaError::Parse`] for malformed YAML and
+/// [`SchemaError::Invalid`] for duplicate artifact ids, references to
+/// unknown artifacts, or dependency cycles.
+pub fn parse_schema(yaml: &str) -> Result<WorkflowSchema, SchemaError> {
+    let schema: WorkflowSchema = serde_norway::from_str(yaml)?;
+    validate_schema(&schema)?;
+    Ok(schema)
+}
+
+/// Returns the embedded nbspec default schema.
+pub fn default_schema() -> WorkflowSchema {
+    DEFAULT_SCHEMA.clone()
+}
+
+/// Resolves the workflow schema for a change.
+///
+/// Resolution order: `explicit` (from the change's meta note), then the
+/// project configuration's `schema` field, then the embedded default.
+///
+/// # Errors
+///
+/// Returns [`SchemaError::NotFound`] when a named schema has no
+/// `schema.yaml` under the project configuration directory, and parse
+/// or validation errors for schemas that load but do not conform.
+pub fn resolve_schema(
+    explicit: Option<&str>,
+    configuration: &ProjectConfiguration,
+    project_root: &Path,
+) -> Result<WorkflowSchema, SchemaError> {
+    let name = explicit
+        .or(configuration.schema.as_deref())
+        .unwrap_or(DEFAULT_SCHEMA_NAME);
+    if name == DEFAULT_SCHEMA_NAME {
+        return Ok(default_schema());
+    }
+    let path = project_root
+        .join(CONFIGURATION_DIR)
+        .join("schemata")
+        .join(name)
+        .join("schema.yaml");
+    if !path.is_file() {
+        return Err(SchemaError::NotFound(name.to_string()));
+    }
+    parse_schema(&std::fs::read_to_string(&path)?)
+}
+
+fn validate_schema(schema: &WorkflowSchema) -> Result<(), SchemaError> {
+    let mut indices: HashMap<&str, usize> = HashMap::new();
+    for (index, artifact) in schema.artifacts.iter().enumerate() {
+        if indices.insert(artifact.id.as_str(), index).is_some() {
+            return Err(SchemaError::Invalid(format!(
+                "duplicate artifact id: {}",
+                artifact.id
+            )));
+        }
+    }
+    for artifact in &schema.artifacts {
+        for dependency in &artifact.requires {
+            if !indices.contains_key(dependency.as_str()) {
+                return Err(SchemaError::Invalid(format!(
+                    "artifact {} requires unknown artifact {}",
+                    artifact.id, dependency
+                )));
+            }
+        }
+    }
+    detect_cycles(schema, &indices)
+}
+
+fn detect_cycles(
+    schema: &WorkflowSchema,
+    indices: &HashMap<&str, usize>,
+) -> Result<(), SchemaError> {
+    // Kahn's algorithm: any node left unprocessed participates in a cycle.
+    let count = schema.artifacts.len();
+    let mut in_degree = vec![0usize; count];
+    let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); count];
+    for (index, artifact) in schema.artifacts.iter().enumerate() {
+        for dependency in &artifact.requires {
+            let dependency_index = indices[dependency.as_str()];
+            in_degree[index] += 1;
+            dependents[dependency_index].push(index);
+        }
+    }
+    let mut queue: Vec<usize> = (0..count).filter(|&index| in_degree[index] == 0).collect();
+    let mut processed = 0;
+    while let Some(index) = queue.pop() {
+        processed += 1;
+        for &dependent in &dependents[index] {
+            in_degree[dependent] -= 1;
+            if in_degree[dependent] == 0 {
+                queue.push(dependent);
+            }
+        }
+    }
+    if processed != count {
+        let cyclic: Vec<&str> = schema
+            .artifacts
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| in_degree[*index] > 0)
+            .map(|(_, artifact)| artifact.id.as_str())
+            .collect();
+        return Err(SchemaError::Invalid(format!(
+            "dependency cycle among artifacts: {}",
+            cyclic.join(", ")
+        )));
+    }
+    Ok(())
+}

@@ -5,5 +5,7 @@
 //! same core functions.
 
 pub mod cli;
+pub mod configuration;
 pub mod grammar;
 pub mod operations;
+pub mod schemata;
