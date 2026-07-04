@@ -17,10 +17,10 @@
       proposal, specifications, designs, decisions (reserved); no tasks
       artifact; `generates` targets defaulting to
       `documentation/{specifications,designs,decisions}`
-- [ ] 2.3 Implement change namespace conventions (`proposals/<change-id>/`
+- [x] 2.3 Implement change namespace conventions (`proposals/<change-id>/`
       folders with `specifications/`, `designs/`, `decisions/` subfolders,
       note naming, tags)
-- [ ] 2.4 Implement meta note read/write with JSON schema, status lifecycle,
+- [x] 2.4 Implement meta note read/write with JSON schema, status lifecycle,
       and schema selection
 - [ ] 2.5 Implement `nbspec change new` (scaffold namespace + meta +
       artifact notes; no filesystem writes)
