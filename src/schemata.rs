@@ -187,6 +187,10 @@ fn validate_schema(schema: &WorkflowSchema) -> Result<(), SchemaError> {
         }
     }
     for artifact in &schema.artifacts {
+        validate_artifact_path(&artifact.id, "generates", &artifact.generates)?;
+        if let Some(target) = &artifact.target {
+            validate_artifact_path(&artifact.id, "target", target)?;
+        }
         for dependency in &artifact.requires {
             if !indices.contains_key(dependency.as_str()) {
                 return Err(SchemaError::Invalid(format!(
@@ -197,6 +201,50 @@ fn validate_schema(schema: &WorkflowSchema) -> Result<(), SchemaError> {
         }
     }
     detect_cycles(schema, &indices)
+}
+
+/// Validates a schema-declared path. `generates` paths anchor the
+/// rendered scratch tree and `target` paths anchor repository writes,
+/// so both must stay inside their roots: relative, no parent-directory
+/// components, no backslashes or drive prefixes. Rejecting these at
+/// schema validation time keeps render confined to scratch
+/// destinations and merge confined to the repository.
+fn validate_artifact_path(artifact_id: &str, field: &str, path: &str) -> Result<(), SchemaError> {
+    let invalid = |detail: &str| {
+        Err(SchemaError::Invalid(format!(
+            "artifact {artifact_id} {field} path {path:?} {detail}"
+        )))
+    };
+    if path.is_empty() {
+        return invalid("is empty");
+    }
+    if path.contains('\\') {
+        return invalid("contains a backslash");
+    }
+    let parsed = std::path::Path::new(path);
+    if parsed.is_absolute() || path.starts_with('/') {
+        return invalid("is absolute; paths must stay inside their root");
+    }
+    for component in parsed.components() {
+        match component {
+            std::path::Component::Normal(_) => {}
+            std::path::Component::ParentDir => {
+                return invalid("contains a parent-directory component");
+            }
+            std::path::Component::CurDir => {
+                return invalid("contains a current-directory component");
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                return invalid("is absolute; paths must stay inside their root");
+            }
+        }
+    }
+    // Reject Windows drive prefixes even when parsing on Unix, where
+    // "c:" is a normal component.
+    if path.split('/').any(|segment| segment.contains(':')) {
+        return invalid("contains a drive or scheme prefix");
+    }
+    Ok(())
 }
 
 fn detect_cycles(

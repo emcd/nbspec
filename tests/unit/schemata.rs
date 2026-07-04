@@ -141,6 +141,70 @@ requires = [\"phantom\"]
     ));
 }
 
+fn single_artifact_schema(generates: &str, target: Option<&str>) -> String {
+    let target_line = target
+        .map(|value| format!("target = \"{value}\"\n"))
+        .unwrap_or_default();
+    format!(
+        "\
+name = \"paths\"
+version = 1
+
+[[artifacts]]
+id = \"artifact\"
+generates = \"{generates}\"
+{target_line}"
+    )
+}
+
+#[test]
+fn absolute_generates_path_is_invalid() {
+    let error = parse_schema(&single_artifact_schema("/tmp/escape.md", None)).unwrap_err();
+    assert!(matches!(error, SchemaError::Invalid(_)));
+    assert!(error.to_string().contains("absolute"));
+}
+
+#[test]
+fn parent_directory_target_is_invalid() {
+    let error =
+        parse_schema(&single_artifact_schema("artifact.md", Some("../outside"))).unwrap_err();
+    assert!(matches!(error, SchemaError::Invalid(_)));
+    assert!(error.to_string().contains("parent-directory"));
+}
+
+#[test]
+fn absolute_target_is_invalid() {
+    let error =
+        parse_schema(&single_artifact_schema("artifact.md", Some("/etc/nbspec"))).unwrap_err();
+    assert!(matches!(error, SchemaError::Invalid(_)));
+}
+
+#[test]
+fn nested_parent_directory_generates_is_invalid() {
+    let error = parse_schema(&single_artifact_schema("docs/../../escape.md", None)).unwrap_err();
+    assert!(matches!(error, SchemaError::Invalid(_)));
+}
+
+#[test]
+fn backslash_and_drive_prefix_paths_are_invalid() {
+    // TOML escaping: "docs\\\\escape.md" in the document parses to a
+    // value containing one literal backslash.
+    for path in ["docs\\\\escape.md", "c:/escape.md"] {
+        let error = parse_schema(&single_artifact_schema(path, None)).unwrap_err();
+        assert!(matches!(error, SchemaError::Invalid(_)), "path: {path}");
+    }
+}
+
+#[test]
+fn glob_generates_paths_remain_valid() {
+    let schema = parse_schema(&single_artifact_schema(
+        "specifications/**/*.md",
+        Some("documentation/specifications"),
+    ))
+    .unwrap();
+    assert_eq!(schema.artifacts.len(), 1);
+}
+
 #[test]
 fn dependency_cycle_is_invalid() {
     let content = "\
