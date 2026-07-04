@@ -20,9 +20,10 @@ default `specifications/<spec-name>`, `designs/<design-name>`, and
 
 ### Requirement: Schema-driven artifact model
 nbspec SHALL derive the artifact set, merge-target paths, and authoring
-order for a change from an OpenSpec 1.x workflow schema (`schema.yaml`
-artifact list and `requires` dependency graph), resolved in order: the
-change's meta note, then project config, then the nbspec default schema.
+order for a change from an OpenSpec 1.x workflow schema (artifact list
+and `requires` dependency graph, stored as TOML `schema.toml` files),
+resolved in order: the change's meta note, then project config, then the
+nbspec default schema.
 nbspec SHALL NOT hardcode the artifact types of any particular schema.
 
 #### Scenario: Custom schema honored

@@ -1,34 +1,38 @@
 //! Workflow schema model: artifact sets, dependency graphs, merge targets.
 //!
-//! Follows the OpenSpec 1.x `schema.yaml` mechanism (artifact list with
-//! `generates` paths and a `requires` dependency graph) and extends it
-//! with a per-artifact `target` field naming the repository directory
-//! that receives the artifact's documents at merge. Artifacts without a
-//! `target` render for review but never merge. Unknown fields (such as
-//! the upstream `apply` block) are ignored, so upstream schema files
-//! parse unchanged.
+//! Follows the OpenSpec 1.x workflow schema mechanism (artifact list
+//! with `generates` paths and a `requires` dependency graph),
+//! serialized as TOML, and extends it with a per-artifact `target`
+//! field naming the repository directory that receives the artifact's
+//! documents at merge. Artifacts without a `target` render for review
+//! but never merge. Unknown fields are ignored for forward
+//! compatibility; upstream YAML schemas share the data model and are a
+//! one-time conversion away.
 //!
 //! Schema resolution order: an explicit name (from a change's meta
 //! note), then the project configuration, then the embedded nbspec
 //! default schema. Named schemas load from
-//! `.auxiliary/configuration/nbspec/schemata/<name>/schema.yaml`.
+//! `schemata/<name>/schema.toml` under the resolved project
+//! configuration directory.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
 use std::sync::LazyLock;
 
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::configuration::{CONFIGURATION_DIR, ProjectConfiguration};
+use crate::configuration::Configuration;
 
 /// Name of the embedded default schema.
 pub const DEFAULT_SCHEMA_NAME: &str = "nbspec-default";
 
-const DEFAULT_SCHEMA_YAML: &str = include_str!("schemata/default.yaml");
+/// Schema file name within a named schema's directory.
+pub const SCHEMA_FILE: &str = "schema.toml";
+
+const DEFAULT_SCHEMA_TOML: &str = include_str!("schemata/default.toml");
 
 static DEFAULT_SCHEMA: LazyLock<WorkflowSchema> =
-    LazyLock::new(|| parse_schema(DEFAULT_SCHEMA_YAML).expect("embedded default schema is valid"));
+    LazyLock::new(|| parse_schema(DEFAULT_SCHEMA_TOML).expect("embedded default schema is valid"));
 
 /// Errors from schema parsing and resolution.
 #[derive(Debug, Error)]
@@ -37,7 +41,7 @@ pub enum SchemaError {
     NotFound(String),
 
     #[error("schema parse failure: {0}")]
-    Parse(#[from] serde_norway::Error),
+    Parse(#[from] toml::de::Error),
 
     #[error("schema invalid: {0}")]
     Invalid(String),
@@ -122,15 +126,15 @@ impl WorkflowSchema {
     }
 }
 
-/// Parses and validates a workflow schema from YAML content.
+/// Parses and validates a workflow schema from TOML content.
 ///
 /// # Errors
 ///
-/// Returns [`SchemaError::Parse`] for malformed YAML and
+/// Returns [`SchemaError::Parse`] for malformed TOML and
 /// [`SchemaError::Invalid`] for duplicate artifact ids, references to
 /// unknown artifacts, or dependency cycles.
-pub fn parse_schema(yaml: &str) -> Result<WorkflowSchema, SchemaError> {
-    let schema: WorkflowSchema = serde_norway::from_str(yaml)?;
+pub fn parse_schema(content: &str) -> Result<WorkflowSchema, SchemaError> {
+    let schema: WorkflowSchema = toml::from_str(content)?;
     validate_schema(&schema)?;
     Ok(schema)
 }
@@ -143,17 +147,17 @@ pub fn default_schema() -> WorkflowSchema {
 /// Resolves the workflow schema for a change.
 ///
 /// Resolution order: `explicit` (from the change's meta note), then the
-/// project configuration's `schema` field, then the embedded default.
+/// configuration's `schema` setting, then the embedded default.
 ///
 /// # Errors
 ///
 /// Returns [`SchemaError::NotFound`] when a named schema has no
-/// `schema.yaml` under the project configuration directory, and parse
-/// or validation errors for schemas that load but do not conform.
+/// `schema.toml` under the configuration's schemata directory, and
+/// parse or validation errors for schemas that load but do not
+/// conform.
 pub fn resolve_schema(
     explicit: Option<&str>,
-    configuration: &ProjectConfiguration,
-    project_root: &Path,
+    configuration: &Configuration,
 ) -> Result<WorkflowSchema, SchemaError> {
     let name = explicit
         .or(configuration.schema.as_deref())
@@ -161,11 +165,11 @@ pub fn resolve_schema(
     if name == DEFAULT_SCHEMA_NAME {
         return Ok(default_schema());
     }
-    let path = project_root
-        .join(CONFIGURATION_DIR)
+    let path = configuration
+        .project_directory
         .join("schemata")
         .join(name)
-        .join("schema.yaml");
+        .join(SCHEMA_FILE);
     if !path.is_file() {
         return Err(SchemaError::NotFound(name.to_string()));
     }

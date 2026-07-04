@@ -12,7 +12,8 @@
 ## 2. Notebook Data Model
 
 - [x] 2.1 Implement schema resolution (meta note → project config → nbspec
-      default) and `schema.yaml` parsing (artifacts, `generates`, `requires`)
+      default) and workflow schema parsing (TOML `schema.toml`; artifacts,
+      `generates`, `requires`)
 - [x] 2.2 Author the nbspec default schema, embedded in the binary:
       proposal, specifications, designs, decisions (reserved); no tasks
       artifact; `generates` targets defaulting to

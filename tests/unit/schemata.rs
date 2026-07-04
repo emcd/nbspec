@@ -1,9 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use nbspec::configuration::{CONFIGURATION_DIR, ProjectConfiguration, load_configuration};
+use nbspec::configuration::{
+    Configuration, DEFAULT_PROJECT_CONFIGURATION_DIR, SETTINGS_FILE, SettingsDocument,
+    resolve_configuration,
+};
 use nbspec::schemata::{
-    DEFAULT_SCHEMA_NAME, SchemaError, default_schema, parse_schema, resolve_schema,
+    DEFAULT_SCHEMA_NAME, SCHEMA_FILE, SchemaError, default_schema, parse_schema, resolve_schema,
 };
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -18,6 +21,13 @@ fn unique_temp_root(label: &str) -> PathBuf {
             .as_nanos()
     );
     PathBuf::from(TEMP_TEST_ROOT).join(unique)
+}
+
+fn default_configuration(root: &std::path::Path) -> Configuration {
+    Configuration {
+        schema: None,
+        project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
+    }
 }
 
 #[test]
@@ -70,26 +80,21 @@ fn authoring_order_respects_dependencies() {
 }
 
 #[test]
-fn upstream_style_schema_with_unknown_fields_parses() {
-    let yaml = "\
-name: spec-driven
-version: 1
-description: upstream-style schema
-artifacts:
-  - id: proposal
-    generates: proposal.md
-    template: proposal.md
-    requires: []
-  - id: tasks
-    generates: tasks.md
-    requires: [proposal]
-apply:
-  requires: [tasks]
-  tracks: tasks.md
+fn schema_with_unknown_fields_parses() {
+    let content = "\
+name = \"custom\"
+version = 1
+description = \"schema with unknown keys\"
+future_key = \"ignored\"
+
+[[artifacts]]
+id = \"proposal\"
+generates = \"proposal.md\"
+template = \"proposal.md\"
+requires = []
 ";
-    let schema = parse_schema(yaml).unwrap();
-    assert_eq!(schema.name, "spec-driven");
-    assert_eq!(schema.artifacts.len(), 2);
+    let schema = parse_schema(content).unwrap();
+    assert_eq!(schema.name, "custom");
     assert_eq!(
         schema.artifact("proposal").unwrap().template.as_deref(),
         Some("proposal.md")
@@ -98,45 +103,58 @@ apply:
 
 #[test]
 fn duplicate_artifact_ids_are_invalid() {
-    let yaml = "\
-name: broken
-version: 1
-artifacts:
-  - id: proposal
-    generates: proposal.md
-  - id: proposal
-    generates: proposal2.md
+    let content = "\
+name = \"broken\"
+version = 1
+
+[[artifacts]]
+id = \"proposal\"
+generates = \"proposal.md\"
+
+[[artifacts]]
+id = \"proposal\"
+generates = \"proposal2.md\"
 ";
-    assert!(matches!(parse_schema(yaml), Err(SchemaError::Invalid(_))));
+    assert!(matches!(
+        parse_schema(content),
+        Err(SchemaError::Invalid(_))
+    ));
 }
 
 #[test]
 fn unknown_dependency_is_invalid() {
-    let yaml = "\
-name: broken
-version: 1
-artifacts:
-  - id: proposal
-    generates: proposal.md
-    requires: [phantom]
+    let content = "\
+name = \"broken\"
+version = 1
+
+[[artifacts]]
+id = \"proposal\"
+generates = \"proposal.md\"
+requires = [\"phantom\"]
 ";
-    assert!(matches!(parse_schema(yaml), Err(SchemaError::Invalid(_))));
+    assert!(matches!(
+        parse_schema(content),
+        Err(SchemaError::Invalid(_))
+    ));
 }
 
 #[test]
 fn dependency_cycle_is_invalid() {
-    let yaml = "\
-name: broken
-version: 1
-artifacts:
-  - id: alpha
-    generates: alpha.md
-    requires: [beta]
-  - id: beta
-    generates: beta.md
-    requires: [alpha]
+    let content = "\
+name = \"broken\"
+version = 1
+
+[[artifacts]]
+id = \"alpha\"
+generates = \"alpha.md\"
+requires = [\"beta\"]
+
+[[artifacts]]
+id = \"beta\"
+generates = \"beta.md\"
+requires = [\"alpha\"]
 ";
-    let error = parse_schema(yaml).unwrap_err();
+    let error = parse_schema(content).unwrap_err();
     assert!(matches!(error, SchemaError::Invalid(_)));
     assert!(error.to_string().contains("cycle"));
 }
@@ -145,8 +163,7 @@ artifacts:
 fn resolution_falls_back_to_embedded_default() {
     let root = unique_temp_root("schemata-default");
     fs::create_dir_all(&root).unwrap();
-    let configuration = ProjectConfiguration::default();
-    let schema = resolve_schema(None, &configuration, &root).unwrap();
+    let schema = resolve_schema(None, &default_configuration(&root)).unwrap();
     assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
     fs::remove_dir_all(&root).unwrap();
 }
@@ -155,10 +172,11 @@ fn resolution_falls_back_to_embedded_default() {
 fn resolution_prefers_explicit_name_over_configuration() {
     let root = unique_temp_root("schemata-explicit");
     fs::create_dir_all(&root).unwrap();
-    let configuration = ProjectConfiguration {
+    let configuration = Configuration {
         schema: Some("missing-config-schema".to_string()),
+        project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
     };
-    let schema = resolve_schema(Some(DEFAULT_SCHEMA_NAME), &configuration, &root).unwrap();
+    let schema = resolve_schema(Some(DEFAULT_SCHEMA_NAME), &configuration).unwrap();
     assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
     fs::remove_dir_all(&root).unwrap();
 }
@@ -166,21 +184,22 @@ fn resolution_prefers_explicit_name_over_configuration() {
 #[test]
 fn resolution_loads_project_schema_from_configuration_directory() {
     let root = unique_temp_root("schemata-project");
-    let schema_dir = root.join(CONFIGURATION_DIR).join("schemata").join("custom");
+    let configuration = default_configuration(&root);
+    let schema_dir = configuration.project_directory.join("schemata/custom");
     fs::create_dir_all(&schema_dir).unwrap();
     fs::write(
-        schema_dir.join("schema.yaml"),
+        schema_dir.join(SCHEMA_FILE),
         "\
-name: custom
-version: 1
-artifacts:
-  - id: proposal
-    generates: proposal.md
+name = \"custom\"
+version = 1
+
+[[artifacts]]
+id = \"proposal\"
+generates = \"proposal.md\"
 ",
     )
     .unwrap();
-    let configuration = ProjectConfiguration::default();
-    let schema = resolve_schema(Some("custom"), &configuration, &root).unwrap();
+    let schema = resolve_schema(Some("custom"), &configuration).unwrap();
     assert_eq!(schema.name, "custom");
     assert_eq!(schema.artifacts.len(), 1);
     fs::remove_dir_all(&root).unwrap();
@@ -190,24 +209,95 @@ artifacts:
 fn resolution_reports_missing_named_schema() {
     let root = unique_temp_root("schemata-missing");
     fs::create_dir_all(&root).unwrap();
-    let configuration = ProjectConfiguration::default();
-    let error = resolve_schema(Some("phantom"), &configuration, &root).unwrap_err();
+    let error = resolve_schema(Some("phantom"), &default_configuration(&root)).unwrap_err();
     assert!(matches!(error, SchemaError::NotFound(_)));
     fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
-fn configuration_loads_from_project_and_defaults_when_absent() {
-    let root = unique_temp_root("configuration");
-    let config_dir = root.join(CONFIGURATION_DIR);
-    fs::create_dir_all(&config_dir).unwrap();
+fn configuration_defaults_when_no_files_present() {
+    let root = unique_temp_root("configuration-defaults");
+    fs::create_dir_all(&root).unwrap();
+    let configuration = resolve_configuration(&root, SettingsDocument::default(), None).unwrap();
+    assert_eq!(configuration.schema, None);
+    assert_eq!(
+        configuration.project_directory,
+        root.join(DEFAULT_PROJECT_CONFIGURATION_DIR)
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
 
-    let absent = load_configuration(&root).unwrap();
-    assert_eq!(absent.schema, None);
+#[test]
+fn project_settings_override_global_settings() {
+    let root = unique_temp_root("configuration-layering");
+    let project_dir = root.join(DEFAULT_PROJECT_CONFIGURATION_DIR);
+    fs::create_dir_all(&project_dir).unwrap();
+    fs::write(
+        project_dir.join(SETTINGS_FILE),
+        "schema = \"from-project\"\n",
+    )
+    .unwrap();
+    let global = SettingsDocument {
+        schema: Some("from-global".to_string()),
+        project_configuration_directory: None,
+    };
+    let configuration = resolve_configuration(&root, global, None).unwrap();
+    assert_eq!(configuration.schema.as_deref(), Some("from-project"));
+    fs::remove_dir_all(&root).unwrap();
+}
 
-    fs::write(config_dir.join("config.yaml"), "schema: custom\n").unwrap();
-    let present = load_configuration(&root).unwrap();
-    assert_eq!(present.schema.as_deref(), Some("custom"));
+#[test]
+fn global_settings_apply_when_project_is_silent() {
+    let root = unique_temp_root("configuration-global");
+    fs::create_dir_all(&root).unwrap();
+    let global = SettingsDocument {
+        schema: Some("from-global".to_string()),
+        project_configuration_directory: None,
+    };
+    let configuration = resolve_configuration(&root, global, None).unwrap();
+    assert_eq!(configuration.schema.as_deref(), Some("from-global"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn environment_override_relocates_project_directory() {
+    let root = unique_temp_root("configuration-env");
+    let relocated = root.join("elsewhere/nbspec");
+    fs::create_dir_all(&relocated).unwrap();
+    fs::write(relocated.join(SETTINGS_FILE), "schema = \"relocated\"\n").unwrap();
+    let configuration = resolve_configuration(
+        &root,
+        SettingsDocument::default(),
+        Some(PathBuf::from("elsewhere/nbspec")),
+    )
+    .unwrap();
+    assert_eq!(configuration.schema.as_deref(), Some("relocated"));
+    assert_eq!(
+        configuration.project_directory,
+        root.join("elsewhere/nbspec")
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn global_setting_relocates_project_directory_below_environment() {
+    let root = unique_temp_root("configuration-precedence");
+    let from_global = root.join("global-choice");
+    let from_env = root.join("env-choice");
+    fs::create_dir_all(&from_global).unwrap();
+    fs::create_dir_all(&from_env).unwrap();
+    fs::write(from_global.join(SETTINGS_FILE), "schema = \"global-dir\"\n").unwrap();
+    fs::write(from_env.join(SETTINGS_FILE), "schema = \"env-dir\"\n").unwrap();
+    let global = SettingsDocument {
+        schema: None,
+        project_configuration_directory: Some(PathBuf::from("global-choice")),
+    };
+
+    let without_env = resolve_configuration(&root, global.clone(), None).unwrap();
+    assert_eq!(without_env.schema.as_deref(), Some("global-dir"));
+
+    let with_env = resolve_configuration(&root, global, Some(PathBuf::from("env-choice"))).unwrap();
+    assert_eq!(with_env.schema.as_deref(), Some("env-dir"));
 
     fs::remove_dir_all(&root).unwrap();
 }

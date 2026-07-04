@@ -79,9 +79,8 @@ pub async fn create(
     validate_change_id(change_id)?;
     let notebook_name = resolve_notebook_name(notebook)?;
     let notebook = Some(notebook_name.as_str());
-    let root = project_root();
-    let configuration = load_configuration(&root)?;
-    let schema = resolve_schema(None, &configuration, &root)?;
+    let configuration = load_configuration(&project_root())?;
+    let schema = resolve_schema(None, &configuration)?;
     let folder = change_folder(change_id);
 
     ensure_folder(client, PROPOSALS_FOLDER, notebook).await?;
@@ -256,13 +255,8 @@ async fn load_metadata(
 }
 
 fn schema_for(metadata: &ChangeMetadata) -> Result<WorkflowSchema, OperationError> {
-    let root = project_root();
-    let configuration = load_configuration(&root)?;
-    Ok(resolve_schema(
-        Some(&metadata.schema),
-        &configuration,
-        &root,
-    )?)
+    let configuration = load_configuration(&project_root())?;
+    Ok(resolve_schema(Some(&metadata.schema), &configuration)?)
 }
 
 fn metadata_summary(metadata: &ChangeMetadata) -> String {

@@ -17,8 +17,9 @@ its first external consumer.
 ## Goals / Non-Goals
 
 - Goals:
-  - Notebook data model generalized over OpenSpec 1.x schemas — nbspec reads
-    `schema.yaml`, it does not hardcode artifact types.
+  - Notebook data model generalized over OpenSpec 1.x schemas — nbspec
+    reads workflow schema files (TOML), it does not hardcode artifact
+    types.
   - Notebook-resident changes: the repository never holds in-flight change
     trees; review runs against deterministic scratch renders.
   - Drift-protected merge: durable documents transfer to configured targets
@@ -73,6 +74,19 @@ its first external consumer.
   meta-note SHA linkage a repo-side counterpart that survives notebook
   loss. Tarballs are deterministic (sorted entries, normalized metadata) so
   re-merges are byte-identical.
+- **Layered TOML configuration.** nbspec settings are TOML (`general.toml`),
+  per fleet convention — no YAML in the nbspec-owned configuration surface.
+  Sources layer, lowest to highest precedence: embedded defaults, the
+  user-global settings file (platform configuration directory, e.g.
+  `~/.config/nbspec/general.toml` on XDG systems), and the per-project
+  settings file (`.auxiliary/configuration/nbspec/general.toml` by
+  default). The per-project directory is relocatable via the
+  `NBSPEC_CONFIG_DIR` environment variable or the user-global
+  `project_configuration_directory` setting. Workflow schemata live beside
+  the project settings as `schemata/<name>/schema.toml` — same artifact
+  data model as upstream `schema.yaml`, TOML serialization; the format
+  divergence is free because the conformance oracle only ever sees
+  materialized scratch trees.
 - **No repository `openspec/` tree.** nbspec's default schema is embedded
   in the binary; forked or overriding schemas and project configuration
   live under nbspec-owned paths (`.auxiliary/configuration/nbspec/`). The
@@ -97,8 +111,10 @@ its first external consumer.
   `tasks.md`. The checklist ends with the change.
 - **Format compatibility, not binary dependency.** nbspec keeps the OpenSpec
   1.x requirement/scenario/delta grammar (as of the 1.4 parser rules) and
-  the `schema.yaml` mechanism, with no runtime dependency on the `openspec`
-  binary. It deliberately diverges from the `spec-driven` default layout via
+  the workflow schema mechanism (artifact list, `generates` paths,
+  `requires` graph — serialized as TOML `schema.toml` in nbspec; upstream
+  YAML schemas are a one-time conversion away), with no runtime dependency
+  on the `openspec` binary. It deliberately diverges from the `spec-driven` default layout via
   a forked default schema (below) — divergence expressed through upstream's
   own customization mechanism. Rationale: nbspec must parse the grammar
   anyway for note-level diagnostics; upstream is churning (1.5 `stores` is
@@ -121,7 +137,7 @@ its first external consumer.
   failures are informational, and the oracle retires if nbspec's grammar
   deliberately diverges.
 - **Schema-driven generalization.** The artifact set, `generates` paths, and
-  authoring order come from the resolved schema's `schema.yaml`. This makes
+  authoring order come from the resolved schema's `schema.toml`. This makes
   tiering an emergent property of schema selection (per-change via the meta
   note) instead of an nbspec feature, and makes the default layout a schema
   choice rather than machinery.

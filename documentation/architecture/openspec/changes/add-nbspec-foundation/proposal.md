@@ -22,8 +22,8 @@ record recoverable and searchable by later tooling.
   `specifications/<spec-name>`, `designs/<design-name>`, and
   `decisions/<adr>` (reserved).
 - Derive the artifact set for a change from an OpenSpec 1.x workflow schema
-  (`schema.yaml` artifact list and dependency graph) rather than hardcoding
-  artifact types. Ship an nbspec default schema (forked from `spec-driven`)
+  (artifact list and `requires` dependency graph, stored as TOML
+  `schema.toml` files in nbspec) rather than hardcoding artifact types. Ship an nbspec default schema (forked from `spec-driven`)
   that drops the tasks artifact and targets durable documents at
   configurable directories, defaulting to `documentation/specifications`,
   `documentation/designs`, and `documentation/decisions`.
@@ -73,7 +73,7 @@ None (greenfield project).
   `nb-api` crate being extracted from `nb-mcp-server` (git dependency until
   its first crates.io publish).
 - No runtime dependency on the `openspec` CLI: nbspec keeps the OpenSpec
-  requirement/scenario grammar and the `schema.yaml` mechanism, but
+  requirement/scenario grammar and the workflow schema mechanism, but
   deliberately diverges from the `spec-driven` default layout (no
   `tasks.md`; durable documents under `documentation/`). The upstream CLI
   appears only as an optional, version-pinned CI conformance oracle scoped
