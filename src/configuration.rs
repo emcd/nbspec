@@ -18,7 +18,7 @@ use serde::Deserialize;
 use thiserror::Error;
 
 /// Default repository-relative directory holding nbspec configuration.
-pub const DEFAULT_PROJECT_CONFIGURATION_DIR: &str = ".auxiliary/configuration/nbspec";
+pub const PROJECT_CONFIGURATION_DIR_DEFAULT: &str = ".auxiliary/configuration/nbspec";
 
 /// Environment variable relocating the per-project configuration
 /// directory.
@@ -28,7 +28,7 @@ pub const CONFIGURATION_DIR_ENV: &str = "NBSPEC_CONFIG_DIR";
 pub const SETTINGS_FILE: &str = "general.toml";
 
 /// Default repository-relative directory receiving change archives.
-pub const DEFAULT_ARCHIVE_DIR: &str = "documentation/archives";
+pub const ARCHIVE_DIR_DEFAULT: &str = "documentation/archives";
 
 /// Errors from configuration loading.
 #[derive(Debug, Error)]
@@ -125,7 +125,7 @@ pub fn resolve_configuration(
 ) -> Result<Configuration, ConfigurationError> {
     let directory = environment_directory
         .or_else(|| global.project_configuration_directory.clone())
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_PROJECT_CONFIGURATION_DIR));
+        .unwrap_or_else(|| PathBuf::from(PROJECT_CONFIGURATION_DIR_DEFAULT));
     let directory = if directory.is_absolute() {
         directory
     } else {
@@ -150,7 +150,7 @@ pub fn resolve_configuration(
         archive_directory: project
             .archive_directory
             .or(global.archive_directory)
-            .unwrap_or_else(|| PathBuf::from(DEFAULT_ARCHIVE_DIR)),
+            .unwrap_or_else(|| PathBuf::from(ARCHIVE_DIR_DEFAULT)),
     })
 }
 

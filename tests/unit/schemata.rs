@@ -2,11 +2,11 @@ use std::fs;
 use std::path::PathBuf;
 
 use nbspec::configuration::{
-    Configuration, DEFAULT_PROJECT_CONFIGURATION_DIR, SETTINGS_FILE, SettingsDocument,
+    Configuration, PROJECT_CONFIGURATION_DIR_DEFAULT, SETTINGS_FILE, SettingsDocument,
     resolve_configuration,
 };
 use nbspec::schemata::{
-    DEFAULT_SCHEMA_NAME, SCHEMA_FILE, SchemaError, default_schema, parse_schema, resolve_schema,
+    SCHEMA_FILE, SCHEMA_NAME_DEFAULT, SchemaError, default_schema, parse_schema, resolve_schema,
 };
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -26,7 +26,7 @@ fn unique_temp_root(label: &str) -> PathBuf {
 fn default_configuration(root: &std::path::Path) -> Configuration {
     Configuration {
         schema: None,
-        project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
+        project_directory: root.join(PROJECT_CONFIGURATION_DIR_DEFAULT),
         scratch_directory: None,
         archives: true,
         archive_directory: PathBuf::from("documentation/archives"),
@@ -36,7 +36,7 @@ fn default_configuration(root: &std::path::Path) -> Configuration {
 #[test]
 fn default_schema_declares_expected_artifacts() {
     let schema = default_schema();
-    assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
+    assert_eq!(schema.name, SCHEMA_NAME_DEFAULT);
     let ids: Vec<&str> = schema
         .artifacts
         .iter()
@@ -231,7 +231,7 @@ fn resolution_falls_back_to_embedded_default() {
     let root = unique_temp_root("schemata-default");
     fs::create_dir_all(&root).unwrap();
     let schema = resolve_schema(None, &default_configuration(&root)).unwrap();
-    assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
+    assert_eq!(schema.name, SCHEMA_NAME_DEFAULT);
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -241,13 +241,13 @@ fn resolution_prefers_explicit_name_over_configuration() {
     fs::create_dir_all(&root).unwrap();
     let configuration = Configuration {
         schema: Some("missing-config-schema".to_string()),
-        project_directory: root.join(DEFAULT_PROJECT_CONFIGURATION_DIR),
+        project_directory: root.join(PROJECT_CONFIGURATION_DIR_DEFAULT),
         scratch_directory: None,
         archives: true,
         archive_directory: PathBuf::from("documentation/archives"),
     };
-    let schema = resolve_schema(Some(DEFAULT_SCHEMA_NAME), &configuration).unwrap();
-    assert_eq!(schema.name, DEFAULT_SCHEMA_NAME);
+    let schema = resolve_schema(Some(SCHEMA_NAME_DEFAULT), &configuration).unwrap();
+    assert_eq!(schema.name, SCHEMA_NAME_DEFAULT);
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -292,7 +292,7 @@ fn configuration_defaults_when_no_files_present() {
     assert_eq!(configuration.schema, None);
     assert_eq!(
         configuration.project_directory,
-        root.join(DEFAULT_PROJECT_CONFIGURATION_DIR)
+        root.join(PROJECT_CONFIGURATION_DIR_DEFAULT)
     );
     fs::remove_dir_all(&root).unwrap();
 }
@@ -300,7 +300,7 @@ fn configuration_defaults_when_no_files_present() {
 #[test]
 fn project_settings_override_global_settings() {
     let root = unique_temp_root("configuration-layering");
-    let project_dir = root.join(DEFAULT_PROJECT_CONFIGURATION_DIR);
+    let project_dir = root.join(PROJECT_CONFIGURATION_DIR_DEFAULT);
     fs::create_dir_all(&project_dir).unwrap();
     fs::write(
         project_dir.join(SETTINGS_FILE),
@@ -345,7 +345,7 @@ fn archives_default_enabled_at_default_directory() {
 #[test]
 fn project_settings_disable_and_relocate_archives() {
     let root = unique_temp_root("configuration-archives-project");
-    let project_dir = root.join(DEFAULT_PROJECT_CONFIGURATION_DIR);
+    let project_dir = root.join(PROJECT_CONFIGURATION_DIR_DEFAULT);
     fs::create_dir_all(&project_dir).unwrap();
     fs::write(
         project_dir.join(SETTINGS_FILE),
