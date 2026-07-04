@@ -1,28 +1,31 @@
 ## 1. Foundation
 
-- [ ] 1.1 Add `nb-api` git dependency (pinned rev) and `clap` to Cargo.toml
-- [ ] 1.2 Implement CLI skeleton over library-boundary core functions:
-      `nbspec change new|show|status`, `nbspec render`, `nbspec merge`,
+- [x] 1.1 Add `nb-api` dependency (crates.io 0.1.0 — published before
+      implementation began, superseding the planned pinned-rev git
+      dependency) and `clap` to Cargo.toml
+- [x] 1.2 Implement CLI skeleton over library-boundary core functions:
+      `nbspec create`, `nbspec display`, `nbspec render`, `nbspec merge`,
       `nbspec validate`
-- [ ] 1.3 Implement the OpenSpec grammar module: requirement/scenario/delta
+- [x] 1.3 Implement the OpenSpec grammar module: requirement/scenario/delta
       parsing (shared by validation and diagnostic mapping)
 
 ## 2. Notebook Data Model
 
-- [ ] 2.1 Implement schema resolution (meta note → project config → nbspec
-      default) and `schema.yaml` parsing (artifacts, `generates`, `requires`)
-- [ ] 2.2 Author the nbspec default schema, embedded in the binary:
+- [x] 2.1 Implement schema resolution (meta note → project config → nbspec
+      default) and workflow schema parsing (TOML `schema.toml`; artifacts,
+      `generates`, `requires`)
+- [x] 2.2 Author the nbspec default schema, embedded in the binary:
       proposal, specifications, designs, decisions (reserved); no tasks
       artifact; `generates` targets defaulting to
       `documentation/{specifications,designs,decisions}`
-- [ ] 2.3 Implement change namespace conventions (`proposals/<change-id>/`
+- [x] 2.3 Implement change namespace conventions (`proposals/<change-id>/`
       folders with `specifications/`, `designs/`, `decisions/` subfolders,
       note naming, tags)
-- [ ] 2.4 Implement meta note read/write with JSON schema, status lifecycle,
+- [x] 2.4 Implement meta note read/write with JSON schema, status lifecycle,
       and schema selection
-- [ ] 2.5 Implement `nbspec change new` (scaffold namespace + meta +
+- [x] 2.5 Implement `nbspec create` (scaffold namespace + meta +
       artifact notes; no filesystem writes)
-- [ ] 2.6 Implement `nbspec change show` and `nbspec change status`
+- [x] 2.6 Implement `nbspec display` (short and `--full` forms)
       (artifact readiness per `requires` graph, `work` todo progress)
 
 ## 3. Rendering and Merge
@@ -36,7 +39,7 @@
       documents) to configured targets with provenance headers and content
       hashes; error on MODIFIED deltas (deferred capability)
 - [ ] 3.5 Implement drift detection on merge targets with `--force`
-      override; surface drift in `nbspec change status`
+      override; surface drift in `nbspec display`
 - [ ] 3.6 Implement merge-time change archives: deterministic tar + zstd of
       rendered tree, meta, and `work` snapshot to the configured archive
       directory; configuration toggle; warn when `.gitattributes` lacks an
@@ -58,7 +61,7 @@
 
 - [ ] 5.1 Unit tests: schema parsing, todo grammar, provenance/drift, meta
       lifecycle
-- [ ] 5.2 Integration tests: end-to-end change new → author → render →
+- [ ] 5.2 Integration tests: end-to-end create → author → render →
       validate → merge against a fixture notebook
 - [ ] 5.3 Update README status section; document CLI usage
 - [ ] 5.4 `cargo clippy --all-targets --all-features -- -D warnings` and

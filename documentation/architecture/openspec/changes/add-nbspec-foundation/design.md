@@ -17,8 +17,9 @@ its first external consumer.
 ## Goals / Non-Goals
 
 - Goals:
-  - Notebook data model generalized over OpenSpec 1.x schemas — nbspec reads
-    `schema.yaml`, it does not hardcode artifact types.
+  - Notebook data model generalized over OpenSpec 1.x schemas — nbspec
+    reads workflow schema files (TOML), it does not hardcode artifact
+    types.
   - Notebook-resident changes: the repository never holds in-flight change
     trees; review runs against deterministic scratch renders.
   - Drift-protected merge: durable documents transfer to configured targets
@@ -73,6 +74,19 @@ its first external consumer.
   meta-note SHA linkage a repo-side counterpart that survives notebook
   loss. Tarballs are deterministic (sorted entries, normalized metadata) so
   re-merges are byte-identical.
+- **Layered TOML configuration.** nbspec settings are TOML (`general.toml`),
+  per fleet convention — no YAML in the nbspec-owned configuration surface.
+  Sources layer, lowest to highest precedence: embedded defaults, the
+  user-global settings file (platform configuration directory, e.g.
+  `~/.config/nbspec/general.toml` on XDG systems), and the per-project
+  settings file (`.auxiliary/configuration/nbspec/general.toml` by
+  default). The per-project directory is relocatable via the
+  `NBSPEC_CONFIG_DIR` environment variable or the user-global
+  `project_configuration_directory` setting. Workflow schemata live beside
+  the project settings as `schemata/<name>/schema.toml` — same artifact
+  data model as upstream `schema.yaml`, TOML serialization; the format
+  divergence is free because the conformance oracle only ever sees
+  materialized scratch trees.
 - **No repository `openspec/` tree.** nbspec's default schema is embedded
   in the binary; forked or overriding schemas and project configuration
   live under nbspec-owned paths (`.auxiliary/configuration/nbspec/`). The
@@ -93,12 +107,14 @@ its first external consumer.
   (`meta`, `work`) stay short; the convention binds folder names, not
   notes.
 - **Tasks never materialize.** The `work` todo note is the live execution
-  record, surfaced through `nbspec change status`; there is no generated
+  record, surfaced through `nbspec display`; there is no generated
   `tasks.md`. The checklist ends with the change.
 - **Format compatibility, not binary dependency.** nbspec keeps the OpenSpec
   1.x requirement/scenario/delta grammar (as of the 1.4 parser rules) and
-  the `schema.yaml` mechanism, with no runtime dependency on the `openspec`
-  binary. It deliberately diverges from the `spec-driven` default layout via
+  the workflow schema mechanism (artifact list, `generates` paths,
+  `requires` graph — serialized as TOML `schema.toml` in nbspec; upstream
+  YAML schemas are a one-time conversion away), with no runtime dependency
+  on the `openspec` binary. It deliberately diverges from the `spec-driven` default layout via
   a forked default schema (below) — divergence expressed through upstream's
   own customization mechanism. Rationale: nbspec must parse the grammar
   anyway for note-level diagnostics; upstream is churning (1.5 `stores` is
@@ -121,7 +137,7 @@ its first external consumer.
   failures are informational, and the oracle retires if nbspec's grammar
   deliberately diverges.
 - **Schema-driven generalization.** The artifact set, `generates` paths, and
-  authoring order come from the resolved schema's `schema.yaml`. This makes
+  authoring order come from the resolved schema's `schema.toml`. This makes
   tiering an emergent property of schema selection (per-change via the meta
   note) instead of an nbspec feature, and makes the default layout a schema
   choice rather than machinery.
@@ -130,7 +146,7 @@ its first external consumer.
   drifted target without `--force`. Rule of thumb: hand edits belong in
   notes; merge targets are nbspec's to write.
 - **Single repository-write path, no commits.** Only `merge` writes to the
-  repository — durable documents and the change archive. `change new`
+  repository — durable documents and the change archive. `create`
   scaffolds nothing on the filesystem, and `render` targets scratch
   workspaces exclusively. `merge` never creates git commits: committing
   stays a human/agent act under the existing commit conventions; a future
@@ -140,12 +156,11 @@ its first external consumer.
   git repo) and project repo cannot commit atomically. Compensation: the
   meta note records project-repo commit SHAs at status transitions; the
   linkage is recoverable, not transactional.
-- **`nb-api` via git dependency** pinned to the `nb-mcp-server` repository
-  until the crate's first crates.io publish (which the extract-nb-api change
-  guarantees no later than the first post-split server release), then a
-  version dependency.
-- **CLI skeleton with clap**, subcommand layout `nbspec change <verb>` and
-  top-level `nbspec render|merge|validate`. Core operations live in library
+- **`nb-api` via crates.io version dependency.** The plan was a git pin
+  until the crate's first publish, but publication (0.1.0) landed before
+  implementation began, so nbspec uses a version dependency from the start.
+- **CLI skeleton with clap**, flat verbs `nbspec
+  create|display|render|merge|validate`. Core operations live in library
   functions the CLI wraps thinly, keeping the fast-follow MCP surface a
   second thin wrapper rather than a rework.
 - **Rendering is deterministic.** Same notes in, byte-identical tree out;
@@ -161,7 +176,7 @@ its first external consumer.
   are a planned follow-up) → nbspec keeps its own thin parsing layer
   initially and sheds it as typed accessors land upstream.
 - **Hand edits to merge targets between merges** → provenance headers with
-  content hashes detect drift; `nbspec change status` reports it; `merge`
+  content hashes detect drift; `nbspec display` reports it; `merge`
   refuses without `--force`. Drift pressure is lower than in the old
   write-tree model since targets change only at merge time.
 - **Review without repository commits** — reviewers no longer get a proposal

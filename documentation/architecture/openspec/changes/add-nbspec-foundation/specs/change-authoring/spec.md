@@ -20,9 +20,10 @@ default `specifications/<spec-name>`, `designs/<design-name>`, and
 
 ### Requirement: Schema-driven artifact model
 nbspec SHALL derive the artifact set, merge-target paths, and authoring
-order for a change from an OpenSpec 1.x workflow schema (`schema.yaml`
-artifact list and `requires` dependency graph), resolved in order: the
-change's meta note, then project config, then the nbspec default schema.
+order for a change from an OpenSpec 1.x workflow schema (artifact list
+and `requires` dependency graph, stored as TOML `schema.toml` files),
+resolved in order: the change's meta note, then project config, then the
+nbspec default schema.
 nbspec SHALL NOT hardcode the artifact types of any particular schema.
 
 #### Scenario: Custom schema honored
@@ -51,20 +52,21 @@ commit SHAs at status transitions that correspond to repository writes.
   refreshed, and no other note content is modified
 
 ### Requirement: Change lifecycle CLI
-nbspec SHALL provide CLI verbs to create a change (`nbspec change new`),
-inspect its content (`nbspec change show`), and report its artifact, todo,
-and drift state (`nbspec change status`). Creating a change SHALL NOT write
-to the repository working tree.
+nbspec SHALL provide flat CLI verbs to create a change (`nbspec create`)
+and to display one (`nbspec display`): the short form SHALL report the
+change's artifact, todo, and drift state, and a `--full` option SHALL
+additionally include artifact note contents. Creating a change SHALL NOT
+write to the repository working tree.
 
 #### Scenario: Creating a change
-- **WHEN** `nbspec change new add-foo --title "Add foo"` runs against a
+- **WHEN** `nbspec create add-foo --title "Add foo"` runs against a
   project notebook
 - **THEN** the notebook namespace `proposals/add-foo/` is created with a
   populated `meta` note and empty artifact notes per the resolved schema,
   and the repository working tree is unmodified
 
-#### Scenario: Status of a change
-- **WHEN** `nbspec change status add-foo` runs
+#### Scenario: Displaying a change
+- **WHEN** `nbspec display add-foo` runs
 - **THEN** the output reports which artifact notes have content, which are
   blocked by unsatisfied dependencies, `work` todo progress, and the meta
   status

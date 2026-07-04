@@ -22,8 +22,8 @@ record recoverable and searchable by later tooling.
   `specifications/<spec-name>`, `designs/<design-name>`, and
   `decisions/<adr>` (reserved).
 - Derive the artifact set for a change from an OpenSpec 1.x workflow schema
-  (`schema.yaml` artifact list and dependency graph) rather than hardcoding
-  artifact types. Ship an nbspec default schema (forked from `spec-driven`)
+  (artifact list and `requires` dependency graph, stored as TOML
+  `schema.toml` files in nbspec) rather than hardcoding artifact types. Ship an nbspec default schema (forked from `spec-driven`)
   that drops the tasks artifact and targets durable documents at
   configurable directories, defaulting to `documentation/specifications`,
   `documentation/designs`, and `documentation/decisions`.
@@ -42,11 +42,12 @@ record recoverable and searchable by later tooling.
 - Implement `nbspec validate`: native validation of the requirement,
   scenario, and delta grammar with note-level diagnostics — no runtime
   dependency on the `openspec` binary.
-- Provide the CLI skeleton (`nbspec change new|show|status`, `render`,
-  `merge`, `validate`) over the `nb-api` crate.
+- Provide the CLI skeleton (`nbspec create`, `display`, `render`,
+  `merge`, `validate` — flat verbs, matching the tool vocabulary planned
+  for the MCP surface) over the `nb-api` crate.
 
 Task checklists are never materialized: the `work` todo note is the live
-execution record, surfaces through `nbspec change status`, and simply ends
+execution record, surfaces through `nbspec display`, and simply ends
 with the change. There is no generated `tasks.md`.
 
 ## Capabilities
@@ -69,10 +70,10 @@ None (greenfield project).
 ## Impact
 
 - Affected code: new `nbspec` binary crate (this repository); depends on the
-  `nb-api` crate being extracted from `nb-mcp-server` (git dependency until
-  its first crates.io publish).
+  `nb-api` crate (crates.io version dependency — published before
+  implementation began, mooting the planned interim git pin).
 - No runtime dependency on the `openspec` CLI: nbspec keeps the OpenSpec
-  requirement/scenario grammar and the `schema.yaml` mechanism, but
+  requirement/scenario grammar and the workflow schema mechanism, but
   deliberately diverges from the `spec-driven` default layout (no
   `tasks.md`; durable documents under `documentation/`). The upstream CLI
   appears only as an optional, version-pinned CI conformance oracle scoped
