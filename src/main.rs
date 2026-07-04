@@ -13,17 +13,20 @@ async fn main() -> anyhow::Result<()> {
     };
     let client = nb_api::NbClient::new(&config)?;
     let output = match &arguments.command {
-        Command::Change(change_command) => match change_command {
-            ChangeCommand::New { change_id, title } => {
-                operations::change_new(&client, change_id, title.as_deref()).await?
+        Command::Change(change_command) => {
+            let notebook = arguments.notebook.as_deref();
+            match change_command {
+                ChangeCommand::New { change_id, title } => {
+                    operations::change_new(&client, notebook, change_id, title.as_deref()).await?
+                }
+                ChangeCommand::Show { change_id } => {
+                    operations::change_show(&client, notebook, change_id).await?
+                }
+                ChangeCommand::Status { change_id } => {
+                    operations::change_status(&client, notebook, change_id).await?
+                }
             }
-            ChangeCommand::Show { change_id } => {
-                operations::change_show(&client, change_id).await?
-            }
-            ChangeCommand::Status { change_id } => {
-                operations::change_status(&client, change_id).await?
-            }
-        },
+        }
         Command::Render { change_id, diff } => {
             operations::render(&client, change_id, *diff).await?
         }

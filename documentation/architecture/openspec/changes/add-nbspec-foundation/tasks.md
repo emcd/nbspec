@@ -22,9 +22,9 @@
       note naming, tags)
 - [x] 2.4 Implement meta note read/write with JSON schema, status lifecycle,
       and schema selection
-- [ ] 2.5 Implement `nbspec change new` (scaffold namespace + meta +
+- [x] 2.5 Implement `nbspec change new` (scaffold namespace + meta +
       artifact notes; no filesystem writes)
-- [ ] 2.6 Implement `nbspec change show` and `nbspec change status`
+- [x] 2.6 Implement `nbspec change show` and `nbspec change status`
       (artifact readiness per `requires` graph, `work` todo progress)
 
 ## 3. Rendering and Merge
