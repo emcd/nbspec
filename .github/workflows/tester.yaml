@@ -36,7 +36,12 @@ jobs:
 
   test:
     needs: [initialize, lint]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.initialize.outputs.platforms) }}
+        exclude: ${{ fromJSON(needs.initialize.outputs.matrix-exclusions) }}
+    runs-on: ${{ matrix.platform }}
     steps:
 
       - name: Checkout
@@ -70,7 +75,12 @@ jobs:
 
   conformance:
     needs: [initialize, test]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.initialize.outputs.platforms) }}
+        exclude: ${{ fromJSON(needs.initialize.outputs.matrix-exclusions) }}
+    runs-on: ${{ matrix.platform }}
     steps:
 
       - name: Checkout
@@ -85,7 +95,7 @@ jobs:
         run: bash tests/conformance/oracle.sh
 
   openspec-gate:
-    needs: [initialize, test]
+    needs: [initialize]
     runs-on: ubuntu-latest
     steps:
 
