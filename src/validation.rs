@@ -11,13 +11,20 @@
 use std::collections::HashSet;
 use std::fmt;
 
+use serde::Serialize;
+
 use crate::changes::{ArtifactLayout, artifact_layout, note_has_authored_content};
 use crate::grammar::{Requirement, parse_delta_specification};
 use crate::rendering::RenderedDocument;
 use crate::schemata::{ArtifactGrammar, WorkflowSchema};
 
 /// One validation violation, anchored to a notebook note.
-#[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// Serialized verbatim into the MCP `validate` tool's structured
+/// return — the field names below are the wire-format contract.
+/// `line` is null when the failure is required-artifact or
+/// document-level rather than line-anchored.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct Diagnostic {
     /// Notebook note path, for example
     /// `proposals/add-foo/specifications/user-auth.md`.
