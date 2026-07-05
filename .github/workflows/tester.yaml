@@ -47,6 +47,14 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Install nb
+        run: npm install -g nb.sh@7.24.0
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
