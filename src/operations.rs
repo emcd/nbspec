@@ -21,12 +21,14 @@ use thiserror::Error;
 use crate::archives::{ArchiveEntry, ArchiveError, build_archive, gitattributes_covers_lfs};
 use crate::changes::{
     ChangeError, ChangeMetadata, META_NOTE, PROPOSALS_FOLDER, WORK_NOTE, change_folder,
-    namespace_folders, namespace_notes, parse_meta_note, render_meta_note, validate_change_id,
+    namespace_folders, namespace_notes, note_has_authored_content, parse_meta_note,
+    render_meta_note, validate_change_id,
 };
 use crate::configuration::{Configuration, ConfigurationError, load_configuration};
 use crate::merging::{MergeError, merge_documents, target_status};
 use crate::rendering::{RenderError, render_documents, review_diff, write_tree};
 use crate::schemata::{SchemaError, WorkflowSchema, resolve_schema};
+use crate::validation::{ValidationFailure, validate_change};
 use crate::worknotes::{WorkChecklist, WorkNoteError, parse_work_note};
 
 /// Tag applied to nbspec-managed control-plane notes.
@@ -35,9 +37,6 @@ const META_TAG: &str = "nbspec";
 /// Errors from nbspec core operations.
 #[derive(Debug, Error)]
 pub enum OperationError {
-    #[error("operation not implemented yet: {0}")]
-    Unimplemented(&'static str),
-
     #[error("change already exists: {0}")]
     AlreadyExists(String),
 
@@ -79,6 +78,9 @@ pub enum OperationError {
 
     #[error(transparent)]
     Archive(#[from] ArchiveError),
+
+    #[error(transparent)]
+    Invalid(#[from] ValidationFailure),
 
     #[error("cannot write archive {path}: {source}")]
     ArchiveWrite {
@@ -414,24 +416,54 @@ fn write_change_archive(
     Ok(output)
 }
 
-/// Validates a change against the OpenSpec grammar.
+/// Validates a change against the OpenSpec grammar and its schema.
+///
+/// Checks schema-required artifacts for authored content and
+/// delta-specification documents for grammar conformance, natively —
+/// no external binary. A valid change yields a single summary line
+/// and process success; an invalid change yields
+/// [`ValidationFailure`] (wrapped), whose display lists one
+/// `note:line: [artifact] message` diagnostic per line, anchored to
+/// notebook notes rather than filesystem paths. Neither outcome
+/// touches the repository working tree or the scratch workspace.
 ///
 /// # Errors
 ///
-/// Returns [`OperationError::Unimplemented`] until tasks 4.1 through 4.3 land.
-pub async fn validate(_client: &NbClient, _change_id: &str) -> OperationResult {
-    Err(OperationError::Unimplemented("validate"))
+/// Returns [`OperationError::Invalid`] listing every violation,
+/// [`OperationError::ChangeNotFound`] when the change namespace is
+/// absent, and notebook, configuration, schema, or IO errors
+/// otherwise.
+pub async fn validate(
+    client: &NbClient,
+    notebook: Option<&str>,
+    change_id: &str,
+) -> OperationResult {
+    let context = load_change_context(client, notebook, change_id).await?;
+    let diagnostics = validate_change(&context.documents, &context.schema, &context.folder);
+    if !diagnostics.is_empty() {
+        return Err(OperationError::Invalid(ValidationFailure {
+            change_id: change_id.to_string(),
+            diagnostics,
+        }));
+    }
+    Ok(format!(
+        "Change {change_id} is valid: {count} documents checked against schema {schema}.",
+        count = context.documents.len(),
+        schema = context.schema.name,
+    ))
 }
 
 /// Resolved context shared by operations that read a change from the
-/// notebook filesystem (render, merge): the effective notebook and
-/// project roots, loaded configuration, and the change's rendered
-/// document list.
+/// notebook filesystem (render, merge, validate): the effective
+/// notebook and project roots, loaded configuration, resolved
+/// schema, and the change's rendered document list.
 struct ChangeContext {
     notebook_name: String,
     root: PathBuf,
     configuration: Configuration,
+    folder: String,
     change_directory: PathBuf,
+    schema: WorkflowSchema,
     documents: Vec<crate::rendering::RenderedDocument>,
 }
 
@@ -472,7 +504,9 @@ async fn load_change_context(
         notebook_name,
         root,
         configuration,
+        folder,
         change_directory,
+        schema,
         documents,
     })
 }
@@ -660,16 +694,4 @@ async fn artifact_has_content(
             listing != "(empty)" && !listing.starts_with("0 ")
         }
     }
-}
-
-/// Reports whether note content goes beyond its title heading and
-/// scaffold placeholder comment.
-fn note_has_authored_content(content: &str) -> bool {
-    content.lines().any(|line| {
-        let trimmed = line.trim();
-        let scaffold = trimmed.is_empty()
-            || trimmed.starts_with('#')
-            || (trimmed.starts_with("<!--") && trimmed.ends_with("-->"));
-        !scaffold
-    })
 }

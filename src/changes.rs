@@ -73,6 +73,19 @@ pub fn change_folder(change_id: &str) -> String {
     format!("{PROPOSALS_FOLDER}/{change_id}")
 }
 
+/// Reports whether note content goes beyond its title heading and
+/// scaffold placeholder comment — i.e. whether an artifact note has
+/// been authored since `nbspec create` scaffolded it.
+pub fn note_has_authored_content(content: &str) -> bool {
+    content.lines().any(|line| {
+        let trimmed = line.trim();
+        let scaffold = trimmed.is_empty()
+            || trimmed.starts_with('#')
+            || (trimmed.starts_with("<!--") && trimmed.ends_with("-->"));
+        !scaffold
+    })
+}
+
 /// Notebook layout of one schema artifact within a change namespace.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ArtifactLayout {

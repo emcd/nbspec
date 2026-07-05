@@ -62,7 +62,12 @@ pub enum Command {
         force: bool,
     },
 
-    /// Validates a change against the OpenSpec grammar.
+    /// Validates a change against the OpenSpec grammar and its schema.
+    ///
+    /// Exits zero with a one-line summary when the change is valid.
+    /// Otherwise exits nonzero with a summary line followed by one
+    /// diagnostic per line in `note:line: [artifact] message` form,
+    /// each anchored to a notebook note.
     Validate {
         /// Change identifier (notebook folder under `proposals/`).
         change_id: String,
