@@ -1,10 +1,24 @@
 //! Command-line interface definitions.
 //!
-//! Declares the argument grammar only; command execution lives in
-//! [`crate::operations`]. All commands are flat verbs operating on a
-//! change, mirroring the tool vocabulary planned for the MCP surface.
+//! Declares the argument grammar and terminal failure presentation;
+//! command execution lives in [`crate::operations`]. All commands are
+//! flat verbs operating on a change, mirroring the tool vocabulary
+//! planned for the MCP surface.
 
 use clap::{Parser, Subcommand};
+
+use crate::operations::OperationError;
+
+/// Formats a failed operation for the terminal. A validation failure
+/// prints its report verbatim — a summary line followed by
+/// `note:line: [artifact] message` diagnostic lines that agents
+/// parse — while every other failure carries an `Error:` banner.
+pub fn failure_report(error: &OperationError) -> String {
+    match error {
+        OperationError::Invalid(failure) => failure.to_string(),
+        other => format!("Error: {other}"),
+    }
+}
 
 /// Notebook-first OpenSpec orchestration.
 #[derive(Debug, Parser)]

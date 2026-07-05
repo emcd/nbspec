@@ -1,5 +1,6 @@
 mod archives;
 mod changes;
+mod cli;
 mod grammar;
 mod merging;
 mod rendering;

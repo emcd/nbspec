@@ -56,9 +56,10 @@ nbspec render add-foo --diff | difit --clean
 nbspec merge add-foo
 
 # Native OpenSpec-grammar validation, no external binary. Exits zero
-# with a one-line summary when valid; otherwise exits nonzero with one
-# "note:line: [artifact] message" diagnostic per line, each anchored
-# to a notebook note rather than a filesystem path.
+# with a one-line summary when valid; otherwise exits nonzero, with a
+# summary line and one "note:line: [artifact] message" diagnostic per
+# line on stderr, each anchored to a notebook note rather than a
+# filesystem path.
 nbspec validate add-foo
 ```
 
