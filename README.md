@@ -19,8 +19,9 @@ TOML) with no runtime dependency on the `openspec` binary.
 Implemented: change authoring (`create`, `display`), deterministic
 rendering with review diffs (`render`), drift-protected merge with
 provenance headers and change archives (`merge`), native grammar
-validation (`validate`). Pending: integration test suite, dogfooding
-transition.
+validation (`validate`), and an end-to-end integration suite driving
+the compiled binary. Pending: dogfooding transition (gated on
+template-level support for opting out of the OpenSpec tree).
 
 A development-time conformance oracle (`tests/conformance/oracle.sh`)
 renders shared grammar fixtures into the upstream layout and runs a
