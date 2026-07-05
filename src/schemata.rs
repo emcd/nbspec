@@ -87,6 +87,23 @@ pub struct Artifact {
     /// documents at merge. `None` means the artifact never merges.
     #[serde(default)]
     pub target: Option<String>,
+    /// nbspec extension: whether a change must author this artifact
+    /// to pass `nbspec validate`. Defaults to optional.
+    #[serde(default)]
+    pub required: bool,
+    /// nbspec extension: structured grammar this artifact's documents
+    /// must satisfy under `nbspec validate`. `None` means free-form.
+    #[serde(default)]
+    pub grammar: Option<ArtifactGrammar>,
+}
+
+/// Structured grammars nbspec validates artifact documents against.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArtifactGrammar {
+    /// OpenSpec delta specification: `## ADDED|MODIFIED|REMOVED|RENAMED
+    /// Requirements` sections holding requirement and scenario blocks.
+    DeltaSpecification,
 }
 
 impl WorkflowSchema {

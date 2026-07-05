@@ -10,6 +10,7 @@ id = "proposal"
 generates = "proposal.md"
 description = "Proposal note outlining why the change is needed"
 requires = []
+required = true
 instruction = """
 Write the proposal note that establishes WHY this change is needed.
 
@@ -35,6 +36,8 @@ generates = "specifications/**/*.md"
 target = "documentation/specifications"
 description = "Delta specifications defining what the system should do"
 requires = ["proposal"]
+required = true
+grammar = "delta-specification"
 instruction = """
 Write one specification note per capability listed in the proposal,
 under the change's `specifications/<capability>` folder.

@@ -14,4 +14,5 @@ pub mod operations;
 pub mod provenance;
 pub mod rendering;
 pub mod schemata;
+pub mod validation;
 pub mod worknotes;

@@ -6,7 +6,8 @@ use nbspec::configuration::{
     resolve_configuration,
 };
 use nbspec::schemata::{
-    SCHEMA_FILE, SCHEMA_NAME_DEFAULT, SchemaError, default_schema, parse_schema, resolve_schema,
+    ArtifactGrammar, SCHEMA_FILE, SCHEMA_NAME_DEFAULT, SchemaError, default_schema, parse_schema,
+    resolve_schema,
 };
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -65,6 +66,47 @@ fn default_schema_targets_documentation_directories() {
         schema.artifact("decisions").unwrap().target.as_deref(),
         Some("documentation/decisions")
     );
+}
+
+#[test]
+fn default_schema_marks_required_artifacts_and_grammars() {
+    let schema = default_schema();
+    let proposal = schema.artifact("proposal").unwrap();
+    assert!(proposal.required);
+    assert_eq!(proposal.grammar, None);
+    let specifications = schema.artifact("specifications").unwrap();
+    assert!(specifications.required);
+    assert_eq!(
+        specifications.grammar,
+        Some(ArtifactGrammar::DeltaSpecification)
+    );
+    for id in ["designs", "decisions"] {
+        let artifact = schema.artifact(id).unwrap();
+        assert!(!artifact.required);
+        assert_eq!(artifact.grammar, None);
+    }
+}
+
+#[test]
+fn artifact_extensions_default_to_optional_free_form() {
+    let schema = parse_schema(&single_artifact_schema("artifact.md", None)).unwrap();
+    let artifact = schema.artifact("artifact").unwrap();
+    assert!(!artifact.required);
+    assert_eq!(artifact.grammar, None);
+}
+
+#[test]
+fn unknown_grammar_value_is_rejected() {
+    let content = "\
+name = \"broken\"
+version = 1
+
+[[artifacts]]
+id = \"proposal\"
+generates = \"proposal.md\"
+grammar = \"interpretive-dance\"
+";
+    assert!(matches!(parse_schema(content), Err(SchemaError::Parse(_))));
 }
 
 #[test]

@@ -47,15 +47,17 @@
 
 ## 4. Validation
 
-- [ ] 4.1 Implement native validation rules over the grammar module
+- [x] 4.1 Implement native validation rules over the grammar module
       (requirement structure, scenario presence, delta operations,
       schema-required artifacts)
-- [ ] 4.2 Implement note-level diagnostics (note name, artifact id, line
+- [x] 4.2 Implement note-level diagnostics (note name, artifact id, line
       reference where feasible)
-- [ ] 4.3 Exit-code and output contract for agent consumption
-- [ ] 4.4 Add optional CI conformance oracle: pinned upstream
+- [x] 4.3 Exit-code and output contract for agent consumption
+- [x] 4.4 Add optional CI conformance oracle: pinned upstream
       `openspec validate --strict` against grammar fixtures rendered into
       the upstream `spec-driven` layout (informational, dev-time only)
+      (script `tests/conformance/oracle.sh`; CI wiring deferred until the
+      repository gains a CI host)
 
 ## 5. Quality
 

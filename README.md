@@ -18,8 +18,15 @@ TOML) with no runtime dependency on the `openspec` binary.
 
 Implemented: change authoring (`create`, `display`), deterministic
 rendering with review diffs (`render`), drift-protected merge with
-provenance headers and change archives (`merge`). Pending: native grammar
-validation (`validate`), integration test suite, dogfooding transition.
+provenance headers and change archives (`merge`), native grammar
+validation (`validate`). Pending: integration test suite, dogfooding
+transition.
+
+A development-time conformance oracle (`tests/conformance/oracle.sh`)
+renders shared grammar fixtures into the upstream layout and runs a
+pinned upstream `openspec validate --strict` against them, proving the
+grammar-compatibility claim without any runtime dependency on the
+`openspec` binary.
 
 ## Usage
 
@@ -48,7 +55,11 @@ nbspec render add-foo --diff | difit --clean
 # refuse without --force; a refused merge writes nothing.
 nbspec merge add-foo
 
-# Native OpenSpec-grammar validation (not yet implemented).
+# Native OpenSpec-grammar validation, no external binary. Exits zero
+# with a one-line summary when valid; otherwise exits nonzero, with a
+# summary line and one "note:line: [artifact] message" diagnostic per
+# line on stderr, each anchored to a notebook note rather than a
+# filesystem path.
 nbspec validate add-foo
 ```
 

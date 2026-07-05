@@ -1,7 +1,9 @@
 mod archives;
 mod changes;
+mod cli;
 mod grammar;
 mod merging;
 mod rendering;
 mod schemata;
+mod validation;
 mod worknotes;
