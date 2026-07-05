@@ -61,12 +61,15 @@
 
 ## 5. Quality
 
-- [ ] 5.1 Unit tests: schema parsing, todo grammar, provenance/drift, meta
-      lifecycle
-- [ ] 5.2 Integration tests: end-to-end create → author → render →
+- [x] 5.1 Unit tests: schema parsing, todo grammar, provenance/drift, meta
+      lifecycle (covered incrementally across the section stacks; 115
+      unit tests)
+- [x] 5.2 Integration tests: end-to-end create → author → render →
       validate → merge against a fixture notebook
+      (tests/integration/lifecycle.rs drives the compiled binary in a
+      sandboxed project repository against a scratch notebook)
 - [x] 5.3 Update README status section; document CLI usage
-- [ ] 5.4 `cargo clippy --all-targets --all-features -- -D warnings` and
+- [x] 5.4 `cargo clippy --all-targets --all-features -- -D warnings` and
       full test suite pass
 
 ## 6. Dogfooding Transition
