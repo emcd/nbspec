@@ -32,6 +32,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Configure git for nb
+        # Mirrors the tester setup so the lifecycle integration test
+        # (#[cfg(unix)]) has nb installed and git identity pre-set
+        # before `cargo test --release`. Without this, the tag
+        # release would fail the test job on Linux / Linux-arm /
+        # macOS runners.
+        run: |
+          git config --global user.name "nbspec CI"
+          git config --global user.email "nbspec-ci@users.noreply.github.com"
+          git config --global init.defaultBranch master
+
+      - name: Install nb
+        run: npm install -g nb.sh@7.24.0
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
