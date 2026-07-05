@@ -217,14 +217,7 @@ fn collect_markdown(
 ) -> Result<(), RenderError> {
     let entries =
         std::fs::read_dir(directory).map_err(|error| RenderError::io(directory, error))?;
-    let mut sorted: Vec<_> = entries.collect();
-    sorted.sort_by_key(|entry| {
-        entry
-            .as_ref()
-            .map(|entry| entry.file_name())
-            .unwrap_or_default()
-    });
-    for entry in sorted {
+    for entry in entries {
         let entry = entry.map_err(|error| RenderError::io(directory, error))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
