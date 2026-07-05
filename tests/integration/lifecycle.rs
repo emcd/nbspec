@@ -201,6 +201,7 @@ fn stderr_of(output: &Output) -> String {
 }
 
 #[test]
+#[cfg(unix)]
 fn change_lifecycle_end_to_end() {
     let notebook = ScratchNotebook::create();
     let project = ScratchProject::create();

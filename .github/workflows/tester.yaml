@@ -52,6 +52,15 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Configure git for nb
+        # nb prompts for git user.name/email on first use; without a
+        # TTY, the prompt fails the command. Pre-set global identity
+        # so nb proceeds non-interactively.
+        run: |
+          git config --global user.name "nbspec CI"
+          git config --global user.email "nbspec-ci@users.noreply.github.com"
+          git config --global init.defaultBranch master
+
       - name: Install nb
         run: npm install -g nb.sh@7.24.0
 
