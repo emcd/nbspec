@@ -46,6 +46,7 @@ struct ScratchNotebook {
 
 impl ScratchNotebook {
     fn create() -> Self {
+        sweep_stale_notebooks();
         let name = format!("nbspec-itest-{}", unique_suffix());
         let output = Command::new("nb")
             .args(["notebooks", "add", &name])
@@ -73,9 +74,49 @@ impl ScratchNotebook {
 
 impl Drop for ScratchNotebook {
     fn drop(&mut self) {
-        let _ = Command::new("nb")
-            .args(["notebooks", "delete", &self.name, "--force"])
-            .output();
+        if !delete_notebook(&self.name) {
+            eprintln!(
+                "warning: scratch notebook {} not deleted; \
+                 the next test run sweeps it",
+                self.name
+            );
+        }
+    }
+}
+
+/// Deletes a notebook, retrying because `nb` invocations from other
+/// concurrent agents can make a delete fail transiently.
+fn delete_notebook(name: &str) -> bool {
+    for _ in 0..3 {
+        let deleted = Command::new("nb")
+            .args(["notebooks", "delete", name, "--force"])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+        if deleted {
+            return true;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+    }
+    false
+}
+
+/// Reaps scratch notebooks that earlier runs failed to delete, so
+/// they never accumulate in the operator's nb directory.
+fn sweep_stale_notebooks() {
+    let Ok(output) = Command::new("nb")
+        .args(["notebooks", "--no-color"])
+        .output()
+    else {
+        return;
+    };
+    let listing = String::from_utf8_lossy(&output.stdout);
+    for name in listing
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("nbspec-itest-"))
+    {
+        delete_notebook(name);
     }
 }
 
