@@ -44,8 +44,8 @@ impl MergeError {
 /// One reason a merge target cannot be written.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Refusal {
-    /// Repository-relative merge target.
-    pub target: PathBuf,
+    /// Repository-relative merge target, forward-slash logical path.
+    pub target: String,
     /// Why the target cannot be written.
     pub reason: RefusalReason,
 }
@@ -104,7 +104,7 @@ impl std::fmt::Display for RefusalReason {
 fn format_refusals(refusals: &[Refusal]) -> String {
     refusals
         .iter()
-        .map(|refusal| format!("- {}: {}", refusal.target.display(), refusal.reason))
+        .map(|refusal| format!("- {}: {}", refusal.target, refusal.reason))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -159,11 +159,11 @@ impl std::fmt::Display for TargetStatus {
 /// Outcome of a successful merge.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MergeReport {
-    /// Repository-relative paths written.
-    pub written: Vec<PathBuf>,
+    /// Repository-relative paths written, forward-slash logical paths.
+    pub written: Vec<String>,
     /// Repository-relative paths already byte-identical and left
-    /// untouched.
-    pub unchanged: Vec<PathBuf>,
+    /// untouched, forward-slash logical paths.
+    pub unchanged: Vec<String>,
 }
 
 /// Classifies the merge target of one rendered document.
@@ -179,7 +179,7 @@ pub fn target_status(
     let Some(target_path) = &document.target_path else {
         return Ok(TargetStatus::NotMerged);
     };
-    let absolute = project_root.join(target_path);
+    let absolute = project_root.join(Path::new(target_path));
     if !absolute.exists() {
         return Ok(TargetStatus::NotMerged);
     }
@@ -222,7 +222,7 @@ pub fn merge_documents(
     force: bool,
 ) -> Result<MergeReport, MergeError> {
     let mut refusals = Vec::new();
-    let mut writes: Vec<(PathBuf, String)> = Vec::new();
+    let mut writes: Vec<(String, String)> = Vec::new();
     let mut report = MergeReport::default();
     for document in documents {
         let Some(target_path) = &document.target_path else {
@@ -279,7 +279,7 @@ pub fn merge_documents(
         return Err(MergeError::Refused { refusals });
     }
     for (target_path, content) in writes {
-        let absolute = project_root.join(&target_path);
+        let absolute = project_root.join(Path::new(&target_path));
         if let Some(parent) = absolute.parent() {
             std::fs::create_dir_all(parent).map_err(|error| MergeError::io(parent, error))?;
         }

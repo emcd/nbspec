@@ -22,10 +22,8 @@ fn unique_temp_root(label: &str) -> PathBuf {
 fn document(name: &str, content: &str) -> RenderedDocument {
     RenderedDocument {
         artifact_id: "specifications".to_string(),
-        tree_path: PathBuf::from(format!("specifications/{name}.md")),
-        target_path: Some(PathBuf::from(format!(
-            "documentation/specifications/{name}.md"
-        ))),
+        tree_path: format!("specifications/{name}.md"),
+        target_path: Some(format!("documentation/specifications/{name}.md")),
         source_note: format!("proposals/add-demo/specifications/{name}.md"),
         content: content.to_string(),
     }
@@ -34,7 +32,7 @@ fn document(name: &str, content: &str) -> RenderedDocument {
 fn render_only_document(content: &str) -> RenderedDocument {
     RenderedDocument {
         artifact_id: "proposal".to_string(),
-        tree_path: PathBuf::from("proposal.md"),
+        tree_path: "proposal.md".to_string(),
         target_path: None,
         source_note: "proposals/add-demo/proposal.md".to_string(),
         content: content.to_string(),
@@ -84,7 +82,7 @@ fn merge_writes_new_documents_with_provenance() {
     let report = merge_documents(&documents, &root, "add-demo", "home", false).unwrap();
     assert_eq!(
         report.written,
-        vec![PathBuf::from("documentation/specifications/alpha.md")]
+        vec!["documentation/specifications/alpha.md".to_string()]
     );
     let written = fs::read_to_string(root.join("documentation/specifications/alpha.md")).unwrap();
     let (header, body) = provenance::split_document(&written);
@@ -105,7 +103,7 @@ fn remerge_of_identical_content_is_unchanged() {
     assert!(report.written.is_empty());
     assert_eq!(
         report.unchanged,
-        vec![PathBuf::from("documentation/specifications/alpha.md")]
+        vec!["documentation/specifications/alpha.md".to_string()]
     );
     let second = fs::read_to_string(root.join("documentation/specifications/alpha.md")).unwrap();
     assert_eq!(first, second);

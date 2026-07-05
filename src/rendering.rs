@@ -34,17 +34,22 @@ impl RenderError {
 }
 
 /// One document of a rendered change tree.
+///
+/// `tree_path` and `target_path` are stored as forward-slash strings
+/// (logical paths) rather than `PathBuf` so they round-trip identically
+/// across platforms and match the schema's `generates` convention.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderedDocument {
     /// Schema artifact the document belongs to.
     pub artifact_id: String,
     /// Path within the rendered tree (matches the artifact's
     /// `generates` pattern), for example
-    /// `specifications/change-authoring.md`.
-    pub tree_path: PathBuf,
+    /// `specifications/change-authoring.md`. Always forward-slash.
+    pub tree_path: String,
     /// Repository-relative merge destination, when the artifact
     /// declares a `target`; `None` marks render-only documents.
-    pub target_path: Option<PathBuf>,
+    /// Always forward-slash when `Some`.
+    pub target_path: Option<String>,
     /// Notebook-relative source note file, for provenance.
     pub source_note: String,
     /// Verbatim note content.
@@ -76,13 +81,14 @@ pub fn render_documents(
                 }
                 let content = std::fs::read_to_string(&file)
                     .map_err(|error| RenderError::io(&file, error))?;
-                let tree_path = PathBuf::from(&artifact.generates);
+                let tree_path = artifact.generates.clone();
+                let target_path = artifact
+                    .target
+                    .as_deref()
+                    .map(|target| join_logical(target, &tree_path));
                 documents.push(RenderedDocument {
                     artifact_id: artifact.id.clone(),
-                    target_path: artifact
-                        .target
-                        .as_deref()
-                        .map(|target| Path::new(target).join(&tree_path)),
+                    target_path,
                     source_note: format!("{change_folder}/{stem}.md"),
                     tree_path,
                     content,
@@ -97,14 +103,15 @@ pub fn render_documents(
                     let file = directory.join(&relative);
                     let content = std::fs::read_to_string(&file)
                         .map_err(|error| RenderError::io(&file, error))?;
-                    let tree_path = Path::new(&name).join(&relative);
+                    let tree_path = join_logical(&name, &relative);
+                    let target_path = artifact
+                        .target
+                        .as_deref()
+                        .map(|target| join_logical(target, &relative));
                     documents.push(RenderedDocument {
                         artifact_id: artifact.id.clone(),
-                        target_path: artifact
-                            .target
-                            .as_deref()
-                            .map(|target| Path::new(target).join(&relative)),
-                        source_note: format!("{change_folder}/{}", tree_path.to_string_lossy()),
+                        target_path,
+                        source_note: format!("{change_folder}/{tree_path}"),
                         tree_path,
                         content,
                     });
@@ -130,7 +137,7 @@ pub fn write_tree(documents: &[RenderedDocument], destination: &Path) -> Result<
     }
     std::fs::create_dir_all(destination).map_err(|error| RenderError::io(destination, error))?;
     for document in documents {
-        let path = destination.join(&document.tree_path);
+        let path = destination.join(Path::new(&document.tree_path));
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|error| RenderError::io(parent, error))?;
         }
@@ -160,7 +167,7 @@ pub fn review_diff(
         let Some(target_path) = &document.target_path else {
             continue;
         };
-        let absolute = project_root.join(target_path);
+        let absolute = project_root.join(Path::new(target_path));
         let current = if absolute.is_file() {
             let raw = std::fs::read_to_string(&absolute)
                 .map_err(|error| RenderError::io(&absolute, error))?;
@@ -172,10 +179,9 @@ pub fn review_diff(
         if current.as_deref() == Some(document.content.as_str()) {
             continue;
         }
-        let path = target_path.to_string_lossy();
-        output.push_str(&format!("diff --git a/{path} b/{path}\n"));
+        output.push_str(&format!("diff --git a/{target_path} b/{target_path}\n"));
         let (old_content, old_header) = match &current {
-            Some(content) => (content.as_str(), format!("a/{path}")),
+            Some(content) => (content.as_str(), format!("a/{target_path}")),
             None => {
                 output.push_str("new file mode 100644\n");
                 ("", "/dev/null".to_string())
@@ -186,30 +192,39 @@ pub fn review_diff(
             "{}",
             text_diff
                 .unified_diff()
-                .header(&old_header, &format!("b/{path}"))
+                .header(&old_header, &format!("b/{target_path}"))
         ));
     }
     Ok(output)
 }
 
 /// Collects Markdown files under a directory recursively, as sorted
-/// directory-relative paths. Todo notes and hidden files are not
-/// documents and are skipped.
-fn walk_markdown(directory: &Path) -> Result<Vec<PathBuf>, RenderError> {
+/// forward-slash directory-relative paths. Todo notes and hidden
+/// files are not documents and are skipped. Returns logical paths
+/// (forward-slash strings), not `PathBuf`, so the values are stable
+/// across platforms.
+fn walk_markdown(directory: &Path) -> Result<Vec<String>, RenderError> {
     let mut files = Vec::new();
-    collect_markdown(directory, Path::new(""), &mut files)?;
+    collect_markdown(directory, "", &mut files)?;
     files.sort();
     Ok(files)
 }
 
 fn collect_markdown(
     directory: &Path,
-    prefix: &Path,
-    files: &mut Vec<PathBuf>,
+    prefix: &str,
+    files: &mut Vec<String>,
 ) -> Result<(), RenderError> {
     let entries =
         std::fs::read_dir(directory).map_err(|error| RenderError::io(directory, error))?;
-    for entry in entries {
+    let mut sorted: Vec<_> = entries.collect();
+    sorted.sort_by_key(|entry| {
+        entry
+            .as_ref()
+            .map(|entry| entry.file_name())
+            .unwrap_or_default()
+    });
+    for entry in sorted {
         let entry = entry.map_err(|error| RenderError::io(directory, error))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
@@ -217,11 +232,29 @@ fn collect_markdown(
             continue;
         }
         let path = entry.path();
+        let relative = if prefix.is_empty() {
+            name.clone().into_owned()
+        } else {
+            format!("{prefix}/{name}")
+        };
         if path.is_dir() {
-            collect_markdown(&path, &prefix.join(name.as_ref()), files)?;
+            collect_markdown(&path, &relative, files)?;
         } else if name.ends_with(".md") && !name.ends_with(".todo.md") {
-            files.push(prefix.join(name.as_ref()));
+            files.push(relative);
         }
     }
     Ok(())
+}
+
+/// Joins two forward-slash logical path segments with a single
+/// separator, preserving the schema-string convention used by
+/// `generates` and `target` patterns.
+fn join_logical(parent: &str, child: &str) -> String {
+    if parent.is_empty() {
+        child.to_string()
+    } else if child.is_empty() {
+        parent.to_string()
+    } else {
+        format!("{parent}/{child}")
+    }
 }

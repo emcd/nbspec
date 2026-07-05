@@ -13,7 +13,7 @@
 //! repository root, so operations behave identically from any
 //! subdirectory.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use nb_api::NbClient;
 use thiserror::Error;
@@ -249,7 +249,7 @@ fn drift_report(
             continue;
         };
         let status = target_status(document, &root, change_id)?;
-        output.push_str(&format!("- {}: {status}\n", target_path.display()));
+        output.push_str(&format!("- {target_path}: {status}\n"));
     }
     if output.is_empty() {
         output.push_str("no durable documents with merge targets yet\n");
@@ -328,10 +328,10 @@ pub async fn merge(
 
     let mut output = String::new();
     for path in &report.written {
-        output.push_str(&format!("wrote {}\n", path.display()));
+        output.push_str(&format!("wrote {path}\n"));
     }
     for path in &report.unchanged {
-        output.push_str(&format!("unchanged {}\n", path.display()));
+        output.push_str(&format!("unchanged {path}\n"));
     }
     if report.written.is_empty() && report.unchanged.is_empty() {
         output.push_str("no durable documents to merge\n");
@@ -369,7 +369,7 @@ fn write_change_archive(
     let mut entries: Vec<ArchiveEntry> = documents
         .iter()
         .map(|document| ArchiveEntry {
-            path: prefix.join(&document.tree_path),
+            path: prefix.join(Path::new(&document.tree_path)),
             content: document.content.clone(),
         })
         .collect();

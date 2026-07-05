@@ -53,7 +53,7 @@ fn renders_documents_in_schema_and_path_order() {
     let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
     let paths: Vec<String> = documents
         .iter()
-        .map(|document| document.tree_path.to_string_lossy().into_owned())
+        .map(|document| document.tree_path.clone())
         .collect();
     assert_eq!(
         paths,
@@ -75,12 +75,12 @@ fn excludes_control_plane_files() {
     assert!(
         documents
             .iter()
-            .all(|document| !document.tree_path.to_string_lossy().contains("meta"))
+            .all(|document| !document.tree_path.contains("meta"))
     );
     assert!(
         documents
             .iter()
-            .all(|document| !document.tree_path.to_string_lossy().contains("todo"))
+            .all(|document| !document.tree_path.contains("todo"))
     );
     fs::remove_dir_all(&root).unwrap();
 }
@@ -92,7 +92,7 @@ fn copies_content_verbatim_with_provenance_paths() {
     let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
     let alpha = documents
         .iter()
-        .find(|document| document.tree_path == Path::new("specifications/alpha.md"))
+        .find(|document| document.tree_path == "specifications/alpha.md")
         .unwrap();
     assert_eq!(alpha.content, "# alpha\n\n## ADDED Requirements\n");
     assert_eq!(alpha.artifact_id, "specifications");
@@ -102,7 +102,7 @@ fn copies_content_verbatim_with_provenance_paths() {
     );
     assert_eq!(
         alpha.target_path.as_deref(),
-        Some(Path::new("documentation/specifications/alpha.md"))
+        Some("documentation/specifications/alpha.md")
     );
     fs::remove_dir_all(&root).unwrap();
 }

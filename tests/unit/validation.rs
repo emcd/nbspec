@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use nbspec::rendering::RenderedDocument;
 use nbspec::schemata::default_schema;
 use nbspec::validation::{Diagnostic, ValidationFailure, validate_change};
@@ -22,7 +20,7 @@ The system SHALL authenticate users before granting access.
 fn proposal_document() -> RenderedDocument {
     RenderedDocument {
         artifact_id: "proposal".to_string(),
-        tree_path: PathBuf::from("proposal.md"),
+        tree_path: "proposal.md".to_string(),
         target_path: None,
         source_note: format!("{CHANGE_FOLDER}/proposal.md"),
         content: "# proposal\n\nWhy: reasons.\n".to_string(),
@@ -32,10 +30,8 @@ fn proposal_document() -> RenderedDocument {
 fn specification_document(name: &str, content: &str) -> RenderedDocument {
     RenderedDocument {
         artifact_id: "specifications".to_string(),
-        tree_path: PathBuf::from(format!("specifications/{name}.md")),
-        target_path: Some(PathBuf::from(format!(
-            "documentation/specifications/{name}.md"
-        ))),
+        tree_path: format!("specifications/{name}.md"),
+        target_path: Some(format!("documentation/specifications/{name}.md")),
         source_note: format!("{CHANGE_FOLDER}/specifications/{name}.md"),
         content: content.to_string(),
     }
@@ -44,8 +40,8 @@ fn specification_document(name: &str, content: &str) -> RenderedDocument {
 fn design_document(content: &str) -> RenderedDocument {
     RenderedDocument {
         artifact_id: "designs".to_string(),
-        tree_path: PathBuf::from("designs/notes.md"),
-        target_path: Some(PathBuf::from("documentation/designs/notes.md")),
+        tree_path: "designs/notes.md".to_string(),
+        target_path: Some("documentation/designs/notes.md".to_string()),
         source_note: format!("{CHANGE_FOLDER}/designs/notes.md"),
         content: content.to_string(),
     }
