@@ -283,6 +283,21 @@ fn removed_and_renamed_sections_validate_without_scenarios() {
 }
 
 #[test]
+fn conformance_delta_fixtures_pass_native_validation() {
+    let entries = std::fs::read_dir("tests/fixtures/conformance/deltas").unwrap();
+    let mut checked = 0;
+    for entry in entries {
+        let path = entry.unwrap().path();
+        let content = std::fs::read_to_string(&path).unwrap();
+        let name = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let documents = vec![proposal_document(), specification_document(&name, &content)];
+        assert_eq!(validate(&documents), Vec::new(), "fixture {name}");
+        checked += 1;
+    }
+    assert!(checked >= 3);
+}
+
+#[test]
 fn diagnostic_display_includes_note_line_and_artifact() {
     let with_line = Diagnostic {
         note: "proposals/add-demo/specifications/user-auth.md".to_string(),

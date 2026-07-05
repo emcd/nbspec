@@ -22,6 +22,12 @@ provenance headers and change archives (`merge`), native grammar
 validation (`validate`). Pending: integration test suite, dogfooding
 transition.
 
+A development-time conformance oracle (`tests/conformance/oracle.sh`)
+renders shared grammar fixtures into the upstream layout and runs a
+pinned upstream `openspec validate --strict` against them, proving the
+grammar-compatibility claim without any runtime dependency on the
+`openspec` binary.
+
 ## Usage
 
 All commands operate on the project notebook, derived from the git remote

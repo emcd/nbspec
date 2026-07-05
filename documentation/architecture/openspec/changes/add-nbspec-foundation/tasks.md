@@ -53,9 +53,11 @@
 - [x] 4.2 Implement note-level diagnostics (note name, artifact id, line
       reference where feasible)
 - [x] 4.3 Exit-code and output contract for agent consumption
-- [ ] 4.4 Add optional CI conformance oracle: pinned upstream
+- [x] 4.4 Add optional CI conformance oracle: pinned upstream
       `openspec validate --strict` against grammar fixtures rendered into
       the upstream `spec-driven` layout (informational, dev-time only)
+      (script `tests/conformance/oracle.sh`; CI wiring deferred until the
+      repository gains a CI host)
 
 ## 5. Quality
 
