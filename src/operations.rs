@@ -276,30 +276,15 @@ pub async fn render(
     change_id: &str,
     diff: bool,
 ) -> OperationResult {
-    validate_change_id(change_id)?;
-    let notebook_name = resolve_notebook_name(notebook)?;
-    let notebook = Some(notebook_name.as_str());
-    let root = project_root();
-    let configuration = load_configuration(&root)?;
-    let folder = change_folder(change_id);
-    let change_directory = client.notebook_path(notebook).await?.join(&folder);
-    if !change_directory.is_dir() {
-        return Err(OperationError::ChangeNotFound {
-            notebook: notebook_name.clone(),
-            change_id: change_id.to_string(),
-        });
-    }
-    let metadata = read_metadata(&change_directory)?;
-    let schema = resolve_schema(Some(&metadata.schema), &configuration)?;
-    let documents = render_documents(&change_directory, &folder, &schema)?;
-    let destination = render_destination(&configuration, &notebook_name, change_id);
-    write_tree(&documents, &destination)?;
+    let context = load_change_context(client, notebook, change_id).await?;
+    let destination = render_destination(&context.configuration, &context.notebook_name, change_id);
+    write_tree(&context.documents, &destination)?;
     if diff {
-        return Ok(review_diff(&documents, &root)?);
+        return Ok(review_diff(&context.documents, &context.root)?);
     }
     Ok(format!(
         "Rendered {count} documents of change {change_id} to {destination}.",
-        count = documents.len(),
+        count = context.documents.len(),
         destination = destination.display(),
     ))
 }
@@ -330,23 +315,14 @@ pub async fn merge(
     change_id: &str,
     force: bool,
 ) -> OperationResult {
-    validate_change_id(change_id)?;
-    let notebook_name = resolve_notebook_name(notebook)?;
-    let notebook = Some(notebook_name.as_str());
-    let root = project_root();
-    let configuration = load_configuration(&root)?;
-    let folder = change_folder(change_id);
-    let change_directory = client.notebook_path(notebook).await?.join(&folder);
-    if !change_directory.is_dir() {
-        return Err(OperationError::ChangeNotFound {
-            notebook: notebook_name.clone(),
-            change_id: change_id.to_string(),
-        });
-    }
-    let metadata = read_metadata(&change_directory)?;
-    let schema = resolve_schema(Some(&metadata.schema), &configuration)?;
-    let documents = render_documents(&change_directory, &folder, &schema)?;
-    let report = merge_documents(&documents, &root, change_id, &notebook_name, force)?;
+    let context = load_change_context(client, notebook, change_id).await?;
+    let report = merge_documents(
+        &context.documents,
+        &context.root,
+        change_id,
+        &context.notebook_name,
+        force,
+    )?;
 
     let mut output = String::new();
     for path in &report.written {
@@ -358,13 +334,13 @@ pub async fn merge(
     if report.written.is_empty() && report.unchanged.is_empty() {
         output.push_str("no durable documents to merge\n");
     }
-    if configuration.archives {
+    if context.configuration.archives {
         output.push_str(&write_change_archive(
-            &configuration,
-            &root,
-            &change_directory,
+            &context.configuration,
+            &context.root,
+            &context.change_directory,
             change_id,
-            &documents,
+            &context.documents,
         )?);
     }
     output.push_str(&format!(
@@ -445,6 +421,60 @@ fn write_change_archive(
 /// Returns [`OperationError::Unimplemented`] until tasks 4.1 through 4.3 land.
 pub async fn validate(_client: &NbClient, _change_id: &str) -> OperationResult {
     Err(OperationError::Unimplemented("validate"))
+}
+
+/// Resolved context shared by operations that read a change from the
+/// notebook filesystem (render, merge): the effective notebook and
+/// project roots, loaded configuration, and the change's rendered
+/// document list.
+struct ChangeContext {
+    notebook_name: String,
+    root: PathBuf,
+    configuration: Configuration,
+    change_directory: PathBuf,
+    documents: Vec<crate::rendering::RenderedDocument>,
+}
+
+/// Resolves the shared operation preamble: validates the change id,
+/// resolves the notebook and project root, loads configuration,
+/// locates the change directory, and renders the change's documents
+/// in memory per its meta-note schema.
+///
+/// # Errors
+///
+/// Returns [`OperationError::ChangeNotFound`] when the change
+/// namespace is absent, and notebook, configuration, schema, or IO
+/// errors otherwise.
+async fn load_change_context(
+    client: &NbClient,
+    notebook: Option<&str>,
+    change_id: &str,
+) -> Result<ChangeContext, OperationError> {
+    validate_change_id(change_id)?;
+    let notebook_name = resolve_notebook_name(notebook)?;
+    let root = project_root();
+    let configuration = load_configuration(&root)?;
+    let folder = change_folder(change_id);
+    let change_directory = client
+        .notebook_path(Some(notebook_name.as_str()))
+        .await?
+        .join(&folder);
+    if !change_directory.is_dir() {
+        return Err(OperationError::ChangeNotFound {
+            notebook: notebook_name,
+            change_id: change_id.to_string(),
+        });
+    }
+    let metadata = read_metadata(&change_directory)?;
+    let schema = resolve_schema(Some(&metadata.schema), &configuration)?;
+    let documents = render_documents(&change_directory, &folder, &schema)?;
+    Ok(ChangeContext {
+        notebook_name,
+        root,
+        configuration,
+        change_directory,
+        documents,
+    })
 }
 
 /// Resolves the effective notebook for an operation: the explicit
