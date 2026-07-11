@@ -57,9 +57,12 @@ nbspec render add-foo --diff | difit --clean
 # content: any subsequent edit stales it. Each verdict is one immutable
 # note under proposals/add-foo/verdicts/; a newer verdict from the same
 # reviewer supersedes their older one. Revise verdicts require a
-# findings comment; pass --comment - to read it from stdin.
+# findings comment: --comment takes literal content; --comment-file
+# reads a file, or stdin when the path is - (the two conflict).
 nbspec review add-foo --verdict approve
 nbspec review add-foo --verdict revise --comment "findings at reviews/9"
+nbspec review add-foo --verdict revise --comment-file findings.md
+nbspec render add-foo --diff | summarize | nbspec review add-foo --verdict revise --comment-file -
 
 # Transfer durable documents to their configured repository targets with
 # provenance headers, and write the change archive. Merge REFUSES

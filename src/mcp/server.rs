@@ -298,9 +298,8 @@ impl McpServer {
                        subfolder; recording never modifies existing \
                        verdicts and never transitions lifecycle. A \
                        revise verdict REQUIRES a comment naming the \
-                       findings. The comment is recorded verbatim (a \
-                       value of `-` is literal; stdin reading is \
-                       CLI-only)."
+                       findings. The comment string is recorded \
+                       verbatim."
     )]
     async fn review(
         &self,

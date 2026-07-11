@@ -169,8 +169,9 @@ fn review_args_gate_defaults_to_merge() {
 
 #[test]
 fn review_args_comment_dash_is_literal() {
-    // Stdin reading is a CLI-only affordance: the MCP surface records
-    // a dash verbatim rather than reinterpreting the payload.
+    // Comment content is literal on every surface: no value is a
+    // stdin marker (file/stdin intake lives behind the CLI-only
+    // --comment-file option, which the MCP surface does not expose).
     let args: ReviewArgs = serde_json::from_value(json!({
         "change_id": "add-foo",
         "verdict": "revise",

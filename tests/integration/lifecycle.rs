@@ -191,6 +191,40 @@ fn nbspec(project: &ScratchProject, notebook: &ScratchNotebook, arguments: &[&st
         .unwrap()
 }
 
+/// Like [`nbspec`], but pipes `stdin_content` to the subprocess's
+/// standard input — the transport for `--comment-file -`. Same
+/// hygiene as [`nbspec`]: `GIT_*` scrubbed, `NB_DIR` pinned to the
+/// isolated root.
+fn nbspec_with_stdin(
+    project: &ScratchProject,
+    notebook: &ScratchNotebook,
+    arguments: &[&str],
+    stdin_content: &str,
+) -> Output {
+    use std::io::Write as _;
+    use std::process::Stdio;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nbspec"));
+    scrub_git_env(&mut command);
+    let mut child = command
+        .current_dir(&project.root)
+        .env("NBSPEC_CONFIG_DIR", project.configuration_directory())
+        .env("NB_DIR", notebook.nb_dir_path())
+        .args(["--notebook", &notebook.name])
+        .args(arguments)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin_content.as_bytes())
+        .unwrap();
+    child.wait_with_output().unwrap()
+}
+
 fn stdout_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
@@ -280,8 +314,9 @@ fn change_lifecycle_end_to_end() {
     );
     assert!(!project.root.join("documentation").exists());
 
-    // A revise verdict without findings refuses; with findings it
-    // records — and then blocks the merge as revise-outstanding.
+    // A revise verdict without findings refuses; so does a comment
+    // file that cannot be read. Findings supplied via --comment-file
+    // record — and then block the merge as revise-outstanding.
     let moodless = nbspec(
         &project,
         &notebook,
@@ -299,6 +334,27 @@ fn change_lifecycle_end_to_end() {
         "comment-less revise must refuse"
     );
     assert!(stderr_of(&moodless).contains("requires a comment"));
+    let unreadable = nbspec(
+        &project,
+        &notebook,
+        &[
+            "review",
+            CHANGE_ID,
+            "--verdict",
+            "revise",
+            "--reviewer",
+            "itest",
+            "--comment-file",
+            "absent-findings.md",
+        ],
+    );
+    assert!(
+        !unreadable.status.success(),
+        "unreadable comment file must refuse"
+    );
+    assert!(stderr_of(&unreadable).contains("cannot read the review comment file"));
+    let findings_file = project.root.join("itest-findings.md");
+    std::fs::write(&findings_file, "tighten the scenario wording").unwrap();
     let revised = nbspec(
         &project,
         &notebook,
@@ -309,11 +365,12 @@ fn change_lifecycle_end_to_end() {
             "revise",
             "--reviewer",
             "itest",
-            "--comment",
-            "tighten the scenario wording",
+            "--comment-file",
+            "itest-findings.md",
         ],
     );
     assert!(revised.status.success(), "{}", stderr_of(&revised));
+    std::fs::remove_file(&findings_file).unwrap();
     let blocked = nbspec(&project, &notebook, &["merge", CHANGE_ID]);
     assert!(!blocked.status.success(), "revise-outstanding must refuse");
     assert!(
@@ -323,7 +380,7 @@ fn change_lifecycle_end_to_end() {
     );
 
     // A newer approving verdict supersedes the revise and satisfies
-    // the gate.
+    // the gate; its optional comment arrives inline and literally.
     let approved = nbspec(
         &project,
         &notebook,
@@ -334,6 +391,8 @@ fn change_lifecycle_end_to_end() {
             "approve",
             "--reviewer",
             "itest",
+            "--comment",
+            "supersedes after rework",
         ],
     );
     assert!(approved.status.success(), "{}", stderr_of(&approved));
@@ -341,8 +400,10 @@ fn change_lifecycle_end_to_end() {
 
     // A second reviewer's outstanding revise coexists without blocking:
     // slice-1 policy is satisfied by any single current approval, and
-    // display lists every reviewer's standing position.
-    let dissent = nbspec(
+    // display lists every reviewer's standing position. Its findings
+    // arrive on standard input via `--comment-file -`; the display
+    // assertion below proves the piped content landed in the verdict.
+    let dissent = nbspec_with_stdin(
         &project,
         &notebook,
         &[
@@ -352,9 +413,10 @@ fn change_lifecycle_end_to_end() {
             "revise",
             "--reviewer",
             "qa",
-            "--comment",
-            "prefer stronger scenario names",
+            "--comment-file",
+            "-",
         ],
+        "prefer stronger scenario names",
     );
     assert!(dissent.status.success(), "{}", stderr_of(&dissent));
     let displayed = nbspec(&project, &notebook, &["display", CHANGE_ID]);

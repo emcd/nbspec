@@ -56,12 +56,14 @@ fn review_verb_parses_with_gate_default() {
             gate,
             verdict,
             comment,
+            comment_file,
             reviewer,
         } => {
             assert_eq!(change_id, "add-demo");
             assert_eq!(gate, "merge", "gate defaults to the slice-1 gate");
             assert_eq!(verdict, VerdictArg::Approve);
             assert_eq!(comment, None);
+            assert_eq!(comment_file, None);
             assert_eq!(reviewer, None);
         }
         other => panic!("expected Review, got {other:?}"),
@@ -74,6 +76,78 @@ fn review_verb_requires_a_verdict() {
     use nbspec::cli::Cli;
     let result = Cli::try_parse_from(["nbspec", "review", "add-demo"]);
     assert!(result.is_err(), "verdict is a required argument");
+}
+
+#[test]
+fn review_verb_takes_dash_comment_literally() {
+    use clap::Parser;
+    use nbspec::cli::{Cli, Command};
+    let cli = Cli::parse_from([
+        "nbspec",
+        "review",
+        "add-demo",
+        "--verdict",
+        "approve",
+        "--comment",
+        "-",
+    ]);
+    match cli.command {
+        Command::Review { comment, .. } => {
+            assert_eq!(
+                comment.as_deref(),
+                Some("-"),
+                "--comment never interprets a value as a stdin marker"
+            );
+        }
+        other => panic!("expected Review, got {other:?}"),
+    }
+}
+
+#[test]
+fn review_verb_accepts_comment_file() {
+    use clap::Parser;
+    use nbspec::cli::{Cli, Command};
+    let cli = Cli::parse_from([
+        "nbspec",
+        "review",
+        "add-demo",
+        "--verdict",
+        "revise",
+        "--comment-file",
+        "findings.md",
+    ]);
+    match cli.command {
+        Command::Review {
+            comment,
+            comment_file,
+            ..
+        } => {
+            assert_eq!(comment, None);
+            assert_eq!(comment_file.as_deref(), Some("findings.md"));
+        }
+        other => panic!("expected Review, got {other:?}"),
+    }
+}
+
+#[test]
+fn review_verb_refuses_conflicting_comment_sources() {
+    use clap::Parser;
+    use nbspec::cli::Cli;
+    let result = Cli::try_parse_from([
+        "nbspec",
+        "review",
+        "add-demo",
+        "--verdict",
+        "revise",
+        "--comment",
+        "inline",
+        "--comment-file",
+        "findings.md",
+    ]);
+    assert!(
+        result.is_err(),
+        "--comment and --comment-file are mutually exclusive"
+    );
 }
 
 #[test]

@@ -57,6 +57,36 @@ async fn run_service(service: &ServeService, notebook: Option<&str>) -> anyhow::
     }
 }
 
+/// Resolves the review comment from its CLI source: `--comment` is
+/// literal content on every surface, while `--comment-file` reads the
+/// named file, or standard input when the path is `-`. Mutual
+/// exclusion of the two options is enforced by the clap grammar;
+/// operations receives resolved text either way. CLI-only affordance:
+/// the MCP tool takes only the literal comment string.
+fn resolve_comment(
+    comment: Option<&str>,
+    comment_file: Option<&str>,
+) -> Result<Option<String>, DispatchError> {
+    let Some(path) = comment_file else {
+        return Ok(comment.map(String::from));
+    };
+    let content = if path == "-" {
+        let mut buffer = String::new();
+        std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
+            .map(|_| buffer)
+            .map_err(|error| {
+                anyhow::Error::new(error)
+                    .context("cannot read the review comment from standard input")
+            })
+    } else {
+        std::fs::read_to_string(path).map_err(|error| {
+            anyhow::Error::new(error).context(format!("cannot read the review comment file {path}"))
+        })
+    }
+    .map_err(DispatchError::Service)?;
+    Ok(Some(content))
+}
+
 async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), DispatchError> {
     let config = nb_api::Config {
         notebook: arguments.notebook.clone(),
@@ -84,26 +114,10 @@ async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), Dispa
             gate,
             verdict,
             comment,
+            comment_file,
             reviewer,
         } => {
-            // `--comment -` reads standard input. CLI-only affordance:
-            // operations receives resolved text and the MCP tool passes
-            // a literal `-` through unchanged.
-            let comment = match comment.as_deref() {
-                Some("-") => {
-                    let mut buffer = String::new();
-                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer).map_err(
-                        |error| {
-                            DispatchError::Service(
-                                anyhow::Error::new(error)
-                                    .context("cannot read the review comment from standard input"),
-                            )
-                        },
-                    )?;
-                    Some(buffer)
-                }
-                other => other.map(String::from),
-            };
+            let comment = resolve_comment(comment.as_deref(), comment_file.as_deref())?;
             operations::review(
                 &client,
                 notebook,

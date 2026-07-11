@@ -108,11 +108,18 @@ pub enum Command {
         #[arg(long, value_enum)]
         verdict: VerdictArg,
 
-        /// Comment, e.g. a findings note selector. REQUIRED for a
-        /// revise verdict; optional for approve. Pass - to read the
-        /// comment from standard input.
-        #[arg(long)]
+        /// Comment content, e.g. a findings note selector. Taken
+        /// literally — no value is a stdin or file marker. A comment
+        /// (from here or --comment-file) is REQUIRED for a revise
+        /// verdict; optional for approve.
+        #[arg(long, conflicts_with = "comment_file")]
         comment: Option<String>,
+
+        /// File to read the comment from; pass - to read standard
+        /// input instead. CLI-only affordance: the MCP tool takes
+        /// only the literal comment string.
+        #[arg(long)]
+        comment_file: Option<String>,
 
         /// Reviewer identity; defaults to Git user.name. An explicit
         /// empty value is refused, never treated as absence.
