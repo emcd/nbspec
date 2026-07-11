@@ -35,6 +35,7 @@ use tokio::{
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
 const CHANGE_ID: &str = "add-mcp-demo";
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
+const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SPECIFICATION: &str = "\
 # user-auth
@@ -165,7 +166,7 @@ impl CanonicalizeBase for PathBuf {
 /// before responding. Diagnostic per nbspec:issues/4.
 struct McpHarness {
     child: Child,
-    stdin: ChildStdin,
+    stdin: Option<ChildStdin>,
     stdout: BufReader<ChildStdout>,
     stderr_buffer: Arc<Mutex<Vec<u8>>>,
     stderr_task: JoinHandle<()>,
@@ -193,6 +194,9 @@ impl McpHarness {
         let stdin = child.stdin.take().expect("take mcp stdin");
         let stdout = child.stdout.take().expect("take mcp stdout");
         let stderr = child.stderr.take().expect("take mcp stderr");
+        // stdin is held in an Option so the EOF panic path can
+        // take it and signal the subprocess to exit gracefully;
+        // see McpHarness::read_response.
 
         let stderr_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
         let stderr_drain_target = Arc::clone(&stderr_buffer);
@@ -219,7 +223,7 @@ impl McpHarness {
 
         let mut harness = Self {
             child,
-            stdin,
+            stdin: Some(stdin),
             stdout: BufReader::new(stdout),
             stderr_buffer,
             stderr_task,
@@ -291,16 +295,17 @@ impl McpHarness {
     }
 
     async fn send(&mut self, message: ClientJsonRpcMessage) {
+        let stdin = self
+            .stdin
+            .as_mut()
+            .expect("mcp stdin closed; cannot send more requests");
         let line = serde_json::to_string(&message).expect("encode mcp request");
-        self.stdin
+        stdin
             .write_all(line.as_bytes())
             .await
             .expect("write mcp request");
-        self.stdin
-            .write_all(b"\n")
-            .await
-            .expect("write mcp newline");
-        self.stdin.flush().await.expect("flush mcp request");
+        stdin.write_all(b"\n").await.expect("write mcp newline");
+        stdin.flush().await.expect("flush mcp request");
     }
 
     async fn read_response(&mut self, id: i64) -> Value {
@@ -320,13 +325,22 @@ impl McpHarness {
             .await
             {
                 Ok(Ok(0)) => {
-                    // EOF: subprocess closed stdout. Wait for it to
-                    // exit so stderr is fully flushed, then surface
-                    // both the exit status and the captured stderr
-                    // so the failure mode is observable without
-                    // rerunning CI. Per the diagnostic plan in
-                    // nbspec:issues/4.
-                    let exit_status = self.child.wait().await.ok();
+                    // EOF: subprocess closed stdout. Bound the wait
+                    // so a misbehaving subprocess that ignores stdout
+                    // close (and stays blocked on our still-piped
+                    // stdin) cannot wedge cargo test indefinitely.
+                    // Drop stdin to signal graceful shutdown; if the
+                    // subprocess doesn't exit within SHUTDOWN_TIMEOUT,
+                    // send SIGKILL. Per Codex review of PR #1.
+                    drop(self.stdin.take());
+                    let exit_status =
+                        match tokio::time::timeout(SHUTDOWN_TIMEOUT, self.child.wait()).await {
+                            Ok(Ok(status)) => Some(status),
+                            Ok(Err(_)) | Err(_) => {
+                                let _ = self.child.start_kill();
+                                self.child.wait().await.ok()
+                            }
+                        };
                     // Take ownership of the stderr drain task via
                     // mem::replace so we can await it (JoinHandle
                     // is not Clone and IntoFuture consumes self).
