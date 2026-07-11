@@ -19,9 +19,11 @@ TOML) with no runtime dependency on the `openspec` binary.
 Implemented: change authoring (`create`, `display`), deterministic
 rendering with review diffs (`render`), drift-protected merge with
 provenance headers and change archives (`merge`), native grammar
-validation (`validate`), and an end-to-end integration suite driving
-the compiled binary. Pending: dogfooding transition (gated on
-template-level support for opting out of the OpenSpec tree).
+validation (`validate`), a Model Context Protocol server exposing one
+tool per CLI verb (`nbspec serve mcp`), and an end-to-end integration
+suite driving both the CLI and the MCP server. Pending: dogfooding
+transition (gated on template-level support for opting out of the
+OpenSpec tree).
 
 A development-time conformance oracle (`tests/conformance/oracle.sh`)
 renders shared grammar fixtures into the upstream layout and runs a
@@ -68,6 +70,45 @@ Authoring happens with ordinary `nb` tooling: edit
 `proposals/<change-id>/proposal`, add specification notes under
 `proposals/<change-id>/specifications/`, and check off work items with
 `nb tasks do`.
+
+## MCP Server
+
+`nbspec serve mcp` starts a Model Context Protocol server on stdio that
+exposes one tool per CLI verb (`create`, `display`, `validate`,
+`render`, `merge`). The notebook resolves once at startup (the
+`--notebook` flag is inherited from the parent CLI) and holds that
+notebook for the server lifetime — there is no per-tool override.
+
+```sh
+# Start the MCP server. Notebook resolves from --notebook, falling back
+# to the git-derived project name.
+nbspec serve mcp --notebook myproject
+
+# Or, when run inside the project's git checkout, let the server
+# derive the notebook name from the working directory.
+nbspec serve mcp
+```
+
+Register the server with an MCP-aware client (Claude Desktop, OpenCode,
+etc.) by adding an entry to its `mcpServers` configuration:
+
+```json
+{
+  "mcpServers": {
+    "nbspec": {
+      "command": "nbspec",
+      "args": ["serve", "mcp"]
+    }
+  }
+}
+```
+
+The `validate` tool returns text plus structured diagnostics: on
+success, `{ valid: true, change_id, documents_checked, schema }`; on
+failure, `{ valid: false, change_id, diagnostics: [...] }` where each
+entry carries `note`, `artifact_id`, `line` (nullable), and `message`.
+Clients branch on the structured payload; agents that prefer text can
+still scrape the conventional `note:line: [artifact] message` lines.
 
 ## Configuration
 

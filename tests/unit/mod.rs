@@ -2,6 +2,7 @@ mod archives;
 mod changes;
 mod cli;
 mod grammar;
+mod mcp;
 mod merging;
 mod rendering;
 mod schemata;

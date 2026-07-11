@@ -16,6 +16,7 @@
 use std::path::{Path, PathBuf};
 
 use nb_api::NbClient;
+use serde_json::{Map, Value, json};
 use thiserror::Error;
 
 use crate::archives::{ArchiveEntry, ArchiveError, build_archive, gitattributes_covers_lfs};
@@ -90,7 +91,28 @@ pub enum OperationError {
 }
 
 /// Result alias for core operations.
-pub type OperationResult = Result<String, OperationError>;
+pub type OperationResult = Result<OperationOutcome, OperationError>;
+
+/// The outcome of a successful operation: the same text the CLI prints,
+/// plus a structured payload covering the operation's natural data. Both
+/// surfaces consume this — the CLI prints `text`, the MCP server returns
+/// `text` and `structured` together so clients can branch on typed data
+/// instead of scraping prose.
+#[derive(Clone, Debug)]
+pub struct OperationOutcome {
+    pub text: String,
+    pub structured: Value,
+}
+
+impl OperationOutcome {
+    /// Wraps `text` and `structured` as a successful outcome.
+    pub fn new(text: impl Into<String>, structured: Value) -> Self {
+        Self {
+            text: text.into(),
+            structured,
+        }
+    }
+}
 
 /// Creates a change namespace in the project notebook.
 ///
@@ -154,10 +176,17 @@ pub async fn create(
         )
         .await?;
 
-    Ok(format!(
+    let text = format!(
         "Created change {change_id} (schema {schema_name}) under {folder}/ in notebook {notebook_name}.",
         schema_name = schema.name,
-    ))
+    );
+    let structured = json!({
+        "change_id": change_id,
+        "schema": schema.name,
+        "folder": folder,
+        "notebook": notebook_name,
+    });
+    Ok(OperationOutcome::new(text, structured))
 }
 
 /// Displays a change. The short form reports the meta summary,
@@ -190,6 +219,7 @@ pub async fn display(
     }
     output.push_str("\n## artifacts\n\n");
     let mut authored: Vec<&str> = Vec::new();
+    let mut artifact_states: Vec<Value> = Vec::new();
     for artifact in schema.authoring_order() {
         let has_content =
             artifact_has_content(client, &folder, &schema, &artifact.id, notebook).await;
@@ -208,6 +238,16 @@ pub async fn display(
             format!("blocked on {}", unmet.join(", "))
         };
         output.push_str(&format!("- {}: {state}\n", artifact.id));
+        let mut entry = Map::new();
+        entry.insert("id".to_string(), Value::String(artifact.id.clone()));
+        entry.insert("state".to_string(), Value::String(state));
+        if !unmet.is_empty() {
+            entry.insert(
+                "blocked_on".to_string(),
+                Value::Array(unmet.iter().map(|s| Value::String(s.to_string())).collect()),
+            );
+        }
+        artifact_states.push(Value::Object(entry));
     }
     if full {
         for subfolder in namespace_folders(&schema) {
@@ -221,40 +261,141 @@ pub async fn display(
         .notebook_path(notebook)
         .await?
         .join(change_folder(change_id));
-    output.push_str(&work_report(&change_directory));
+    let work_summary = work_summary(&change_directory);
+    let work_structured = match &work_summary {
+        WorkSummary::Checklist(checklist) => {
+            let (complete, total) = checklist.progress();
+            json!({ "complete": complete, "total": total })
+        }
+        WorkSummary::Missing => json!({ "complete": 0, "total": 0, "missing": true }),
+        WorkSummary::ParseError(message) => {
+            json!({ "complete": 0, "total": 0, "parse_error": message })
+        }
+    };
+    output.push_str(&render_work_report(&work_summary));
 
     output.push_str("\n## drift\n\n");
-    output.push_str(&drift_report(
-        &change_directory,
-        &folder,
-        &schema,
-        change_id,
-    )?);
-    Ok(output)
+    let drift_lines = drift_report_lines(&change_directory, &folder, &schema, change_id)?;
+    output.push_str(&drift_lines.text);
+    let structured_drift: Vec<Value> = drift_lines
+        .items
+        .iter()
+        .map(|item| {
+            json!({
+                "path": item.path,
+                "status": item.status,
+            })
+        })
+        .collect();
+
+    let mut structured = Map::new();
+    structured.insert(
+        "change_id".to_string(),
+        Value::String(metadata.change_id.clone()),
+    );
+    structured.insert(
+        "title".to_string(),
+        metadata
+            .title
+            .as_ref()
+            .map(|t| Value::String(t.clone()))
+            .unwrap_or(Value::Null),
+    );
+    structured.insert(
+        "status".to_string(),
+        Value::String(metadata.status.to_string()),
+    );
+    structured.insert("schema".to_string(), Value::String(metadata.schema.clone()));
+    structured.insert(
+        "notebook".to_string(),
+        Value::String(metadata.notebook.clone()),
+    );
+    structured.insert(
+        "updated_at".to_string(),
+        Value::String(metadata.updated_at.to_string()),
+    );
+    structured.insert("artifacts".to_string(), Value::Array(artifact_states));
+    structured.insert("work".to_string(), work_structured);
+    structured.insert("drift".to_string(), Value::Array(structured_drift));
+
+    Ok(OperationOutcome::new(output, Value::Object(structured)))
 }
 
 /// Reports the merge-target status of every durable document for
-/// `display`.
-fn drift_report(
+/// `display`. Returns both a text rendering and a typed list of
+/// `(path, status)` items so the structured payload does not have to
+/// scrape the text.
+fn drift_report_lines(
     change_directory: &std::path::Path,
     folder: &str,
     schema: &WorkflowSchema,
     change_id: &str,
-) -> Result<String, OperationError> {
+) -> Result<DriftReportLines, OperationError> {
     let root = project_root();
     let documents = render_documents(change_directory, folder, schema)?;
-    let mut output = String::new();
+    let mut items: Vec<DriftItem> = Vec::new();
+    let mut text = String::new();
     for document in &documents {
         let Some(target_path) = &document.target_path else {
             continue;
         };
         let status = target_status(document, &root, change_id)?;
-        output.push_str(&format!("- {target_path}: {status}\n"));
+        let status_text = status.to_string();
+        text.push_str(&format!("- {target_path}: {status_text}\n"));
+        items.push(DriftItem {
+            path: target_path.clone(),
+            status: status_text,
+        });
     }
-    if output.is_empty() {
-        output.push_str("no durable documents with merge targets yet\n");
+    if text.is_empty() {
+        text.push_str("no durable documents with merge targets yet\n");
     }
-    Ok(output)
+    Ok(DriftReportLines { text, items })
+}
+
+#[derive(Debug)]
+struct DriftReportLines {
+    text: String,
+    items: Vec<DriftItem>,
+}
+
+#[derive(Debug)]
+struct DriftItem {
+    path: String,
+    status: String,
+}
+
+/// Categorizes what `work_report` should render for a given change
+/// directory. The display path needs both a typed summary (for the
+/// structured payload) and a text rendering (for the existing
+/// `display --full` view); parsing the text back out is fragile.
+enum WorkSummary {
+    Checklist(WorkChecklist),
+    Missing,
+    ParseError(String),
+}
+
+/// Reads the work todo note and returns a typed summary without
+/// rendering any text.
+fn work_summary(change_directory: &std::path::Path) -> WorkSummary {
+    let Some(content) = read_work_note(change_directory) else {
+        return WorkSummary::Missing;
+    };
+    match parse_work_note(&content) {
+        Ok(checklist) => WorkSummary::Checklist(checklist),
+        Err(error) => WorkSummary::ParseError(error.to_string()),
+    }
+}
+
+/// Renders the text form of a `WorkSummary`. Kept separate from
+/// `work_summary` so callers needing structured data only can stop
+/// at `work_summary` without paying for text formatting.
+fn render_work_report(summary: &WorkSummary) -> String {
+    match summary {
+        WorkSummary::Checklist(checklist) => render_work_checklist(checklist),
+        WorkSummary::Missing => "(no work todo note found)\n".to_string(),
+        WorkSummary::ParseError(message) => format!("{message}\n"),
+    }
 }
 
 /// Renders a change to a scratch workspace for review.
@@ -282,13 +423,27 @@ pub async fn render(
     let destination = render_destination(&context.configuration, &context.notebook_name, change_id);
     write_tree(&context.documents, &destination)?;
     if diff {
-        return Ok(review_diff(&context.documents, &context.root)?);
+        let text = review_diff(&context.documents, &context.root)?;
+        let lines = text.lines().count();
+        let structured = json!({
+            "change_id": change_id,
+            "format": "diff",
+            "lines": lines,
+        });
+        return Ok(OperationOutcome::new(text, structured));
     }
-    Ok(format!(
+    let text = format!(
         "Rendered {count} documents of change {change_id} to {destination}.",
         count = context.documents.len(),
         destination = destination.display(),
-    ))
+    );
+    let structured = json!({
+        "change_id": change_id,
+        "format": "tree",
+        "documents_count": context.documents.len(),
+        "destination": destination.display().to_string(),
+    });
+    Ok(OperationOutcome::new(text, structured))
 }
 
 /// Transfers a change's durable artifacts into the repository.
@@ -336,21 +491,35 @@ pub async fn merge(
     if report.written.is_empty() && report.unchanged.is_empty() {
         output.push_str("no durable documents to merge\n");
     }
-    if context.configuration.archives {
-        output.push_str(&write_change_archive(
+    let archived_path = if context.configuration.archives {
+        let archive_output = write_change_archive(
             &context.configuration,
             &context.root,
             &context.change_directory,
             change_id,
             &context.documents,
-        )?);
-    }
+        )?;
+        output.push_str(&archive_output);
+        // Parse the "archived <path>" line for structured reporting;
+        // warnings are kept in text only.
+        archive_output
+            .lines()
+            .find_map(|line| line.strip_prefix("archived ").map(|rest| rest.to_string()))
+    } else {
+        None
+    };
     output.push_str(&format!(
         "Merged change {change_id}: {written} written, {unchanged} unchanged.",
         written = report.written.len(),
         unchanged = report.unchanged.len(),
     ));
-    Ok(output)
+    let structured = json!({
+        "change_id": change_id,
+        "written": report.written,
+        "unchanged": report.unchanged,
+        "archived": archived_path,
+    });
+    Ok(OperationOutcome::new(output, structured))
 }
 
 /// Writes the merge-time change archive: the rendered artifact tree
@@ -446,11 +615,18 @@ pub async fn validate(
             diagnostics,
         }));
     }
-    Ok(format!(
+    let text = format!(
         "Change {change_id} is valid: {count} documents checked against schema {schema}.",
         count = context.documents.len(),
         schema = context.schema.name,
-    ))
+    );
+    let structured = json!({
+        "valid": true,
+        "change_id": change_id,
+        "documents_checked": context.documents.len(),
+        "schema": context.schema.name,
+    });
+    Ok(OperationOutcome::new(text, structured))
 }
 
 /// Resolved context shared by operations that read a change from the
@@ -614,19 +790,6 @@ async fn folder_listing(client: &NbClient, folder: &str, notebook: Option<&str>)
             }
         }
         Err(_) => "(empty)".to_string(),
-    }
-}
-
-/// Reports the `work` checklist section for `display`: progress
-/// counts and the item list, or a loud per-section diagnostic when
-/// the note is missing or malformed — never misreported numbers.
-fn work_report(change_directory: &std::path::Path) -> String {
-    let Some(content) = read_work_note(change_directory) else {
-        return "(no work todo note found)\n".to_string();
-    };
-    match parse_work_note(&content) {
-        Ok(checklist) => render_work_checklist(&checklist),
-        Err(error) => format!("{error}\n"),
     }
 }
 

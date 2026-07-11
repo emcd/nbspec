@@ -1,9 +1,10 @@
 //! Command-line interface definitions.
 //!
 //! Declares the argument grammar and terminal failure presentation;
-//! command execution lives in [`crate::operations`]. All commands are
-//! flat verbs operating on a change, mirroring the tool vocabulary
-//! planned for the MCP surface.
+//! command execution lives in [`crate::operations`] for the change
+//! verbs and in [`crate::mcp`] for the `serve mcp` subcommand. All
+//! change verbs are flat verbs operating on a change, mirroring the
+//! tool vocabulary the MCP surface exposes.
 
 use clap::{Parser, Subcommand};
 
@@ -86,4 +87,24 @@ pub enum Command {
         /// Change identifier (notebook folder under `proposals/`).
         change_id: String,
     },
+
+    /// Runs a long-running service exposed by nbspec.
+    ///
+    /// Long-running protocol servers nest under this verb so they
+    /// share the parent binary's release artifact, configuration
+    /// surface, and operator help output (`nbspec --help`). v0.2.0
+    /// ships the `mcp` service; later cycles may add others.
+    Serve {
+        #[command(subcommand)]
+        service: ServeService,
+    },
+}
+
+/// Long-running services exposed by `nbspec serve`.
+#[derive(Debug, Subcommand)]
+pub enum ServeService {
+    /// Runs the Model Context Protocol server on stdio. Wraps the
+    /// same operations library the change verbs dispatch to and
+    /// exposes one MCP tool per CLI verb.
+    Mcp,
 }

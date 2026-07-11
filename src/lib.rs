@@ -9,6 +9,7 @@ pub mod changes;
 pub mod cli;
 pub mod configuration;
 pub mod grammar;
+pub mod mcp;
 pub mod merging;
 pub mod operations;
 pub mod provenance;
