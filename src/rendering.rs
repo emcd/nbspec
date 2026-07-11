@@ -143,7 +143,7 @@ pub fn aggregate_content_hash(documents: &[RenderedDocument]) -> String {
         digest.update(tree_path.as_bytes());
         digest.update([0u8]);
         digest.update(body_hash.as_bytes());
-        digest.update([b'\n']);
+        digest.update(*b"\n");
     }
     format!("{:x}", digest.finalize())
 }
