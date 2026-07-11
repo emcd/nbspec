@@ -19,11 +19,11 @@ TOML) with no runtime dependency on the `openspec` binary.
 Implemented: change authoring (`create`, `display`), deterministic
 rendering with review diffs (`render`), drift-protected merge with
 provenance headers and change archives (`merge`), native grammar
-validation (`validate`), a Model Context Protocol server exposing one
-tool per CLI verb (`nbspec serve mcp`), and an end-to-end integration
-suite driving both the CLI and the MCP server. Pending: dogfooding
-transition (gated on template-level support for opting out of the
-OpenSpec tree).
+validation (`validate`), content-bound review verdicts gating merge
+(`review`), a Model Context Protocol server exposing one tool per CLI
+verb (`nbspec serve mcp`), and an end-to-end integration suite driving
+both the CLI and the MCP server. Pending: dogfooding transition (gated
+on template-level support for opting out of the OpenSpec tree).
 
 A development-time conformance oracle (`tests/conformance/oracle.sh`)
 renders shared grammar fixtures into the upstream layout and runs a
@@ -53,9 +53,21 @@ nbspec render add-foo
 # straight into review tooling.
 nbspec render add-foo --diff | difit --clean
 
+# Record a review verdict bound to the change's CURRENT rendered
+# content: any subsequent edit stales it. Each verdict is one immutable
+# note under proposals/add-foo/verdicts/; a newer verdict from the same
+# reviewer supersedes their older one. Revise verdicts require a
+# findings comment; pass --comment - to read it from stdin.
+nbspec review add-foo --verdict approve
+nbspec review add-foo --verdict revise --comment "findings at reviews/9"
+
 # Transfer durable documents to their configured repository targets with
-# provenance headers, and write the change archive. Hand-edited targets
-# refuse without --force; a refused merge writes nothing.
+# provenance headers, and write the change archive. Merge REFUSES
+# without a current approving verdict (no verdict, stale approval,
+# outstanding revise, or an unparseable verdict note all refuse;
+# --force overrides the review gate, loudly). Hand-edited targets
+# refuse without --force; a refused merge writes nothing. Verdict notes
+# ride the change archive and never materialize to the repository.
 nbspec merge add-foo
 
 # Native OpenSpec-grammar validation, no external binary. Exits zero
@@ -75,7 +87,7 @@ Authoring happens with ordinary `nb` tooling: edit
 
 `nbspec serve mcp` starts a Model Context Protocol server on stdio that
 exposes one tool per CLI verb (`create`, `display`, `validate`,
-`render`, `merge`). The notebook resolves once at startup (the
+`render`, `merge`, `review`). The notebook resolves once at startup (the
 `--notebook` flag is inherited from the parent CLI) and holds that
 notebook for the server lifetime — there is no per-tool override.
 
