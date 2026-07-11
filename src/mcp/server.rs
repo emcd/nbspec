@@ -20,7 +20,9 @@ use rmcp::{
 };
 
 use crate::mcp::errors::{operation_result, validation_result};
-use crate::mcp::params::{CreateArgs, DisplayArgs, MergeArgs, RenderArgs, ValidateArgs};
+use crate::mcp::params::{
+    CreateArgs, DisplayArgs, MergeArgs, RenderArgs, ReviewArgs, ValidateArgs,
+};
 
 /// Configuration provided when booting the MCP stdio service.
 #[derive(Clone, Debug)]
@@ -282,6 +284,40 @@ impl McpServer {
         .await;
         operation_result(output)
     }
+
+    /// Records a review verdict binding the change's current content
+    /// (CLI: `nbspec review`).
+    #[tool(
+        name = "review",
+        description = "Records a review verdict binding the change's \
+                       current rendered content. Maps to the `nbspec \
+                       review` CLI verb. The verdict binds the aggregate \
+                       content hash of the full rendered artifact set; \
+                       any subsequent edit stales it. Each verdict is \
+                       one immutable note under the change's verdicts/ \
+                       subfolder; recording never modifies existing \
+                       verdicts and never transitions lifecycle. A \
+                       revise verdict REQUIRES a comment naming the \
+                       findings. The comment is recorded verbatim (a \
+                       value of `-` is literal; stdin reading is \
+                       CLI-only)."
+    )]
+    async fn review(
+        &self,
+        Parameters(args): Parameters<ReviewArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let output = crate::operations::review(
+            &self.context.client,
+            Some(&self.context.notebook),
+            &args.change_id,
+            &args.gate,
+            args.verdict,
+            args.reviewer.as_deref(),
+            args.comment.as_deref(),
+        )
+        .await;
+        operation_result(output)
+    }
 }
 
 #[tool_handler]
@@ -290,12 +326,14 @@ impl rmcp::ServerHandler for McpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "nbspec MCP server wrapping the operations library. \
              Exposes one tool per CLI verb: create, display, validate, \
-             render, merge. The notebook is resolved once at startup \
-             (--notebook flag wins; otherwise git-derived) and held \
-             for the server lifetime; per-call notebook overrides are \
-             not honored. `render` and `merge` mutate the scratch \
+             render, merge, review. The notebook is resolved once at \
+             startup (--notebook flag wins; otherwise git-derived) and \
+             held for the server lifetime; per-call notebook overrides \
+             are not honored. `render` and `merge` mutate the scratch \
              workspace and the repository working tree respectively; \
-             use `validate` to dry-run a change before either.",
+             use `validate` to dry-run a change before either, and \
+             `review` to record the content-bound verdict that merge's \
+             review gate requires.",
         )
     }
 }

@@ -17,7 +17,9 @@
 //! `tests/integration/mcp_lifecycle.rs`, which use scratch
 //! notebooks that are registered with `nb` for the test run.
 
-use nbspec::mcp::params::{CreateArgs, DisplayArgs, MergeArgs, RenderArgs, ValidateArgs};
+use nbspec::mcp::params::{
+    CreateArgs, DisplayArgs, MergeArgs, RenderArgs, ReviewArgs, ValidateArgs,
+};
 use nbspec::mcp::server::{NotebookSource, resolve_notebook};
 use rmcp::handler::server::wrapper::Parameters;
 use schemars::schema_for;
@@ -84,6 +86,7 @@ fn tool_schemas_expose_expected_fields_only() {
         ("validate", schema_for!(ValidateArgs)),
         ("render", schema_for!(RenderArgs)),
         ("merge", schema_for!(MergeArgs)),
+        ("review", schema_for!(ReviewArgs)),
     ];
     for (name, schema) in schemas {
         let value = serde_json::to_value(&schema).unwrap();
@@ -153,4 +156,48 @@ fn resolve_notebook_treats_empty_as_explicit_not_as_absence() {
         .expect("resolution preserves the explicit empty value");
     assert_eq!(notebook, "");
     assert_eq!(source, NotebookSource::Explicit);
+}
+
+#[test]
+fn review_args_gate_defaults_to_merge() {
+    let args: ReviewArgs =
+        serde_json::from_value(json!({"change_id": "add-foo", "verdict": "approve"})).unwrap();
+    assert_eq!(args.gate, "merge");
+    assert_eq!(args.comment, None);
+    assert_eq!(args.reviewer, None);
+}
+
+#[test]
+fn review_args_comment_dash_is_literal() {
+    // Stdin reading is a CLI-only affordance: the MCP surface records
+    // a dash verbatim rather than reinterpreting the payload.
+    let args: ReviewArgs = serde_json::from_value(json!({
+        "change_id": "add-foo",
+        "verdict": "revise",
+        "comment": "-",
+    }))
+    .unwrap();
+    assert_eq!(args.comment.as_deref(), Some("-"));
+}
+
+#[test]
+fn review_args_rejects_notebook_override() {
+    let result = serde_json::from_value::<ReviewArgs>(json!({
+        "change_id": "add-foo",
+        "verdict": "approve",
+        "notebook": "should-be-rejected",
+    }));
+    assert!(
+        result.is_err(),
+        "notebook per-tool override must be rejected"
+    );
+}
+
+#[test]
+fn review_args_rejects_unknown_verdict_value() {
+    let result = serde_json::from_value::<ReviewArgs>(json!({
+        "change_id": "add-foo",
+        "verdict": "acclaim",
+    }));
+    assert!(result.is_err(), "verdict values are approve|revise only");
 }

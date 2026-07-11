@@ -18,6 +18,8 @@
 use schemars::JsonSchema;
 use serde::Deserialize;
 
+use crate::reviews::VerdictValue;
+
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CreateArgs {
@@ -59,6 +61,38 @@ pub struct RenderArgs {
     /// cleanly into review tooling such as difit.
     #[serde(default)]
     pub diff: bool,
+}
+
+fn merge_gate() -> String {
+    crate::reviews::MERGE_GATE.to_string()
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewArgs {
+    /// Change identifier (notebook folder under `proposals/`).
+    pub change_id: String,
+
+    /// Review gate the verdict addresses; defaults to `merge`, the
+    /// only slice-1 gate.
+    #[serde(default = "merge_gate")]
+    pub gate: String,
+
+    /// Verdict value: `approve` or `revise`.
+    pub verdict: VerdictValue,
+
+    /// Comment, e.g. a findings note selector. REQUIRED for a revise
+    /// verdict; optional for approve. Passed VERBATIM: a value of `-`
+    /// is recorded literally — stdin reading is a CLI-only affordance.
+    #[serde(default)]
+    #[schemars(with = "String")]
+    pub comment: Option<String>,
+
+    /// Reviewer identity; defaults to Git user.name. An explicit
+    /// empty value is refused, never treated as absence.
+    #[serde(default)]
+    #[schemars(with = "String")]
+    pub reviewer: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]

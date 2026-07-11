@@ -44,3 +44,64 @@ fn other_failures_carry_the_error_banner() {
         "Error: change already exists: add-demo"
     );
 }
+
+#[test]
+fn review_verb_parses_with_gate_default() {
+    use clap::Parser;
+    use nbspec::cli::{Cli, Command, VerdictArg};
+    let cli = Cli::parse_from(["nbspec", "review", "add-demo", "--verdict", "approve"]);
+    match cli.command {
+        Command::Review {
+            change_id,
+            gate,
+            verdict,
+            comment,
+            reviewer,
+        } => {
+            assert_eq!(change_id, "add-demo");
+            assert_eq!(gate, "merge", "gate defaults to the slice-1 gate");
+            assert_eq!(verdict, VerdictArg::Approve);
+            assert_eq!(comment, None);
+            assert_eq!(reviewer, None);
+        }
+        other => panic!("expected Review, got {other:?}"),
+    }
+}
+
+#[test]
+fn review_verb_requires_a_verdict() {
+    use clap::Parser;
+    use nbspec::cli::Cli;
+    let result = Cli::try_parse_from(["nbspec", "review", "add-demo"]);
+    assert!(result.is_err(), "verdict is a required argument");
+}
+
+#[test]
+fn review_verb_accepts_comment_and_reviewer() {
+    use clap::Parser;
+    use nbspec::cli::{Cli, Command, VerdictArg};
+    let cli = Cli::parse_from([
+        "nbspec",
+        "review",
+        "add-demo",
+        "--verdict",
+        "revise",
+        "--comment",
+        "findings at reviews/9",
+        "--reviewer",
+        "Advisor",
+    ]);
+    match cli.command {
+        Command::Review {
+            verdict,
+            comment,
+            reviewer,
+            ..
+        } => {
+            assert_eq!(verdict, VerdictArg::Revise);
+            assert_eq!(comment.as_deref(), Some("findings at reviews/9"));
+            assert_eq!(reviewer.as_deref(), Some("Advisor"));
+        }
+        other => panic!("expected Review, got {other:?}"),
+    }
+}

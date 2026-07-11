@@ -352,8 +352,8 @@ async fn mcp_server_drives_change_lifecycle() {
         .collect();
     assert_eq!(
         names,
-        vec!["create", "display", "merge", "render", "validate"],
-        "tools/list must expose exactly the five CLI verbs"
+        vec!["create", "display", "merge", "render", "review", "validate"],
+        "tools/list must expose exactly the six CLI verbs"
     );
 
     // create: scaffold the change namespace.
@@ -551,6 +551,70 @@ async fn mcp_server_drives_change_lifecycle() {
         .expect("render diff structuredContent");
     assert_eq!(diff_structured["format"], json!("diff"));
     assert!(diff_structured["lines"].as_u64().unwrap() > 0);
+
+    // An unreviewed merge refuses at the review gate over the MCP
+    // surface exactly as it does on the CLI.
+    let unreviewed = harness
+        .call_tool(
+            "merge",
+            json!({"change_id": CHANGE_ID})
+                .as_object()
+                .cloned()
+                .expect("merge args object"),
+        )
+        .await;
+    let refused_result = assert_tool_error(&unreviewed);
+    assert!(
+        first_text(refused_result).contains("review gate unsatisfied: no verdict"),
+        "refusal text: {}",
+        first_text(refused_result)
+    );
+
+    // A comment-less revise refuses over the tool surface exactly as
+    // on the CLI; then record the approving verdict through the
+    // review tool itself — surface parity, proven.
+    let moodless = harness
+        .call_tool(
+            "review",
+            json!({"change_id": CHANGE_ID, "verdict": "revise", "reviewer": "itest"})
+                .as_object()
+                .cloned()
+                .expect("review args object"),
+        )
+        .await;
+    let moodless_result = assert_tool_error(&moodless);
+    assert!(
+        first_text(moodless_result).contains("requires a comment"),
+        "refusal text: {}",
+        first_text(moodless_result)
+    );
+    let reviewed = harness
+        .call_tool(
+            "review",
+            json!({"change_id": CHANGE_ID, "verdict": "approve", "reviewer": "itest"})
+                .as_object()
+                .cloned()
+                .expect("review args object"),
+        )
+        .await;
+    let reviewed_result = assert_success(&reviewed);
+    assert!(
+        first_text(reviewed_result).contains("Recorded approve verdict by itest"),
+        "review text: {}",
+        first_text(reviewed_result)
+    );
+    let review_structured = reviewed_result
+        .get("structuredContent")
+        .expect("review structuredContent");
+    assert_eq!(review_structured["gate"], json!("merge"));
+    assert_eq!(review_structured["verdict"], json!("approve"));
+    assert_eq!(review_structured["reviewer"], json!("itest"));
+    assert!(
+        review_structured["aggregate_hash"]
+            .as_str()
+            .is_some_and(|hash| hash.len() == 64),
+        "aggregate hash must be a SHA-256 hex digest"
+    );
 
     // merge: transfers durable documents with provenance + archive.
     let merged = harness

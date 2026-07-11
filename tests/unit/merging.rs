@@ -79,7 +79,7 @@ fn merge_writes_new_documents_with_provenance() {
         render_only_document("# proposal\n"),
         document("alpha", ADDED_SPEC),
     ];
-    let report = merge_documents(&documents, &root, "add-demo", "home", false).unwrap();
+    let report = merge_documents(&documents, &root, "add-demo", "home", None, false).unwrap();
     assert_eq!(
         report.written,
         vec!["documentation/specifications/alpha.md".to_string()]
@@ -97,9 +97,9 @@ fn remerge_of_identical_content_is_unchanged() {
     let root = unique_temp_root("merging-idempotent");
     fs::create_dir_all(&root).unwrap();
     let documents = vec![document("alpha", ADDED_SPEC)];
-    merge_documents(&documents, &root, "add-demo", "home", false).unwrap();
+    merge_documents(&documents, &root, "add-demo", "home", None, false).unwrap();
     let first = fs::read_to_string(root.join("documentation/specifications/alpha.md")).unwrap();
-    let report = merge_documents(&documents, &root, "add-demo", "home", false).unwrap();
+    let report = merge_documents(&documents, &root, "add-demo", "home", None, false).unwrap();
     assert!(report.written.is_empty());
     assert_eq!(
         report.unchanged,
@@ -120,6 +120,7 @@ fn hand_edited_target_refuses_and_writes_nothing() {
         &root,
         "add-demo",
         "home",
+        None,
         false,
     )
     .unwrap();
@@ -131,8 +132,15 @@ fn hand_edited_target_refuses_and_writes_nothing() {
 
     let beta = document("beta", ADDED_SPEC);
     let updated_alpha = document("alpha", "# alpha\n\n## ADDED Requirements\n\nrevised\n");
-    let error =
-        merge_documents(&[updated_alpha, beta], &root, "add-demo", "home", false).unwrap_err();
+    let error = merge_documents(
+        &[updated_alpha, beta],
+        &root,
+        "add-demo",
+        "home",
+        None,
+        false,
+    )
+    .unwrap_err();
     let MergeError::Refused { refusals } = error else {
         panic!("expected refusal");
     };
@@ -153,6 +161,7 @@ fn force_overwrites_drift_with_fresh_provenance() {
         &root,
         "add-demo",
         "home",
+        None,
         false,
     )
     .unwrap();
@@ -164,6 +173,7 @@ fn force_overwrites_drift_with_fresh_provenance() {
         &root,
         "add-demo",
         "home",
+        None,
         true,
     )
     .unwrap();
@@ -186,6 +196,7 @@ fn unmanaged_target_refuses_without_force() {
         &root,
         "add-demo",
         "home",
+        None,
         false,
     )
     .unwrap_err();
@@ -202,7 +213,8 @@ fn directory_at_target_refuses_and_writes_nothing() {
     fs::create_dir_all(root.join("documentation/specifications/beta.md")).unwrap();
     let alpha = document("alpha", ADDED_SPEC);
     let beta = document("beta", ADDED_SPEC);
-    let error = merge_documents(&[alpha, beta], &root, "add-demo", "home", false).unwrap_err();
+    let error =
+        merge_documents(&[alpha, beta], &root, "add-demo", "home", None, false).unwrap_err();
     let MergeError::Refused { refusals } = error else {
         panic!("expected refusal");
     };
@@ -221,6 +233,7 @@ fn directory_at_target_refuses_even_with_force() {
         &root,
         "add-demo",
         "home",
+        None,
         true,
     )
     .unwrap_err();
@@ -252,6 +265,7 @@ fn target_owned_by_other_change_refuses() {
         &root,
         "add-first",
         "home",
+        None,
         false,
     )
     .unwrap();
@@ -260,6 +274,7 @@ fn target_owned_by_other_change_refuses() {
         &root,
         "add-second",
         "home",
+        None,
         false,
     )
     .unwrap_err();
@@ -289,8 +304,15 @@ Changed text.
 - **WHEN** alpha
 - **THEN** alpha
 ";
-    let error =
-        merge_documents(&[document("alpha", delta)], &root, "add-demo", "home", true).unwrap_err();
+    let error = merge_documents(
+        &[document("alpha", delta)],
+        &root,
+        "add-demo",
+        "home",
+        None,
+        true,
+    )
+    .unwrap_err();
     let message = error.to_string();
     let MergeError::Refused { refusals } = error else {
         panic!("expected refusal");
@@ -318,6 +340,7 @@ fn target_status_reflects_lifecycle() {
         &root,
         "add-demo",
         "home",
+        None,
         false,
     )
     .unwrap();
@@ -353,5 +376,78 @@ fn render_only_documents_report_not_merged() {
         target_status(&proposal, &root, "add-demo").unwrap(),
         TargetStatus::NotMerged
     );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn review_gate_state_refuses_without_force() {
+    let root = unique_temp_root("merging-review-gate");
+    fs::create_dir_all(&root).unwrap();
+    let alpha = document("alpha", ADDED_SPEC);
+    let error = merge_documents(
+        std::slice::from_ref(&alpha),
+        &root,
+        "add-demo",
+        "home",
+        Some("no verdict recorded for the merge gate"),
+        false,
+    )
+    .unwrap_err();
+    match error {
+        MergeError::Refused { refusals } => {
+            assert_eq!(refusals.len(), 1);
+            assert_eq!(refusals[0].target, "add-demo");
+            assert!(matches!(
+                &refusals[0].reason,
+                RefusalReason::ReviewGate(state) if state.contains("no verdict")
+            ));
+        }
+        other => panic!("expected Refused, got {other}"),
+    }
+    assert!(
+        !root.join("documentation/specifications/alpha.md").exists(),
+        "a refused merge writes nothing"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn review_gate_force_override_is_recorded() {
+    let root = unique_temp_root("merging-review-gate-force");
+    fs::create_dir_all(&root).unwrap();
+    let alpha = document("alpha", ADDED_SPEC);
+    let report = merge_documents(
+        std::slice::from_ref(&alpha),
+        &root,
+        "add-demo",
+        "home",
+        Some("latest verdict is revise by owner"),
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        report.review_gate_overridden.as_deref(),
+        Some("latest verdict is revise by owner"),
+        "force must record the override for loud reporting"
+    );
+    assert_eq!(report.written.len(), 1);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn satisfied_review_gate_leaves_no_override_marker() {
+    let root = unique_temp_root("merging-review-gate-satisfied");
+    fs::create_dir_all(&root).unwrap();
+    let alpha = document("alpha", ADDED_SPEC);
+    let report = merge_documents(
+        std::slice::from_ref(&alpha),
+        &root,
+        "add-demo",
+        "home",
+        None,
+        true,
+    )
+    .unwrap();
+    assert_eq!(report.review_gate_overridden, None);
     fs::remove_dir_all(&root).unwrap();
 }
