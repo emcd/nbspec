@@ -530,6 +530,13 @@ pub async fn merge(
     if let Some(state) = &report.review_gate_overridden {
         output.push_str(&format!("REVIEW GATE OVERRIDDEN (--force): {state}\n"));
     }
+    for succession in &report.successions {
+        output.push_str(&format!(
+            "TAKEOVER (clean succession): {target}: {previous} -> {change_id}\n",
+            target = succession.target,
+            previous = succession.previous_owner,
+        ));
+    }
     for path in &report.written {
         output.push_str(&format!("wrote {path}\n"));
     }
@@ -561,12 +568,23 @@ pub async fn merge(
         written = report.written.len(),
         unchanged = report.unchanged.len(),
     ));
+    let successions: Vec<Value> = report
+        .successions
+        .iter()
+        .map(|succession| {
+            json!({
+                "target": succession.target,
+                "previous_owner": succession.previous_owner,
+            })
+        })
+        .collect();
     let structured = json!({
         "change_id": change_id,
         "written": report.written,
         "unchanged": report.unchanged,
         "archived": archived_path,
         "review_gate_overridden": report.review_gate_overridden,
+        "successions": successions,
     });
     Ok(OperationOutcome::new(output, structured))
 }

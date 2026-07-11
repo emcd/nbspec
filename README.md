@@ -69,8 +69,12 @@ nbspec render add-foo --diff | summarize | nbspec review add-foo --verdict revis
 # without a current approving verdict (no verdict, stale approval,
 # outstanding revise, or an unparseable verdict note all refuse;
 # --force overrides the review gate, loudly). Hand-edited targets
-# refuse without --force; a refused merge writes nothing. Verdict notes
-# ride the change archive and never materialize to the repository.
+# refuse without --force; a refused merge writes nothing. A target
+# inherited from an earlier change succeeds cleanly when it still
+# matches its recorded provenance (the takeover is announced, never
+# silent); a foreign target that drifted refuses without --force.
+# Verdict notes ride the change archive and never materialize to the
+# repository.
 nbspec merge add-foo
 
 # Native OpenSpec-grammar validation, no external binary. Exits zero

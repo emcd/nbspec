@@ -4,7 +4,7 @@
 //! working tree, and it never creates git commits. It runs in two
 //! phases: planning inspects every merge target and collects every
 //! refusal — unsupported delta operations, hand-edited targets,
-//! unmanaged files, documents owned by other changes — and only a
+//! unmanaged files, foreign-owned documents that drifted — and only a
 //! violation-free plan executes, so a refused merge writes nothing.
 //! `--force` overrides target-state refusals (drift, unmanaged,
 //! foreign ownership) but never unsupported delta operations, which
@@ -62,8 +62,11 @@ pub enum RefusalReason {
     /// A file exists at the target without a provenance header, so
     /// nbspec did not write it.
     Unmanaged,
-    /// The target belongs to a different change.
-    ForeignChange(String),
+    /// The target belongs to a different change AND has drifted from
+    /// its recorded provenance. Clean-provenance foreign targets do
+    /// not refuse: they succeed by clean succession (see
+    /// [`MergeReport::successions`]).
+    ForeignDrifted(String),
     /// A directory (or other non-file) occupies the target; nbspec
     /// never removes such occupants, so `--force` cannot override.
     NonFileTarget,
@@ -93,9 +96,10 @@ impl std::fmt::Display for RefusalReason {
                 "an unmanaged file occupies the target (no nbspec \
                  provenance); rerun with --force to overwrite"
             ),
-            RefusalReason::ForeignChange(change_id) => write!(
+            RefusalReason::ForeignDrifted(change_id) => write!(
                 formatter,
-                "owned by change {change_id}; rerun with --force to take over"
+                "owned by change {change_id} and drifted from its recorded \
+                 provenance; rerun with --force to take over"
             ),
             RefusalReason::NonFileTarget => write!(
                 formatter,
@@ -134,8 +138,13 @@ pub enum TargetStatus {
     Drifted,
     /// A file without provenance occupies the target.
     Unmanaged,
-    /// The target's provenance names a different change.
+    /// The target's provenance names a different change and its body
+    /// still matches that provenance: clean succession is available
+    /// (a merge inherits the target without `--force`).
     OwnedByOtherChange(String),
+    /// The target's provenance names a different change AND its body
+    /// no longer matches that provenance: takeover requires `--force`.
+    ForeignDrifted(String),
     /// A directory (or other non-file) occupies the target.
     NonFile,
 }
@@ -158,13 +167,33 @@ impl std::fmt::Display for TargetStatus {
                 )
             }
             TargetStatus::OwnedByOtherChange(change_id) => {
-                write!(formatter, "owned by change {change_id}")
+                write!(
+                    formatter,
+                    "owned by change {change_id}; clean succession available"
+                )
+            }
+            TargetStatus::ForeignDrifted(change_id) => {
+                write!(
+                    formatter,
+                    "owned by change {change_id}, drifted since its materialization"
+                )
             }
             TargetStatus::NonFile => {
                 write!(formatter, "blocked: a non-file occupies the target")
             }
         }
     }
+}
+
+/// One clean succession: a target inherited from another change
+/// whose materialization was still intact (body matched its own
+/// provenance header) when this merge took ownership.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Succession {
+    /// Repository-relative target path, forward-slash logical path.
+    pub target: String,
+    /// Change that owned the target before this merge.
+    pub previous_owner: String,
 }
 
 /// Outcome of a successful merge.
@@ -179,6 +208,9 @@ pub struct MergeReport {
     /// the gate-state description so merge output reports the
     /// override loudly.
     pub review_gate_overridden: Option<String>,
+    /// Clean successions performed by this merge. Never silent:
+    /// merge output announces each, naming both changes.
+    pub successions: Vec<Succession>,
 }
 
 /// Classifies the merge target of one rendered document.
@@ -208,7 +240,13 @@ pub fn target_status(
         return Ok(TargetStatus::Unmanaged);
     };
     if header.change_id != change_id {
-        return Ok(TargetStatus::OwnedByOtherChange(header.change_id));
+        // The succession test compares the target's CURRENT content
+        // against the hash in its OWN provenance header — never the
+        // proposed new content against the old header.
+        if provenance::body_matches(&header, body) {
+            return Ok(TargetStatus::OwnedByOtherChange(header.change_id));
+        }
+        return Ok(TargetStatus::ForeignDrifted(header.change_id));
     }
     if !provenance::body_matches(&header, body) {
         return Ok(TargetStatus::Drifted);
@@ -272,12 +310,13 @@ pub fn merge_documents(
         let refusal = match &status {
             TargetStatus::Drifted => Some(RefusalReason::Drifted),
             TargetStatus::Unmanaged => Some(RefusalReason::Unmanaged),
-            TargetStatus::OwnedByOtherChange(other) => {
-                Some(RefusalReason::ForeignChange(other.clone()))
+            TargetStatus::ForeignDrifted(other) => {
+                Some(RefusalReason::ForeignDrifted(other.clone()))
             }
             TargetStatus::NotMerged
             | TargetStatus::Current
             | TargetStatus::UpdatePending
+            | TargetStatus::OwnedByOtherChange(_)
             | TargetStatus::NonFile => None,
         };
         if let Some(reason) = refusal
@@ -288,6 +327,12 @@ pub fn merge_documents(
                 reason,
             });
             continue;
+        }
+        if let TargetStatus::OwnedByOtherChange(previous_owner) = &status {
+            report.successions.push(Succession {
+                target: target_path.clone(),
+                previous_owner: previous_owner.clone(),
+            });
         }
         if status == TargetStatus::Current {
             report.unchanged.push(target_path.clone());
