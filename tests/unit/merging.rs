@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use nbspec::merging::{MergeError, RefusalReason, TargetStatus, merge_documents, target_status};
+use nbspec::merging::{
+    MergeError, RefusalReason, Succession, TargetStatus, merge_documents, target_status,
+};
 use nbspec::provenance;
 use nbspec::rendering::RenderedDocument;
 
@@ -257,8 +259,131 @@ fn directory_at_target_reports_non_file_status() {
 }
 
 #[test]
-fn target_owned_by_other_change_refuses() {
-    let root = unique_temp_root("merging-foreign");
+fn clean_succession_proceeds_without_force() {
+    let root = unique_temp_root("merging-succession");
+    fs::create_dir_all(&root).unwrap();
+    merge_documents(
+        &[document("alpha", ADDED_SPEC)],
+        &root,
+        "add-first",
+        "home",
+        None,
+        false,
+    )
+    .unwrap();
+    // The successor's content differs from the inherited body; what
+    // must be intact is the PREVIOUS owner's materialization.
+    let successor = document("alpha", "# alpha\n\n## ADDED Requirements\n\nrevised\n");
+    let report = merge_documents(
+        std::slice::from_ref(&successor),
+        &root,
+        "add-second",
+        "home",
+        None,
+        false,
+    )
+    .unwrap();
+    assert_eq!(report.written, vec![successor.target_path.clone().unwrap()]);
+    assert_eq!(
+        report.successions,
+        vec![Succession {
+            target: successor.target_path.clone().unwrap(),
+            previous_owner: "add-first".to_string(),
+        }],
+        "succession must be recorded so merge output can announce it"
+    );
+    // Ownership transferred: the successor now owns the target.
+    assert_eq!(
+        target_status(&successor, &root, "add-second").unwrap(),
+        TargetStatus::Current
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn foreign_drifted_takeover_refuses_without_force() {
+    let root = unique_temp_root("merging-foreign-drift");
+    fs::create_dir_all(&root).unwrap();
+    merge_documents(
+        &[document("alpha", ADDED_SPEC)],
+        &root,
+        "add-first",
+        "home",
+        None,
+        false,
+    )
+    .unwrap();
+    let target = root.join("documentation/specifications/alpha.md");
+    let edited = fs::read_to_string(&target).unwrap() + "\nhand edit\n";
+    fs::write(&target, edited).unwrap();
+    let error = merge_documents(
+        &[document("alpha", ADDED_SPEC)],
+        &root,
+        "add-second",
+        "home",
+        None,
+        false,
+    )
+    .unwrap_err();
+    let message = error.to_string();
+    let MergeError::Refused { refusals } = error else {
+        panic!("expected refusal");
+    };
+    assert_eq!(
+        refusals[0].reason,
+        RefusalReason::ForeignDrifted("add-first".to_string())
+    );
+    assert!(
+        message.contains("drifted from its recorded provenance"),
+        "{message}"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn foreign_drifted_takeover_yields_to_force() {
+    let root = unique_temp_root("merging-foreign-drift-force");
+    fs::create_dir_all(&root).unwrap();
+    merge_documents(
+        &[document("alpha", ADDED_SPEC)],
+        &root,
+        "add-first",
+        "home",
+        None,
+        false,
+    )
+    .unwrap();
+    let target = root.join("documentation/specifications/alpha.md");
+    let edited = fs::read_to_string(&target).unwrap() + "\nhand edit\n";
+    fs::write(&target, edited).unwrap();
+    let report = merge_documents(
+        &[document("alpha", ADDED_SPEC)],
+        &root,
+        "add-second",
+        "home",
+        None,
+        true,
+    )
+    .unwrap();
+    assert_eq!(report.written.len(), 1);
+    assert!(
+        report.successions.is_empty(),
+        "a forced drifted takeover is not a clean succession"
+    );
+    assert_eq!(
+        report.drift_overrides,
+        vec![Succession {
+            target: "documentation/specifications/alpha.md".to_string(),
+            previous_owner: "add-first".to_string(),
+        }],
+        "the forced override must be recorded so merge output can state it"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn succession_does_not_bypass_review_gate() {
+    let root = unique_temp_root("merging-succession-gate");
     fs::create_dir_all(&root).unwrap();
     merge_documents(
         &[document("alpha", ADDED_SPEC)],
@@ -274,16 +399,16 @@ fn target_owned_by_other_change_refuses() {
         &root,
         "add-second",
         "home",
-        None,
+        Some("no verdict recorded for gate merge"),
         false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
         panic!("expected refusal");
     };
-    assert_eq!(
-        refusals[0].reason,
-        RefusalReason::ForeignChange("add-first".to_string())
+    assert!(
+        matches!(refusals[0].reason, RefusalReason::ReviewGate(_)),
+        "clean-succession recognition must never satisfy the review gate"
     );
     fs::remove_dir_all(&root).unwrap();
 }
@@ -360,6 +485,18 @@ fn target_status_reflects_lifecycle() {
         target_status(&alpha, &root, "add-demo").unwrap(),
         TargetStatus::Drifted
     );
+    // A drifted target viewed by a foreign change is ForeignDrifted:
+    // the drift belongs to the target, whoever is asking.
+    assert_eq!(
+        target_status(&alpha, &root, "add-other").unwrap(),
+        TargetStatus::ForeignDrifted("add-demo".to_string())
+    );
+    // Restore the intact body: the foreign view becomes clean
+    // succession.
+    let restored = fs::read_to_string(&target)
+        .unwrap()
+        .replace("\nhand edit\n", "");
+    fs::write(&target, restored).unwrap();
     assert_eq!(
         target_status(&alpha, &root, "add-other").unwrap(),
         TargetStatus::OwnedByOtherChange("add-demo".to_string())
