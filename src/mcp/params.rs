@@ -82,8 +82,7 @@ pub struct ReviewArgs {
     pub verdict: VerdictValue,
 
     /// Comment, e.g. a findings note selector. REQUIRED for a revise
-    /// verdict; optional for approve. Passed VERBATIM: a value of `-`
-    /// is recorded literally — stdin reading is a CLI-only affordance.
+    /// verdict; optional for approve. Recorded verbatim.
     #[serde(default)]
     #[schemars(with = "String")]
     pub comment: Option<String>,
