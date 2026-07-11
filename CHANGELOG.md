@@ -28,12 +28,11 @@ and `nbspec` adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   named in the merge output). A foreign target that has drifted
   from its recorded provenance still requires `--force`, which
   overrides loudly and records the override.
-- **Inherited-environment hygiene**: ambient `GIT_*` env vars
-  (leaked from git hooks, CI runners, or shell leakage) are
-  scrubbed from every subprocess spawn site — the CLI dispatcher,
-  the MCP server, and the test harness. Integration tests use
-  per-test `NB_DIR`s so scratch notebooks no longer leak into the
-  operator's real notebook root.
+- **Inherited-environment hygiene**: ambient `GIT_*` environment
+  variables (leaked from git hooks, CI runners, or shell sessions)
+  are now scrubbed from every spawned subprocess. Running `nbspec`
+  from inside a git hook or CI context no longer redirects the
+  underlying git operations to the wrong repository.
 
 ### Changed
 
