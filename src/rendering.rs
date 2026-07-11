@@ -9,9 +9,11 @@
 
 use std::path::{Path, PathBuf};
 
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::changes::{ArtifactLayout, artifact_layout};
+use crate::provenance::content_hash;
 use crate::schemata::WorkflowSchema;
 
 /// Errors from rendering.
@@ -120,6 +122,30 @@ pub fn render_documents(
         }
     }
     Ok(documents)
+}
+
+/// Computes the aggregate content hash of a rendered document set:
+/// the SHA-256 hex digest over the sorted (tree_path, body hash)
+/// pairs. The aggregate identifies the exact reviewable content of a
+/// change — any body edit, addition, removal, or rename of a rendered
+/// document changes the value — so review verdicts bind it. Sorting
+/// makes the digest independent of enumeration order; a NUL separates
+/// path from hash and a newline terminates each pair so adjacent
+/// fields cannot alias across pair boundaries.
+pub fn aggregate_content_hash(documents: &[RenderedDocument]) -> String {
+    let mut pairs: Vec<(&str, String)> = documents
+        .iter()
+        .map(|document| (document.tree_path.as_str(), content_hash(&document.content)))
+        .collect();
+    pairs.sort();
+    let mut digest = Sha256::new();
+    for (tree_path, body_hash) in pairs {
+        digest.update(tree_path.as_bytes());
+        digest.update([0u8]);
+        digest.update(body_hash.as_bytes());
+        digest.update([b'\n']);
+    }
+    format!("{:x}", digest.finalize())
 }
 
 /// Writes a rendered document list as a file tree, replacing any

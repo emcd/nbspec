@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use nbspec::rendering::{render_documents, review_diff, write_tree};
+use nbspec::rendering::{
+    RenderedDocument, aggregate_content_hash, render_documents, review_diff, write_tree,
+};
 use nbspec::schemata::default_schema;
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -213,4 +215,70 @@ fn diff_shows_changed_targets() {
     assert!(diff.contains("+Design."));
     assert!(!diff.contains("new file mode 100644\n--- a/documentation/designs"));
     fs::remove_dir_all(&root).unwrap();
+}
+
+/// Builds an in-memory rendered document for aggregate-hash tests.
+fn hash_fixture_document(tree_path: &str, content: &str) -> RenderedDocument {
+    RenderedDocument {
+        artifact_id: "specifications".to_string(),
+        tree_path: tree_path.to_string(),
+        target_path: None,
+        source_note: format!("proposals/add-demo/{tree_path}"),
+        content: content.to_string(),
+    }
+}
+
+#[test]
+fn aggregate_hash_is_deterministic_and_order_independent() {
+    let alpha = hash_fixture_document("specifications/alpha.md", "# alpha\n");
+    let beta = hash_fixture_document("specifications/beta.md", "# beta\n");
+    let forward = aggregate_content_hash(&[alpha.clone(), beta.clone()]);
+    let reversed = aggregate_content_hash(&[beta, alpha]);
+    assert_eq!(
+        forward, reversed,
+        "aggregate must not depend on enumeration order"
+    );
+    assert_eq!(forward.len(), 64, "SHA-256 hex digest expected");
+}
+
+#[test]
+fn aggregate_hash_changes_on_body_edit() {
+    let original = hash_fixture_document("proposal.md", "# proposal\n\nWhy: reasons.\n");
+    let edited = hash_fixture_document("proposal.md", "# proposal\n\nWhy: better reasons.\n");
+    assert_ne!(
+        aggregate_content_hash(&[original]),
+        aggregate_content_hash(&[edited]),
+        "any body edit must change the aggregate"
+    );
+}
+
+#[test]
+fn aggregate_hash_changes_on_added_document() {
+    let proposal = hash_fixture_document("proposal.md", "# proposal\n");
+    let spec = hash_fixture_document("specifications/alpha.md", "# alpha\n");
+    assert_ne!(
+        aggregate_content_hash(std::slice::from_ref(&proposal)),
+        aggregate_content_hash(&[proposal, spec]),
+        "set membership growth must change the aggregate"
+    );
+}
+
+#[test]
+fn aggregate_hash_changes_on_rename_without_body_edit() {
+    let original = hash_fixture_document("specifications/alpha.md", "# alpha\n");
+    let renamed = hash_fixture_document("specifications/renamed.md", "# alpha\n");
+    assert_ne!(
+        aggregate_content_hash(&[original]),
+        aggregate_content_hash(&[renamed]),
+        "a rename with identical body must change the aggregate"
+    );
+}
+
+#[test]
+fn aggregate_hash_of_empty_set_is_stable() {
+    assert_eq!(
+        aggregate_content_hash(&[]),
+        aggregate_content_hash(&[]),
+        "empty rendered set must hash deterministically"
+    );
 }
