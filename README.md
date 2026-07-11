@@ -14,22 +14,42 @@ merge. Proposal churn never pollutes `rg` scans of the repository.
 requirement/scenario grammar and workflow-schema mechanism (serialized as
 TOML) with no runtime dependency on the `openspec` binary.
 
+## Installation
+
+`nbspec` is published to crates.io as a binary crate:
+
+```sh
+cargo install nbspec
+```
+
+Prerequisite: [`nb`](https://github.com/xwmx/nb) installed and on
+`$PATH`. `nbspec` orchestrates around `nb` but does not replace it;
+the project notebook holds proposal artifacts (proposal text,
+specifications, designs, decisions, verdicts) and `nbspec` reads and
+writes them through the `nb` CLI. CI uses `nb.sh@7.24.0`; older and
+newer 7.x releases should work but are not exercised in our test
+matrix.
+
+For unreleased versions (from `master` or a branch), install from the
+repository:
+
+```sh
+cargo install --git https://github.com/emcd/nbspec
+```
+
 ## Status
 
-Implemented: change authoring (`create`, `display`), deterministic
-rendering with review diffs (`render`), drift-protected merge with
-provenance headers and change archives (`merge`), native grammar
-validation (`validate`), content-bound review verdicts gating merge
-(`review`), a Model Context Protocol server exposing one tool per CLI
-verb (`nbspec serve mcp`), and an end-to-end integration suite driving
-both the CLI and the MCP server. Pending: dogfooding transition (gated
-on template-level support for opting out of the OpenSpec tree).
+**[v0.2.0](CHANGELOG.md#020---2026-07-11)** released 2026-07-11 — see
+[CHANGELOG.md](CHANGELOG.md) for full release notes.
 
-A development-time conformance oracle (`tests/conformance/oracle.sh`)
-renders shared grammar fixtures into the upstream layout and runs a
-pinned upstream `openspec validate --strict` against them, proving the
-grammar-compatibility claim without any runtime dependency on the
-`openspec` binary.
+The verbs in the [Usage](#usage) section below are all implemented:
+change authoring, rendering with review diffs, drift-protected
+merge, native grammar validation, content-bound review gating, and
+an MCP server mirroring the CLI.
+
+OpenSpec 1.x grammar compatibility is verified end-to-end against a
+pinned upstream `openspec validate --strict`; no runtime dependency
+on the `openspec` binary.
 
 ## Usage
 
