@@ -1,16 +1,25 @@
 //! End-to-end MCP integration test: spawn `nbspec serve mcp` on stdio
-//! inside a scratch project, drive the five tools (create, display,
-//! validate, render, merge) over JSON-RPC, and verify text +
-//! structured responses match the contracts the specification
-//! pins.
+//! inside a scratch project, drive the six tools (create, display,
+//! validate, render, merge, review) over JSON-RPC, and verify text
+//! + structured responses match the contracts the specification
+//!   pins.
 //!
 //! Like the CLI lifecycle test, this requires `nb` to be installed.
-//! The scratch notebook is created in the operator's real nb
-//! directory under a unique name and deleted on drop; the scratch
-//! project lives under `.auxiliary/temporary/tests/`. The binary
-//! runs with its working directory inside the scratch project so
-//! the resolved root — and therefore every merge write — stays
-//! inside the test sandbox.
+//! The scratch notebook lives in a per-test isolated `NB_DIR` (see
+//! `super::harness`); the directory is removed on drop, so the
+//! operator's real notebook list never sees scratch notebooks from
+//! this test. The `nbspec serve mcp` subprocess inherits the same
+//! isolated `NB_DIR` so its internal `nb` invocations see the
+//! just-added scratch notebook.
+//!
+//! All spawned subprocesses — both the test-side `nb` invocations
+//! and the `nbspec serve mcp` tokio subprocess — have `GIT_*`
+//! environment variables scrubbed (see `super::harness::scrub_git_env`).
+//! Without this, a hook or CI environment that exports
+//! `GIT_DIR`/`GIT_INDEX_FILE` redirects every git call inside `nb`
+//! away from the notebook's repository, the `nb notebooks add` and
+//! the subsequent `nb notebooks` listing see different roots, and
+//! the subprocess exits before responding. Per `nbspec:issues/4`.
 
 use std::{
     path::{Path, PathBuf},
@@ -31,6 +40,8 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout, Command as TokioCommand},
     task::JoinHandle,
 };
+
+use super::harness::{IsolatedNbDir, scrub_git_env, scrub_git_env_async};
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
 const CHANGE_ID: &str = "add-mcp-demo";
@@ -61,25 +72,35 @@ fn unique_suffix() -> String {
     )
 }
 
-/// A scratch nb notebook, deleted on drop even when the test panics.
+/// A scratch nb notebook, isolated to a per-test `NB_DIR` and
+/// removed on drop along with the directory.
 struct ScratchNotebook {
     name: String,
+    nb_dir: IsolatedNbDir,
 }
 
 impl ScratchNotebook {
     fn create() -> Self {
+        let nb_dir = IsolatedNbDir::new();
         let name = format!("nbspec-mcp-itest-{}", unique_suffix());
-        let output = Command::new("nb")
+        let mut command = Command::new("nb");
+        scrub_git_env(&mut command);
+        let output = command
+            .env("NB_DIR", nb_dir.path())
             .args(["notebooks", "add", &name])
             .output()
             .expect("nb must be installed for MCP integration tests");
         assert!(output.status.success(), "cannot create scratch notebook");
-        ScratchNotebook { name }
+        ScratchNotebook { name, nb_dir }
     }
 
-    /// Filesystem path of the notebook directory.
+    /// Filesystem path of the notebook directory inside the
+    /// isolated `NB_DIR`.
     fn path(&self) -> PathBuf {
-        let output = Command::new("nb")
+        let mut command = Command::new("nb");
+        scrub_git_env(&mut command);
+        let output = command
+            .env("NB_DIR", self.nb_dir.path())
             .args(["notebooks", "--paths", "--no-color"])
             .output()
             .unwrap();
@@ -91,22 +112,34 @@ impl ScratchNotebook {
             .map(PathBuf::from)
             .expect("scratch notebook path must be listed")
     }
+
+    /// The isolated `NB_DIR`; passed to the `nbspec serve mcp`
+    /// subprocess so its internal `nb` invocations see the
+    /// just-added scratch notebook.
+    fn nb_dir_path(&self) -> &Path {
+        self.nb_dir.path()
+    }
 }
 
 impl Drop for ScratchNotebook {
     fn drop(&mut self) {
+        // Best-effort: retry the delete because transient
+        // contention can fail an `nb notebooks delete`.
         for _ in 0..3 {
-            let deleted = Command::new("nb")
+            let mut command = Command::new("nb");
+            scrub_git_env(&mut command);
+            let deleted = command
+                .env("NB_DIR", self.nb_dir.path())
                 .args(["notebooks", "delete", &self.name, "--force"])
                 .output()
                 .map(|output| output.status.success())
                 .unwrap_or(false);
             if deleted {
-                return;
+                break;
             }
             std::thread::sleep(Duration::from_millis(250));
         }
-        eprintln!("warning: scratch notebook {} not deleted", self.name);
+        // IsolatedNbDir::drop removes the directory itself.
     }
 }
 
@@ -122,7 +155,9 @@ impl ScratchProject {
             .join(format!("mcp-lifecycle-{}", unique_suffix()))
             .canonicalize_base();
         std::fs::create_dir_all(&root).unwrap();
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        scrub_git_env(&mut command);
+        let output = command
             .args(["init", "--quiet"])
             .current_dir(&root)
             .output()
@@ -176,6 +211,7 @@ struct McpHarness {
 impl McpHarness {
     async fn spawn(project: &ScratchProject, notebook: &ScratchNotebook) -> Self {
         let mut command = TokioCommand::new(env!("CARGO_BIN_EXE_nbspec"));
+        scrub_git_env_async(&mut command);
         command
             .arg("serve")
             .arg("mcp")
@@ -186,6 +222,7 @@ impl McpHarness {
                 "NBSPEC_CONFIG_DIR",
                 project.root.join(".auxiliary/configuration/nbspec"),
             )
+            .env("NB_DIR", notebook.nb_dir_path())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
