@@ -79,6 +79,24 @@ async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), Dispa
             operations::merge(&client, notebook, change_id, *force).await
         }
         Command::Validate { change_id } => operations::validate(&client, notebook, change_id).await,
+        Command::Review {
+            change_id,
+            gate,
+            verdict,
+            comment,
+            reviewer,
+        } => {
+            operations::review(
+                &client,
+                notebook,
+                change_id,
+                gate,
+                (*verdict).into(),
+                reviewer.as_deref(),
+                comment.as_deref(),
+            )
+            .await
+        }
         Command::Serve { .. } => unreachable!("serve dispatched in dispatch()"),
     };
     match output {

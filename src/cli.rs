@@ -6,9 +6,10 @@
 //! change verbs are flat verbs operating on a change, mirroring the
 //! tool vocabulary the MCP surface exposes.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 
 use crate::operations::OperationError;
+use crate::reviews::VerdictValue;
 
 /// Formats a failed operation for the terminal. A validation failure
 /// prints its report verbatim — a summary line followed by
@@ -88,6 +89,35 @@ pub enum Command {
         change_id: String,
     },
 
+    /// Records a review verdict binding the change's current content.
+    ///
+    /// The verdict binds the aggregate content hash of the change's
+    /// full rendered artifact set: any subsequent edit stales it.
+    /// Each verdict is one immutable note under the change's
+    /// verdicts/ subfolder; recording never modifies existing
+    /// verdicts and never transitions change lifecycle.
+    Review {
+        /// Change identifier (notebook folder under `proposals/`).
+        change_id: String,
+
+        /// Review gate the verdict addresses.
+        #[arg(long, default_value = "merge")]
+        gate: String,
+
+        /// Verdict value.
+        #[arg(long, value_enum)]
+        verdict: VerdictArg,
+
+        /// Optional comment, e.g. a findings note selector.
+        #[arg(long)]
+        comment: Option<String>,
+
+        /// Reviewer identity; defaults to Git user.name. An explicit
+        /// empty value is refused, never treated as absence.
+        #[arg(long)]
+        reviewer: Option<String>,
+    },
+
     /// Runs a long-running service exposed by nbspec.
     ///
     /// Long-running protocol servers nest under this verb so they
@@ -98,6 +128,22 @@ pub enum Command {
         #[command(subcommand)]
         service: ServeService,
     },
+}
+
+/// Verdict values accepted by `nbspec review --verdict`.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum VerdictArg {
+    Approve,
+    Revise,
+}
+
+impl From<VerdictArg> for VerdictValue {
+    fn from(value: VerdictArg) -> Self {
+        match value {
+            VerdictArg::Approve => VerdictValue::Approve,
+            VerdictArg::Revise => VerdictValue::Revise,
+        }
+    }
 }
 
 /// Long-running services exposed by `nbspec serve`.

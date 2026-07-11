@@ -27,7 +27,13 @@ use crate::changes::{
 };
 use crate::configuration::{Configuration, ConfigurationError, load_configuration};
 use crate::merging::{MergeError, merge_documents, target_status};
-use crate::rendering::{RenderError, render_documents, review_diff, write_tree};
+use crate::rendering::{
+    RenderError, aggregate_content_hash, render_documents, review_diff, write_tree,
+};
+use crate::reviews::{
+    KNOWN_GATES, VERDICTS_FOLDER, VerdictError, VerdictRecord, VerdictValue, render_verdict_note,
+    resolve_reviewer, verdict_note_name,
+};
 use crate::schemata::{SchemaError, WorkflowSchema, resolve_schema};
 use crate::validation::{ValidationFailure, validate_change};
 use crate::worknotes::{WorkChecklist, WorkNoteError, parse_work_note};
@@ -88,6 +94,18 @@ pub enum OperationError {
         path: PathBuf,
         source: std::io::Error,
     },
+
+    #[error("unknown review gate {gate:?}; known gates: {known}")]
+    GateUnknown { gate: String, known: String },
+
+    #[error("reviewer identity unresolved; pass --reviewer or set git config user.name")]
+    ReviewerUnresolved,
+
+    #[error(transparent)]
+    Verdict(#[from] VerdictError),
+
+    #[error("cannot encode verdict payload: {0}")]
+    VerdictEncode(#[from] serde_json::Error),
 }
 
 /// Result alias for core operations.
@@ -698,6 +716,72 @@ fn resolve_notebook_name(notebook: Option<&str>) -> Result<String, OperationErro
         .map(String::from)
         .or_else(nb_api::derive_git_notebook_name)
         .ok_or(OperationError::NotebookUnresolved)
+}
+
+/// Records a review verdict for a change at a gate.
+///
+/// Renders the change in memory, computes the aggregate content hash
+/// of the rendered set, and creates ONE immutable verdict note under
+/// the change's `verdicts/` subfolder. Existing verdict notes are
+/// never modified; recording never transitions change lifecycle.
+/// Writes nothing to the repository working tree.
+///
+/// # Errors
+///
+/// Returns [`OperationError::GateUnknown`] for a gate outside the
+/// slice-1 set, [`OperationError::ReviewerUnresolved`] when neither
+/// an explicit reviewer nor Git `user.name` yields a non-empty
+/// identity, [`OperationError::ChangeNotFound`] when the change
+/// namespace is absent, and notebook, schema, or IO errors otherwise.
+pub async fn review(
+    client: &NbClient,
+    notebook: Option<&str>,
+    change_id: &str,
+    gate: &str,
+    verdict: VerdictValue,
+    reviewer: Option<&str>,
+    comment: Option<&str>,
+) -> OperationResult {
+    if !KNOWN_GATES.contains(&gate) {
+        return Err(OperationError::GateUnknown {
+            gate: gate.to_string(),
+            known: KNOWN_GATES.join(", "),
+        });
+    }
+    let reviewer = resolve_reviewer(reviewer).ok_or(OperationError::ReviewerUnresolved)?;
+    let context = load_change_context(client, notebook, change_id).await?;
+    let aggregate_hash = aggregate_content_hash(&context.documents);
+    let record = VerdictRecord {
+        reviewer: reviewer.clone(),
+        gate: gate.to_string(),
+        verdict,
+        aggregate_hash: aggregate_hash.clone(),
+        timestamp: jiff::Timestamp::now(),
+        comment: comment.map(str::to_string),
+    };
+    let name = verdict_note_name(&record.timestamp);
+    let body = render_verdict_note(&name, &record)?;
+    let verdicts_folder = format!("{}/{VERDICTS_FOLDER}", context.folder);
+    let notebook = Some(context.notebook_name.as_str());
+    ensure_folder(client, &verdicts_folder, notebook).await?;
+    client
+        .add(Some(&name), &body, &[], Some(&verdicts_folder), notebook)
+        .await?;
+    let text = format!(
+        "Recorded {verdict} verdict by {reviewer} for change {change_id} at gate {gate}.\n\
+         aggregate=sha256:{aggregate_hash}\n\
+         note={verdicts_folder}/{name}.md",
+    );
+    let structured = json!({
+        "change_id": change_id,
+        "gate": gate,
+        "verdict": verdict.to_string(),
+        "reviewer": reviewer,
+        "aggregate_hash": aggregate_hash,
+        "note": format!("{verdicts_folder}/{name}.md"),
+        "timestamp": record.timestamp.to_string(),
+    });
+    Ok(OperationOutcome::new(text, structured))
 }
 
 /// Resolves the project repository root, falling back to the current

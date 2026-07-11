@@ -103,6 +103,34 @@ pub enum GateEvaluation<'a> {
     NoVerdict,
 }
 
+/// Gates the slice-1 review policy defines.
+pub const KNOWN_GATES: &[&str] = &["merge"];
+
+/// Resolves the reviewer identity: an explicit value wins when
+/// non-empty; an explicit EMPTY value resolves to nothing (explicit
+/// is never absence — the same contract the MCP notebook resolution
+/// settled at 1d1468d); otherwise Git `user.name` is consulted.
+/// `None` means the caller must refuse: verdicts never record an
+/// empty identity.
+pub fn resolve_reviewer(explicit: Option<&str>) -> Option<String> {
+    if let Some(value) = explicit {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        return Some(trimmed.to_string());
+    }
+    let output = std::process::Command::new("git")
+        .args(["config", "user.name"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if name.is_empty() { None } else { Some(name) }
+}
+
 /// Builds a collision-resistant verdict note name: the recorded
 /// timestamp in compact form plus process/time entropy. The name is
 /// unique for concurrency (new files merge additively under Git); it
