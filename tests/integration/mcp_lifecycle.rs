@@ -16,6 +16,7 @@ use std::{
     path::{Path, PathBuf},
     process::{Command, Stdio},
     sync::atomic::{AtomicI64, Ordering},
+    sync::{Arc, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -28,6 +29,7 @@ use serde_json::{Map, Value, json};
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::{Child, ChildStdin, ChildStdout, Command as TokioCommand},
+    task::JoinHandle,
 };
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -157,11 +159,16 @@ impl CanonicalizeBase for PathBuf {
 
 /// Spawns the `nbspec serve mcp` subprocess and speaks JSON-RPC over
 /// its stdin/stdout. The harness owns the child for its lifetime and
-/// kills it on drop.
+/// kills it on drop. Stderr is drained into a shared buffer so the
+/// EOF-on-stdout panic can surface the subprocess's exit reason
+/// (startup log + anyhow banner) when `nbspec serve mcp` exits
+/// before responding. Diagnostic per nbspec:issues/4.
 struct McpHarness {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    stderr_buffer: Arc<Mutex<Vec<u8>>>,
+    stderr_task: JoinHandle<()>,
     next_id: AtomicI64,
 }
 
@@ -180,15 +187,42 @@ impl McpHarness {
             )
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null());
+            .stderr(Stdio::piped());
 
         let mut child = command.spawn().expect("spawn nbspec serve mcp");
         let stdin = child.stdin.take().expect("take mcp stdin");
         let stdout = child.stdout.take().expect("take mcp stdout");
+        let stderr = child.stderr.take().expect("take mcp stderr");
+
+        let stderr_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let stderr_drain_target = Arc::clone(&stderr_buffer);
+        // Drain the subprocess's stderr into a shared buffer. The
+        // task ends naturally when the subprocess closes its stderr
+        // (i.e., on exit). EOF-on-stdout panic awaits the task
+        // before reading the buffer so all output is captured.
+        let stderr_task = tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr);
+            let mut line = String::new();
+            loop {
+                line.clear();
+                match reader.read_line(&mut line).await {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if let Ok(mut buffer) = stderr_drain_target.lock() {
+                            buffer.extend_from_slice(line.as_bytes());
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
         let mut harness = Self {
             child,
             stdin,
             stdout: BufReader::new(stdout),
+            stderr_buffer,
+            stderr_task,
             next_id: AtomicI64::new(1),
         };
         harness.initialize().await;
@@ -197,6 +231,17 @@ impl McpHarness {
 
     fn next_id(&self) -> i64 {
         self.next_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Returns the captured stderr text from the subprocess. Empty
+    /// if nothing was emitted (e.g., the test panicked before any
+    /// stderr was produced).
+    fn captured_stderr(&self) -> String {
+        let buffer = self
+            .stderr_buffer
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        String::from_utf8_lossy(&buffer).into_owned()
     }
 
     async fn initialize(&mut self) {
@@ -268,14 +313,40 @@ impl McpHarness {
                 "timed out waiting for MCP response id {id}"
             );
             line.clear();
-            let count = tokio::time::timeout(
+            match tokio::time::timeout(
                 deadline.saturating_duration_since(Instant::now()),
                 self.stdout.read_line(&mut line),
             )
             .await
-            .expect("read mcp response within timeout")
-            .expect("read mcp response line");
-            assert!(count > 0, "mcp process closed stdout");
+            {
+                Ok(Ok(0)) => {
+                    // EOF: subprocess closed stdout. Wait for it to
+                    // exit so stderr is fully flushed, then surface
+                    // both the exit status and the captured stderr
+                    // so the failure mode is observable without
+                    // rerunning CI. Per the diagnostic plan in
+                    // nbspec:issues/4.
+                    let exit_status = self.child.wait().await.ok();
+                    // Take ownership of the stderr drain task via
+                    // mem::replace so we can await it (JoinHandle
+                    // is not Clone and IntoFuture consumes self).
+                    // The replacement is a no-op task that never
+                    // gets awaited again.
+                    let stderr_task = std::mem::replace(
+                        &mut self.stderr_task,
+                        tokio::spawn(std::future::ready(())),
+                    );
+                    let _ = stderr_task.await;
+                    let stderr_text = self.captured_stderr();
+                    panic!(
+                        "mcp process closed stdout (exit status: {exit_status:?}); \
+                         captured stderr:\n{stderr_text}"
+                    );
+                }
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => panic!("read mcp response line: {error}"),
+                Err(_) => panic!("timed out waiting for MCP response id {id}"),
+            }
             let decoded: Value =
                 serde_json::from_str(line.trim_end()).expect("decode mcp response");
             let response_id = decoded
