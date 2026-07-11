@@ -352,8 +352,8 @@ async fn mcp_server_drives_change_lifecycle() {
         .collect();
     assert_eq!(
         names,
-        vec!["create", "display", "merge", "render", "validate"],
-        "tools/list must expose exactly the five CLI verbs"
+        vec!["create", "display", "merge", "render", "review", "validate"],
+        "tools/list must expose exactly the six CLI verbs"
     );
 
     // create: scaffold the change namespace.
@@ -570,31 +570,50 @@ async fn mcp_server_drives_change_lifecycle() {
         first_text(refused_result)
     );
 
-    // Record the approving verdict via the CLI binary. (The review
-    // MCP tool arrives with its own work item; when it lands, this
-    // call becomes a tool invocation and proves surface parity.)
-    let reviewed = std::process::Command::new(env!("CARGO_BIN_EXE_nbspec"))
-        .current_dir(&project.root)
-        .env(
-            "NBSPEC_CONFIG_DIR",
-            project.root.join(".auxiliary/configuration/nbspec"),
-        )
-        .args([
-            "--notebook",
-            &notebook.name,
+    // A comment-less revise refuses over the tool surface exactly as
+    // on the CLI; then record the approving verdict through the
+    // review tool itself — surface parity, proven.
+    let moodless = harness
+        .call_tool(
             "review",
-            CHANGE_ID,
-            "--verdict",
-            "approve",
-            "--reviewer",
-            "itest",
-        ])
-        .output()
-        .expect("run nbspec review");
+            json!({"change_id": CHANGE_ID, "verdict": "revise", "reviewer": "itest"})
+                .as_object()
+                .cloned()
+                .expect("review args object"),
+        )
+        .await;
+    let moodless_result = assert_tool_error(&moodless);
     assert!(
-        reviewed.status.success(),
-        "{}",
-        String::from_utf8_lossy(&reviewed.stderr)
+        first_text(moodless_result).contains("requires a comment"),
+        "refusal text: {}",
+        first_text(moodless_result)
+    );
+    let reviewed = harness
+        .call_tool(
+            "review",
+            json!({"change_id": CHANGE_ID, "verdict": "approve", "reviewer": "itest"})
+                .as_object()
+                .cloned()
+                .expect("review args object"),
+        )
+        .await;
+    let reviewed_result = assert_success(&reviewed);
+    assert!(
+        first_text(reviewed_result).contains("Recorded approve verdict by itest"),
+        "review text: {}",
+        first_text(reviewed_result)
+    );
+    let review_structured = reviewed_result
+        .get("structuredContent")
+        .expect("review structuredContent");
+    assert_eq!(review_structured["gate"], json!("merge"));
+    assert_eq!(review_structured["verdict"], json!("approve"));
+    assert_eq!(review_structured["reviewer"], json!("itest"));
+    assert!(
+        review_structured["aggregate_hash"]
+            .as_str()
+            .is_some_and(|hash| hash.len() == 64),
+        "aggregate hash must be a SHA-256 hex digest"
     );
 
     // merge: transfers durable documents with provenance + archive.

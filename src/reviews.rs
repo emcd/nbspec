@@ -36,7 +36,7 @@ pub enum VerdictError {
 }
 
 /// Verdict value a reviewer records for a gate.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum VerdictValue {
     Approve,
