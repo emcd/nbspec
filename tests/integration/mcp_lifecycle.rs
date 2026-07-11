@@ -552,6 +552,51 @@ async fn mcp_server_drives_change_lifecycle() {
     assert_eq!(diff_structured["format"], json!("diff"));
     assert!(diff_structured["lines"].as_u64().unwrap() > 0);
 
+    // An unreviewed merge refuses at the review gate over the MCP
+    // surface exactly as it does on the CLI.
+    let unreviewed = harness
+        .call_tool(
+            "merge",
+            json!({"change_id": CHANGE_ID})
+                .as_object()
+                .cloned()
+                .expect("merge args object"),
+        )
+        .await;
+    let refused_result = assert_tool_error(&unreviewed);
+    assert!(
+        first_text(refused_result).contains("review gate unsatisfied: no verdict"),
+        "refusal text: {}",
+        first_text(refused_result)
+    );
+
+    // Record the approving verdict via the CLI binary. (The review
+    // MCP tool arrives with its own work item; when it lands, this
+    // call becomes a tool invocation and proves surface parity.)
+    let reviewed = std::process::Command::new(env!("CARGO_BIN_EXE_nbspec"))
+        .current_dir(&project.root)
+        .env(
+            "NBSPEC_CONFIG_DIR",
+            project.root.join(".auxiliary/configuration/nbspec"),
+        )
+        .args([
+            "--notebook",
+            &notebook.name,
+            "review",
+            CHANGE_ID,
+            "--verdict",
+            "approve",
+            "--reviewer",
+            "itest",
+        ])
+        .output()
+        .expect("run nbspec review");
+    assert!(
+        reviewed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reviewed.stderr)
+    );
+
     // merge: transfers durable documents with provenance + archive.
     let merged = harness
         .call_tool(

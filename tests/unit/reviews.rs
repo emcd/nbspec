@@ -360,3 +360,64 @@ fn note_names_are_unique_across_calls() {
     assert_ne!(first, second, "entropy suffix must differ across calls");
     assert!(first.starts_with("20260711"));
 }
+
+#[test]
+fn gate_refusal_state_describes_each_unsatisfied_kind() {
+    use nbspec::reviews::gate_refusal_state;
+    let root = unique_temp_root("reviews-refusal-state");
+    write_verdict(
+        &root,
+        "20260711020000-1-000001",
+        &record(
+            "advisor",
+            "merge",
+            VerdictValue::Approve,
+            "bound-hash",
+            "2026-07-11T02:00:00Z",
+        ),
+    );
+    let verdicts = read_verdicts(&root).unwrap();
+
+    let positions = reviewer_positions(&verdicts, "merge", "bound-hash");
+    assert_eq!(
+        gate_refusal_state(&evaluate_gate(&positions), "bound-hash"),
+        None,
+        "a satisfied gate needs no refusal state"
+    );
+
+    let positions = reviewer_positions(&verdicts, "merge", "current-hash");
+    let state = gate_refusal_state(&evaluate_gate(&positions), "current-hash").unwrap();
+    assert!(
+        state.contains("stale approval by advisor"),
+        "state: {state}"
+    );
+    assert!(state.contains("bound-hash"), "names the bound hash");
+    assert!(state.contains("current-hash"), "names the current hash");
+
+    let positions = reviewer_positions(&verdicts, "publish", "current-hash");
+    let state = gate_refusal_state(&evaluate_gate(&positions), "current-hash").unwrap();
+    assert!(state.contains("no verdict"), "state: {state}");
+
+    let mut revise = record(
+        "owner",
+        "merge",
+        VerdictValue::Revise,
+        "current-hash",
+        "2026-07-11T03:00:00Z",
+    );
+    revise.comment = Some("findings at reviews/9".to_string());
+    write_verdict(&root, "20260711030000-1-000002", &revise);
+    let verdicts = read_verdicts(&root).unwrap();
+    let positions = reviewer_positions(&verdicts, "merge", "current-hash");
+    // The stale approval still outranks revise in reporting; drop the
+    // approve reviewer's currency entirely to surface the revise arm.
+    let owner_only: Vec<_> = positions
+        .into_iter()
+        .filter(|p| p.verdict.record.reviewer == "owner")
+        .collect();
+    let state = gate_refusal_state(&evaluate_gate(&owner_only), "current-hash").unwrap();
+    assert!(
+        state.contains("revise by owner (findings at reviews/9)"),
+        "state: {state}"
+    );
+}

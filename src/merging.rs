@@ -67,6 +67,11 @@ pub enum RefusalReason {
     /// A directory (or other non-file) occupies the target; nbspec
     /// never removes such occupants, so `--force` cannot override.
     NonFileTarget,
+    /// The review gate is unsatisfied. The payload describes the gate
+    /// state: no verdict, stale approval naming the bound hash,
+    /// outstanding revise, or unparseable verdict naming the note.
+    /// Policy, not integrity: `--force` overrides it, loudly.
+    ReviewGate(String),
 }
 
 impl std::fmt::Display for RefusalReason {
@@ -96,6 +101,12 @@ impl std::fmt::Display for RefusalReason {
                 formatter,
                 "a directory or other non-file occupies the target; \
                  remove it manually (--force does not override)"
+            ),
+            RefusalReason::ReviewGate(state) => write!(
+                formatter,
+                "review gate unsatisfied: {state}; record an approving \
+                 verdict with nbspec review, or rerun with --force to \
+                 override the gate"
             ),
         }
     }
@@ -164,6 +175,10 @@ pub struct MergeReport {
     /// Repository-relative paths already byte-identical and left
     /// untouched, forward-slash logical paths.
     pub unchanged: Vec<String>,
+    /// Set when `--force` overrode an unsatisfied review gate; carries
+    /// the gate-state description so merge output reports the
+    /// override loudly.
+    pub review_gate_overridden: Option<String>,
 }
 
 /// Classifies the merge target of one rendered document.
@@ -219,11 +234,22 @@ pub fn merge_documents(
     project_root: &Path,
     change_id: &str,
     notebook: &str,
+    review_gate_state: Option<&str>,
     force: bool,
 ) -> Result<MergeReport, MergeError> {
     let mut refusals = Vec::new();
     let mut writes: Vec<(String, String)> = Vec::new();
     let mut report = MergeReport::default();
+    if let Some(state) = review_gate_state {
+        if force {
+            report.review_gate_overridden = Some(state.to_string());
+        } else {
+            refusals.push(Refusal {
+                target: change_id.to_string(),
+                reason: RefusalReason::ReviewGate(state.to_string()),
+            });
+        }
+    }
     for document in documents {
         let Some(target_path) = &document.target_path else {
             continue;

@@ -270,6 +270,76 @@ fn change_lifecycle_end_to_end() {
     ));
     assert!(diff.contains("+### Requirement: User authentication"));
 
+    // An unreviewed merge refuses at the review gate: an approving
+    // verdict is the merge license, and none exists yet.
+    let refused = nbspec(&project, &notebook, &["merge", CHANGE_ID]);
+    assert!(!refused.status.success(), "unreviewed merge must refuse");
+    assert!(
+        stderr_of(&refused).contains("review gate unsatisfied: no verdict"),
+        "{}",
+        stderr_of(&refused)
+    );
+    assert!(!project.root.join("documentation").exists());
+
+    // A revise verdict without findings refuses; with findings it
+    // records — and then blocks the merge as revise-outstanding.
+    let moodless = nbspec(
+        &project,
+        &notebook,
+        &[
+            "review",
+            CHANGE_ID,
+            "--verdict",
+            "revise",
+            "--reviewer",
+            "itest",
+        ],
+    );
+    assert!(
+        !moodless.status.success(),
+        "comment-less revise must refuse"
+    );
+    assert!(stderr_of(&moodless).contains("requires a comment"));
+    let revised = nbspec(
+        &project,
+        &notebook,
+        &[
+            "review",
+            CHANGE_ID,
+            "--verdict",
+            "revise",
+            "--reviewer",
+            "itest",
+            "--comment",
+            "tighten the scenario wording",
+        ],
+    );
+    assert!(revised.status.success(), "{}", stderr_of(&revised));
+    let blocked = nbspec(&project, &notebook, &["merge", CHANGE_ID]);
+    assert!(!blocked.status.success(), "revise-outstanding must refuse");
+    assert!(
+        stderr_of(&blocked).contains("latest verdict is revise by itest"),
+        "{}",
+        stderr_of(&blocked)
+    );
+
+    // A newer approving verdict supersedes the revise and satisfies
+    // the gate.
+    let approved = nbspec(
+        &project,
+        &notebook,
+        &[
+            "review",
+            CHANGE_ID,
+            "--verdict",
+            "approve",
+            "--reviewer",
+            "itest",
+        ],
+    );
+    assert!(approved.status.success(), "{}", stderr_of(&approved));
+    assert!(stdout_of(&approved).contains("Recorded approve verdict by itest"));
+
     // Merge transfers the durable document with provenance and writes
     // the change archive; the missing LFS rule draws a warning.
     let merged = nbspec(&project, &notebook, &["merge", CHANGE_ID]);

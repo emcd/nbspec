@@ -31,8 +31,9 @@ use crate::rendering::{
     RenderError, aggregate_content_hash, render_documents, review_diff, write_tree,
 };
 use crate::reviews::{
-    KNOWN_GATES, VERDICTS_FOLDER, VerdictError, VerdictRecord, VerdictValue, render_verdict_note,
-    resolve_reviewer, verdict_note_name,
+    KNOWN_GATES, MERGE_GATE, VERDICTS_FOLDER, VerdictError, VerdictRecord, VerdictValue,
+    evaluate_gate, gate_refusal_state, read_verdicts, render_verdict_note, resolve_reviewer,
+    reviewer_positions, verdict_note_name,
 };
 use crate::schemata::{SchemaError, WorkflowSchema, resolve_schema};
 use crate::validation::{ValidationFailure, validate_change};
@@ -497,15 +498,33 @@ pub async fn merge(
     force: bool,
 ) -> OperationResult {
     let context = load_change_context(client, notebook, change_id).await?;
+    let aggregate = aggregate_content_hash(&context.documents);
+    let review_gate_state = match read_verdicts(&context.change_directory) {
+        Ok(verdicts) => {
+            let positions = reviewer_positions(&verdicts, MERGE_GATE, &aggregate);
+            gate_refusal_state(&evaluate_gate(&positions), &aggregate)
+        }
+        // An unparseable verdict is a plan-phase POLICY refusal
+        // (force-overridable), not a hard error: it blocks the gate
+        // while naming the note, but never hides behind an abort.
+        Err(VerdictError::Malformed { note, reason }) => {
+            Some(format!("verdict unparseable: {note}: {reason}"))
+        }
+        Err(error @ VerdictError::Io { .. }) => return Err(error.into()),
+    };
     let report = merge_documents(
         &context.documents,
         &context.root,
         change_id,
         &context.notebook_name,
+        review_gate_state.as_deref(),
         force,
     )?;
 
     let mut output = String::new();
+    if let Some(state) = &report.review_gate_overridden {
+        output.push_str(&format!("REVIEW GATE OVERRIDDEN (--force): {state}\n"));
+    }
     for path in &report.written {
         output.push_str(&format!("wrote {path}\n"));
     }
@@ -542,6 +561,7 @@ pub async fn merge(
         "written": report.written,
         "unchanged": report.unchanged,
         "archived": archived_path,
+        "review_gate_overridden": report.review_gate_overridden,
     });
     Ok(OperationOutcome::new(output, structured))
 }

@@ -103,8 +103,37 @@ pub enum GateEvaluation<'a> {
     NoVerdict,
 }
 
+/// The merge gate: the only gate slice 1 defines.
+pub const MERGE_GATE: &str = "merge";
+
 /// Gates the slice-1 review policy defines.
-pub const KNOWN_GATES: &[&str] = &["merge"];
+pub const KNOWN_GATES: &[&str] = &[MERGE_GATE];
+
+/// Describes an unsatisfied gate evaluation for refusal reporting,
+/// or `None` when the gate is satisfied. Wording per kind matches
+/// the review-gating specification's refusal distinctions; the stale
+/// arm names both the bound and the current hash.
+pub fn gate_refusal_state(evaluation: &GateEvaluation<'_>, current_hash: &str) -> Option<String> {
+    match evaluation {
+        GateEvaluation::Satisfied(_) => None,
+        GateEvaluation::NoVerdict => Some("no verdict recorded for the merge gate".to_string()),
+        GateEvaluation::StaleApproval(verdict) => Some(format!(
+            "stale approval by {reviewer} (bound sha256:{bound}, current sha256:{current_hash})",
+            reviewer = verdict.record.reviewer,
+            bound = verdict.record.aggregate_hash,
+        )),
+        GateEvaluation::ReviseOutstanding(verdict) => Some(format!(
+            "latest verdict is revise by {reviewer}{comment}",
+            reviewer = verdict.record.reviewer,
+            comment = verdict
+                .record
+                .comment
+                .as_deref()
+                .map(|text| format!(" ({text})"))
+                .unwrap_or_default(),
+        )),
+    }
+}
 
 /// Resolves the reviewer identity: an explicit value wins when
 /// non-empty; an explicit EMPTY value resolves to nothing (explicit
