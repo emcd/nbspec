@@ -299,6 +299,10 @@ pub async fn display(
     };
     output.push_str(&render_work_report(&work_summary));
 
+    output.push_str("\n## review\n\n");
+    let (review_text, review_structured) = review_report(&change_directory, &folder, &schema);
+    output.push_str(&review_text);
+
     output.push_str("\n## drift\n\n");
     let drift_lines = drift_report_lines(&change_directory, &folder, &schema, change_id)?;
     output.push_str(&drift_lines.text);
@@ -335,6 +339,7 @@ pub async fn display(
         "notebook".to_string(),
         Value::String(metadata.notebook.clone()),
     );
+    structured.insert("review".to_string(), review_structured);
     structured.insert(
         "updated_at".to_string(),
         Value::String(metadata.updated_at.to_string()),
@@ -602,6 +607,37 @@ fn write_change_archive(
             content: work_content,
         });
     }
+    // Verdict notes ride the archive EXPLICITLY: nothing from the
+    // change namespace is included automatically, and the review
+    // trail must survive the change. Files are copied raw — the
+    // archive preserves even a malformed verdict rather than
+    // validating it away. (build_archive sorts entries by path, so
+    // determinism holds regardless of push order.)
+    let verdicts_directory = change_directory.join(VERDICTS_FOLDER);
+    if verdicts_directory.is_dir() {
+        let mut names: Vec<String> = std::fs::read_dir(&verdicts_directory)
+            .map_err(|source| OperationError::NoteRead {
+                path: verdicts_directory.clone(),
+                source,
+            })?
+            .flatten()
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| !name.starts_with('.') && name.ends_with(".md"))
+            .collect();
+        names.sort();
+        for name in names {
+            let path = verdicts_directory.join(&name);
+            let content =
+                std::fs::read_to_string(&path).map_err(|source| OperationError::NoteRead {
+                    path: path.clone(),
+                    source,
+                })?;
+            entries.push(ArchiveEntry {
+                path: prefix.join(VERDICTS_FOLDER).join(&name),
+                content,
+            });
+        }
+    }
     let bytes = build_archive(&entries)?;
 
     let archive_path = configuration
@@ -742,6 +778,80 @@ fn resolve_notebook_name(notebook: Option<&str>) -> Result<String, OperationErro
         .map(String::from)
         .or_else(nb_api::derive_git_notebook_name)
         .ok_or(OperationError::NotebookUnresolved)
+}
+
+/// Builds the display `review` section: each reviewer's latest
+/// verdict per known gate (supersession is an evaluation detail; the
+/// operator sees every standing position), with parse failures
+/// surfaced as explicit status rather than omission.
+fn review_report(
+    change_directory: &std::path::Path,
+    folder: &str,
+    schema: &WorkflowSchema,
+) -> (String, Value) {
+    let verdicts = match read_verdicts(change_directory) {
+        Ok(verdicts) => verdicts,
+        Err(VerdictError::Malformed { note, reason }) => {
+            return (
+                format!("verdicts unreadable: {note}: {reason}\n"),
+                json!({ "parse_error": { "note": note, "reason": reason } }),
+            );
+        }
+        Err(VerdictError::Io { path, source }) => {
+            return (
+                format!("verdicts unreadable: {path}: {source}\n"),
+                json!({ "io_error": format!("{path}: {source}") }),
+            );
+        }
+    };
+    let documents = match render_documents(change_directory, folder, schema) {
+        Ok(documents) => documents,
+        Err(error) => {
+            return (
+                format!("cannot compute review status: {error}\n"),
+                json!({ "render_error": error.to_string() }),
+            );
+        }
+    };
+    let current_hash = aggregate_content_hash(&documents);
+    let mut text = String::new();
+    let mut items: Vec<Value> = Vec::new();
+    for gate in KNOWN_GATES {
+        let positions = reviewer_positions(&verdicts, gate, &current_hash);
+        if positions.is_empty() {
+            text.push_str(&format!("{gate}: no verdicts recorded\n"));
+            continue;
+        }
+        for position in &positions {
+            let record = &position.verdict.record;
+            let state = match (record.verdict, position.current) {
+                (VerdictValue::Approve, true) => "current",
+                (VerdictValue::Approve, false) => "stale",
+                (VerdictValue::Revise, _) => "outstanding",
+            };
+            let comment = record
+                .comment
+                .as_deref()
+                .map(|body| format!(" — {body}"))
+                .unwrap_or_default();
+            text.push_str(&format!(
+                "{gate}: {verdict} by {reviewer} ({state}, {timestamp}){comment}\n",
+                verdict = record.verdict,
+                reviewer = record.reviewer,
+                timestamp = record.timestamp,
+            ));
+            items.push(json!({
+                "gate": gate,
+                "reviewer": record.reviewer,
+                "verdict": record.verdict.to_string(),
+                "state": state,
+                "current": position.current,
+                "timestamp": record.timestamp.to_string(),
+                "comment": record.comment,
+            }));
+        }
+    }
+    (text, json!({ "positions": items }))
 }
 
 /// Records a review verdict for a change at a gate.

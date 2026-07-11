@@ -340,6 +340,38 @@ fn change_lifecycle_end_to_end() {
     assert!(approved.status.success(), "{}", stderr_of(&approved));
     assert!(stdout_of(&approved).contains("Recorded approve verdict by itest"));
 
+    // A second reviewer's outstanding revise coexists without blocking:
+    // slice-1 policy is satisfied by any single current approval, and
+    // display lists every reviewer's standing position.
+    let dissent = nbspec(
+        &project,
+        &notebook,
+        &[
+            "review",
+            CHANGE_ID,
+            "--verdict",
+            "revise",
+            "--reviewer",
+            "qa",
+            "--comment",
+            "prefer stronger scenario names",
+        ],
+    );
+    assert!(dissent.status.success(), "{}", stderr_of(&dissent));
+    let displayed = nbspec(&project, &notebook, &["display", CHANGE_ID]);
+    assert!(displayed.status.success(), "{}", stderr_of(&displayed));
+    let display_output = stdout_of(&displayed);
+    assert!(display_output.contains("## review"), "{display_output}");
+    assert!(
+        display_output.contains("merge: approve by itest (current,"),
+        "{display_output}"
+    );
+    assert!(
+        display_output.contains("merge: revise by qa (outstanding,"),
+        "{display_output}"
+    );
+    assert!(display_output.contains("prefer stronger scenario names"));
+
     // Merge transfers the durable document with provenance and writes
     // the change archive; the missing LFS rule draws a warning.
     let merged = nbspec(&project, &notebook, &["merge", CHANGE_ID]);
@@ -359,6 +391,37 @@ fn change_lifecycle_end_to_end() {
             .root
             .join("documentation/archives/add-demo.tar.zst")
             .is_file()
+    );
+
+    // The archive preserves the review trail: every verdict note
+    // rides alongside meta and work (three verdicts stand: itest's
+    // superseded revise, itest's approve, qa's outstanding revise).
+    let archive_bytes =
+        std::fs::read(project.root.join("documentation/archives/add-demo.tar.zst")).unwrap();
+    let decompressed = zstd::decode_all(archive_bytes.as_slice()).unwrap();
+    let mut archive = tar::Archive::new(decompressed.as_slice());
+    let entry_paths: Vec<String> = archive
+        .entries()
+        .unwrap()
+        .map(|entry| entry.unwrap().path().unwrap().display().to_string())
+        .collect();
+    assert!(entry_paths.iter().any(|path| path == "add-demo/meta.md"));
+    assert!(entry_paths.iter().any(|path| path == "add-demo/work.md"));
+    assert_eq!(
+        entry_paths
+            .iter()
+            .filter(|path| path.starts_with("add-demo/verdicts/"))
+            .count(),
+        3,
+        "all three verdict notes must be archived: {entry_paths:?}"
+    );
+    assert!(
+        !project.root.join("documentation/verdicts").exists()
+            && !project
+                .root
+                .join("documentation/specifications/verdicts")
+                .exists(),
+        "verdicts never materialize to the repository tree"
     );
 
     // Re-merge is idempotent.
