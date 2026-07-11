@@ -185,9 +185,10 @@ impl std::fmt::Display for TargetStatus {
     }
 }
 
-/// One clean succession: a target inherited from another change
-/// whose materialization was still intact (body matched its own
-/// provenance header) when this merge took ownership.
+/// One ownership transfer of a target from another change: recorded
+/// as a clean succession when the previous materialization was
+/// intact (body matched its own provenance header), or as a forced
+/// drift override when `--force` overwrote a drifted foreign target.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Succession {
     /// Repository-relative target path, forward-slash logical path.
@@ -211,6 +212,10 @@ pub struct MergeReport {
     /// Clean successions performed by this merge. Never silent:
     /// merge output announces each, naming both changes.
     pub successions: Vec<Succession>,
+    /// Drifted foreign targets overwritten under `--force`. Never
+    /// silent either: merge output states that a drifted target was
+    /// overridden, naming its previous owner.
+    pub drift_overrides: Vec<Succession>,
 }
 
 /// Classifies the merge target of one rendered document.
@@ -319,14 +324,20 @@ pub fn merge_documents(
             | TargetStatus::OwnedByOtherChange(_)
             | TargetStatus::NonFile => None,
         };
-        if let Some(reason) = refusal
-            && !force
-        {
-            refusals.push(Refusal {
-                target: target_path.clone(),
-                reason,
-            });
-            continue;
+        if let Some(reason) = refusal {
+            if !force {
+                refusals.push(Refusal {
+                    target: target_path.clone(),
+                    reason,
+                });
+                continue;
+            }
+            if let RefusalReason::ForeignDrifted(previous_owner) = &reason {
+                report.drift_overrides.push(Succession {
+                    target: target_path.clone(),
+                    previous_owner: previous_owner.clone(),
+                });
+            }
         }
         if let TargetStatus::OwnedByOtherChange(previous_owner) = &status {
             report.successions.push(Succession {

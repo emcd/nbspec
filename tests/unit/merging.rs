@@ -370,6 +370,14 @@ fn foreign_drifted_takeover_yields_to_force() {
         report.successions.is_empty(),
         "a forced drifted takeover is not a clean succession"
     );
+    assert_eq!(
+        report.drift_overrides,
+        vec![Succession {
+            target: "documentation/specifications/alpha.md".to_string(),
+            previous_owner: "add-first".to_string(),
+        }],
+        "the forced override must be recorded so merge output can state it"
+    );
     fs::remove_dir_all(&root).unwrap();
 }
 

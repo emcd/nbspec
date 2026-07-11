@@ -530,6 +530,13 @@ pub async fn merge(
     if let Some(state) = &report.review_gate_overridden {
         output.push_str(&format!("REVIEW GATE OVERRIDDEN (--force): {state}\n"));
     }
+    for takeover in &report.drift_overrides {
+        output.push_str(&format!(
+            "DRIFTED TARGET OVERRIDDEN (--force): {target} (was owned by {previous})\n",
+            target = takeover.target,
+            previous = takeover.previous_owner,
+        ));
+    }
     for succession in &report.successions {
         output.push_str(&format!(
             "TAKEOVER (clean succession): {target}: {previous} -> {change_id}\n",
@@ -578,6 +585,16 @@ pub async fn merge(
             })
         })
         .collect();
+    let drift_overrides: Vec<Value> = report
+        .drift_overrides
+        .iter()
+        .map(|takeover| {
+            json!({
+                "target": takeover.target,
+                "previous_owner": takeover.previous_owner,
+            })
+        })
+        .collect();
     let structured = json!({
         "change_id": change_id,
         "written": report.written,
@@ -585,6 +602,7 @@ pub async fn merge(
         "archived": archived_path,
         "review_gate_overridden": report.review_gate_overridden,
         "successions": successions,
+        "drift_overrides": drift_overrides,
     });
     Ok(OperationOutcome::new(output, structured))
 }
