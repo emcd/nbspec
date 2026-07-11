@@ -1,11 +1,11 @@
-<!-- nbspec: change=add-review-verb notebook=nbspec note=proposals/add-review-verb/specifications/review-gating.md hash=sha256:ae92e9b13992dcc29f3c74f2642ab31e76fa5ae176c0a4c2b7b1b52a2a3235e6 -->
+<!-- nbspec: change=add-comment-file notebook=nbspec note=proposals/add-comment-file/specifications/review-gating.md hash=sha256:ea5d7410712132a65d2c9534bd538e8a234855217031fd3ceac7f2a808c6d68e -->
 # review-gating
 
 ## ADDED Requirements
 
 ### Requirement: Verdict recording
 
-The `review` verb MUST record each verdict as ONE new immutable note under `proposals/<change-id>/verdicts/`, whose body carries a fenced JSON object containing: reviewer identity, gate name, verdict value (`approve` or `revise`), the change's aggregate content hash at recording time, an RFC 3339 timestamp, and a comment (REQUIRED for `revise` — the findings reference that makes the revision actionable; optional for `approve`). The note name MUST be collision-resistant (recorded timestamp plus a random suffix); the name MUST NOT serve as the semantic ordering key. Existing verdict notes MUST never be modified or removed by the verb. Reviewer identity resolves from an explicit `--reviewer` argument when given, else from Git identity (`user.name`); when neither yields a non-empty identity, the verb MUST refuse with a clear diagnostic and create no note. On the CLI, `--comment -` reads the comment from standard input; this is a CLI-only affordance — the MCP tool takes the comment string verbatim and MUST NOT interpret `-` as a stdin marker.
+The `review` verb MUST record each verdict as ONE new immutable note under `proposals/<change-id>/verdicts/`, whose body carries a fenced JSON object containing: reviewer identity, gate name, verdict value (`approve` or `revise`), the change's aggregate content hash at recording time, an RFC 3339 timestamp, and a comment (REQUIRED for `revise` — the findings reference that makes the revision actionable; optional for `approve`). The note name MUST be collision-resistant (recorded timestamp plus a random suffix); the name MUST NOT serve as the semantic ordering key. Existing verdict notes MUST never be modified or removed by the verb. Reviewer identity resolves from an explicit `--reviewer` argument when given, else from Git identity (`user.name`); when neither yields a non-empty identity, the verb MUST refuse with a clear diagnostic and create no note. Comment intake is split by source: `--comment` takes literal comment content on every surface and MUST NOT interpret any value (including `-`) as a stdin or file marker; the CLI additionally accepts `--comment-file <path>`, which reads the comment from the named file, or from standard input when the path is `-`. The two options MUST be mutually exclusive (supplying both is a usage error). `--comment-file` is a CLI-only affordance: the MCP tool exposes only the literal `comment` string, because file paths and standard input are client-side notions. A `--comment-file` that cannot be read MUST refuse with a diagnostic naming the path and create no note; comment content read from a file is subject to the same non-whitespace requirement as inline content where a comment is required.
 
 #### Scenario: Approving verdict recorded
 
@@ -25,11 +25,23 @@ The `review` verb MUST record each verdict as ONE new immutable note under `prop
 - **THEN** the verb refuses with a diagnostic explaining that a revise verdict must name its findings
 - **AND THEN** no note is created
 
-#### Scenario: Comment read from standard input
+#### Scenario: Comment read from a file or standard input
 
-- **WHEN** a reviewer runs `nbspec review <change-id> --verdict revise --comment -` with the findings text piped on standard input
-- **THEN** the recorded comment is the standard-input contents
-- **AND THEN** the MCP `review` tool given a comment of `-` records the literal string `-` (no stdin semantics outside the CLI)
+- **WHEN** a reviewer runs `nbspec review <change-id> --verdict revise --comment-file findings.md`, or `--comment-file -` with the findings text piped on standard input
+- **THEN** the recorded comment is the file (or standard-input) contents
+- **AND THEN** `--comment -` records the literal string `-` on every surface (no stdin semantics inside `--comment`)
+
+#### Scenario: Conflicting comment sources refused
+
+- **WHEN** a reviewer supplies both `--comment` and `--comment-file` in one invocation
+- **THEN** the invocation is refused as a usage error
+- **AND THEN** no note is created
+
+#### Scenario: Unreadable comment file refused
+
+- **WHEN** `--comment-file` names a path that cannot be read
+- **THEN** the verb refuses with a diagnostic naming the path
+- **AND THEN** no note is created
 
 #### Scenario: Unknown gate refused
 
@@ -179,3 +191,4 @@ Evaluation MUST read verdict notes via resolved filesystem paths and MUST parse 
 - **WHEN** a change with verdicts is merged and archived
 - **THEN** the archive contains each `verdicts/` note alongside `meta` and `work`, sorted by archive path
 - **AND THEN** no verdict content is written into the repository tree
+
