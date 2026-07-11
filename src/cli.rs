@@ -108,7 +108,9 @@ pub enum Command {
         #[arg(long, value_enum)]
         verdict: VerdictArg,
 
-        /// Optional comment, e.g. a findings note selector.
+        /// Comment, e.g. a findings note selector. REQUIRED for a
+        /// revise verdict; optional for approve. Pass - to read the
+        /// comment from standard input.
         #[arg(long)]
         comment: Option<String>,
 

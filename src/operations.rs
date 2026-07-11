@@ -101,6 +101,12 @@ pub enum OperationError {
     #[error("reviewer identity unresolved; pass --reviewer or set git config user.name")]
     ReviewerUnresolved,
 
+    #[error(
+        "a revise verdict requires a comment naming the findings; pass --comment \
+         (or --comment - on the CLI to read standard input)"
+    )]
+    ReviseCommentMissing,
+
     #[error(transparent)]
     Verdict(#[from] VerdictError),
 
@@ -749,6 +755,10 @@ pub async fn review(
         });
     }
     let reviewer = resolve_reviewer(reviewer).ok_or(OperationError::ReviewerUnresolved)?;
+    let comment = comment.map(str::trim).filter(|text| !text.is_empty());
+    if verdict == VerdictValue::Revise && comment.is_none() {
+        return Err(OperationError::ReviseCommentMissing);
+    }
     let context = load_change_context(client, notebook, change_id).await?;
     let aggregate_hash = aggregate_content_hash(&context.documents);
     let record = VerdictRecord {

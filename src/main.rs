@@ -86,6 +86,24 @@ async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), Dispa
             comment,
             reviewer,
         } => {
+            // `--comment -` reads standard input. CLI-only affordance:
+            // operations receives resolved text and the MCP tool passes
+            // a literal `-` through unchanged.
+            let comment = match comment.as_deref() {
+                Some("-") => {
+                    let mut buffer = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer).map_err(
+                        |error| {
+                            DispatchError::Service(
+                                anyhow::Error::new(error)
+                                    .context("cannot read the review comment from standard input"),
+                            )
+                        },
+                    )?;
+                    Some(buffer)
+                }
+                other => other.map(String::from),
+            };
             operations::review(
                 &client,
                 notebook,

@@ -4,6 +4,7 @@ mod cli;
 mod grammar;
 mod mcp;
 mod merging;
+mod operations;
 mod rendering;
 mod reviews;
 mod schemata;
