@@ -8,8 +8,11 @@
 //! identical notebook content produces a byte-identical archive.
 
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use thiserror::Error;
+
+use crate::git_env::scrub_git_env;
 
 /// Fixed zstd compression level. Archives are written rarely and
 /// read rarely; favor density. Part of the determinism contract.
@@ -64,7 +67,9 @@ pub fn build_archive(entries: &[ArchiveEntry]) -> Result<Vec<u8>, ArchiveError> 
 /// Outside a git repository (or without git available) nothing is
 /// LFS-tracked, so the answer is `false`.
 pub fn gitattributes_covers_lfs(project_root: &Path, path: &Path) -> bool {
-    let Ok(output) = std::process::Command::new("git")
+    let mut command = Command::new("git");
+    scrub_git_env(&mut command);
+    let Ok(output) = command
         .args(["check-attr", "filter", "--"])
         .arg(path)
         .current_dir(project_root)

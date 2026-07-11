@@ -5,12 +5,14 @@
 //! The binary runs with its working directory inside a scratch git
 //! repository, so the resolved project root — and therefore every
 //! merge write — stays inside the test sandbox. The scratch notebook
-//! lives in the operator's real nb directory under a unique name and
-//! is deleted on drop; sandboxing `NB_DIR` itself is not attempted
-//! because an `.nbrc` may override the environment.
+//! lives in a per-test isolated `NB_DIR` (see `super::harness`); the
+//! directory is removed on drop, so the operator's real notebook
+//! list never sees scratch notebooks from this test.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+
+use super::harness::{IsolatedNbDir, scrub_git_env};
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
 const CHANGE_ID: &str = "add-demo";
@@ -39,26 +41,35 @@ fn unique_suffix() -> String {
     )
 }
 
-/// A scratch nb notebook, deleted on drop even when the test panics.
+/// A scratch nb notebook, isolated to a per-test `NB_DIR` and
+/// removed on drop along with the directory.
 struct ScratchNotebook {
     name: String,
+    nb_dir: IsolatedNbDir,
 }
 
 impl ScratchNotebook {
     fn create() -> Self {
-        sweep_stale_notebooks();
+        let nb_dir = IsolatedNbDir::new();
         let name = format!("nbspec-itest-{}", unique_suffix());
-        let output = Command::new("nb")
+        let mut command = Command::new("nb");
+        scrub_git_env(&mut command);
+        let output = command
+            .env("NB_DIR", nb_dir.path())
             .args(["notebooks", "add", &name])
             .output()
             .expect("nb must be installed for integration tests");
         assert!(output.status.success(), "cannot create scratch notebook");
-        ScratchNotebook { name }
+        ScratchNotebook { name, nb_dir }
     }
 
-    /// Filesystem path of the notebook directory.
+    /// Filesystem path of the notebook directory inside the
+    /// isolated `NB_DIR`.
     fn path(&self) -> PathBuf {
-        let output = Command::new("nb")
+        let mut command = Command::new("nb");
+        scrub_git_env(&mut command);
+        let output = command
+            .env("NB_DIR", self.nb_dir.path())
             .args(["notebooks", "--paths", "--no-color"])
             .output()
             .unwrap();
@@ -70,53 +81,34 @@ impl ScratchNotebook {
             .map(PathBuf::from)
             .expect("scratch notebook path must be listed")
     }
+
+    /// The isolated `NB_DIR`; passed to the subprocess harness so
+    /// the `nbspec serve mcp` (and any other spawned nbspec
+    /// process) targets the same isolated root.
+    fn nb_dir_path(&self) -> &Path {
+        self.nb_dir.path()
+    }
 }
 
 impl Drop for ScratchNotebook {
     fn drop(&mut self) {
-        if !delete_notebook(&self.name) {
-            eprintln!(
-                "warning: scratch notebook {} not deleted; \
-                 the next test run sweeps it",
-                self.name
-            );
+        // Best-effort: retry the delete because transient
+        // contention can fail an `nb notebooks delete`.
+        for _ in 0..3 {
+            let mut command = Command::new("nb");
+            scrub_git_env(&mut command);
+            let deleted = command
+                .env("NB_DIR", self.nb_dir.path())
+                .args(["notebooks", "delete", &self.name, "--force"])
+                .output()
+                .map(|output| output.status.success())
+                .unwrap_or(false);
+            if deleted {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
         }
-    }
-}
-
-/// Deletes a notebook, retrying because `nb` invocations from other
-/// concurrent agents can make a delete fail transiently.
-fn delete_notebook(name: &str) -> bool {
-    for _ in 0..3 {
-        let deleted = Command::new("nb")
-            .args(["notebooks", "delete", name, "--force"])
-            .output()
-            .map(|output| output.status.success())
-            .unwrap_or(false);
-        if deleted {
-            return true;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(250));
-    }
-    false
-}
-
-/// Reaps scratch notebooks that earlier runs failed to delete, so
-/// they never accumulate in the operator's nb directory.
-fn sweep_stale_notebooks() {
-    let Ok(output) = Command::new("nb")
-        .args(["notebooks", "--no-color"])
-        .output()
-    else {
-        return;
-    };
-    let listing = String::from_utf8_lossy(&output.stdout);
-    for name in listing
-        .lines()
-        .map(str::trim)
-        .filter(|line| line.starts_with("nbspec-itest-"))
-    {
-        delete_notebook(name);
+        // IsolatedNbDir::drop removes the directory itself.
     }
 }
 
@@ -132,7 +124,9 @@ impl ScratchProject {
             .join(format!("lifecycle-{}", unique_suffix()))
             .canonicalize_base();
         std::fs::create_dir_all(&root).unwrap();
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        scrub_git_env(&mut command);
+        let output = command
             .args(["init", "--quiet"])
             .current_dir(&root)
             .output()
@@ -181,11 +175,16 @@ impl CanonicalizeBase for PathBuf {
 }
 
 /// Runs the nbspec binary inside the scratch project against the
-/// scratch notebook.
+/// scratch notebook. Scrubs `GIT_*` so the subprocess targets the
+/// expected repository even when the test runner leaked ambient git
+/// state into the parent environment.
 fn nbspec(project: &ScratchProject, notebook: &ScratchNotebook, arguments: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_nbspec"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_nbspec"));
+    scrub_git_env(&mut command);
+    command
         .current_dir(&project.root)
         .env("NBSPEC_CONFIG_DIR", project.configuration_directory())
+        .env("NB_DIR", notebook.nb_dir_path())
         .args(["--notebook", &notebook.name])
         .args(arguments)
         .output()

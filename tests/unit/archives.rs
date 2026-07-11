@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use nbspec::archives::{ArchiveEntry, build_archive, gitattributes_covers_lfs};
+use nbspec::git_env::scrub_git_env;
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
 
@@ -89,7 +90,12 @@ fn archives_round_trip_through_tar_and_zstd() {
 fn git_project(label: &str) -> PathBuf {
     let root = unique_temp_root(label);
     fs::create_dir_all(&root).unwrap();
-    let status = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    // Scrub leaked `GIT_*` so `git init` cannot redirect to a
+    // parent repo's git directory if the test runs from inside a
+    // hook or CI environment (see `nbspec:issues/4`).
+    scrub_git_env(&mut command);
+    let status = command
         .args(["init", "--quiet"])
         .current_dir(&root)
         .status()

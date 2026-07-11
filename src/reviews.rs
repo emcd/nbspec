@@ -13,10 +13,13 @@
 //! the layering of every other verb.
 
 use std::path::Path;
+use std::process::Command;
 
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::git_env::scrub_git_env;
 
 /// Change-namespace subfolder holding verdict notes.
 pub const VERDICTS_FOLDER: &str = "verdicts";
@@ -149,10 +152,9 @@ pub fn resolve_reviewer(explicit: Option<&str>) -> Option<String> {
         }
         return Some(trimmed.to_string());
     }
-    let output = std::process::Command::new("git")
-        .args(["config", "user.name"])
-        .output()
-        .ok()?;
+    let mut command = Command::new("git");
+    scrub_git_env(&mut command);
+    let output = command.args(["config", "user.name"]).output().ok()?;
     if !output.status.success() {
         return None;
     }
