@@ -5,6 +5,7 @@ mod grammar;
 mod mcp;
 mod merging;
 mod rendering;
+mod reviews;
 mod schemata;
 mod validation;
 mod worknotes;
