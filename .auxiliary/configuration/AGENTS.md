@@ -39,7 +39,7 @@ Before implementing code changes, consult these files in `.auxiliary/instruction
 | Topic | File |
 |-------|------|
 | `nb` MCP tools, tagging, and notebook organization | @documentation/agents/notebook.md |
-| OpenSpec proposals and workflow | @documentation/agents/openspec.md |
+| Nbspec proposals and workflow | @documentation/agents/nbspec.md |
 | Delegated review flow and stacked commits | @documentation/agents/reviews.md |
 
 ### Recommended Organization
@@ -47,14 +47,15 @@ Before implementing code changes, consult these files in `.auxiliary/instruction
 | Medium | Location | Purpose |
 |--------|----------|---------|
 | `nb` | `coordination/` | Handoffs, org chart, team workflow |
-| `nb` | `ideas/` | Rough ideas, early-stage proposals; tag `#task-proposal` for OpenSpec drafts |
+| `nb` | `ideas/` | Brainstorming and rough sketches (not formal proposals — those live in `proposals/<change-id>/`) |
 | `nb` | `issues/` | Bug tracking and known issues |
 | `nb` | `reviews/` | Code and proposal reviews |
 | `nb` | `procedures/` | How-to guides and checklists |
 | `nb` | `todos/` | Task tracking |
 | `nb` | `artifacts/` | Preserved reference material: completed POCs, historical analysis |
+| `nb` | `proposals/<change-id>/` | Active change namespaces (scaffolded by `nbspec create`; carries proposal, specifications, designs, decisions, and `work` todos); the source of truth for in-flight changes |
 | `agentmux` | | Inter-agent messaging, pane inspection, coordination |
-| (filesystem) | `openspec/` | Formal proposals, specs, designs |
+| (filesystem) | `documentation/{specifications,designs,decisions}/` | Durable documents materialized from Nbspec-managed proposals at merge time |
 | (filesystem) | `src/**/README.md` | Architecture, constraints, design rationale |
 
 ## Tests Development
@@ -84,31 +85,35 @@ Before implementing code changes, consult these files in `.auxiliary/instruction
 - Batch related updates into one message instead of sending rapid-fire partial status pings.
 - Use `Cc` only for agents who need to act or review; avoid broad `Cc` by default.
 - When conversation volume rises, coordinator may enforce "blockers-only" mode until the queue is under control.
-## Tests Development
 
-- Prefer tests under `tests/unit` and `tests/integration` over inline `#[cfg(test)]` modules in `src/**`.
-- Prefer tests that exercise public interfaces; avoid source-inclusion patterns used only to reach private internals.
-- Inline `#[cfg(test)]` is permitted only when ALL of the following hold:
-  1. The tested item is crate-private **by design** (not by oversight or laziness) and making it testable externally would require widening its visibility or adding a `#[doc(hidden)] pub` escape hatch that would itself become unintended API surface.
-  2. No existing public interface exercises the same code path.
-  3. The inline test block contains at most **one** `#[test]` function.
-- If a candidate inline test fails any of these conditions, move it to `tests/unit` and widen visibility or restructure as needed. Do not default to inline to avoid that conversation; the friction is intentional.
+## Nbspec Instructions
 
-## OpenSpec Instructions
+This project uses Nbspec (notebook-resident change orchestration). Workflow Guide: @documentation/agents/nbspec.md
 
-This project uses OpenSpec 1.x (OPSX). Workflow Guide: @documentation/agents/openspec.md
-
-Always open `documentation/agents/openspec.md` when the request:
+Always open `documentation/agents/nbspec.md` when the request:
 - Mentions planning or proposals (words like proposal, spec, change, plan).
 - Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work.
 - Sounds ambiguous and you need the authoritative spec before coding.
 
 Quick orientation:
-- Workflow actions are the `/opsx:*` skills (`propose`, `explore`, `new`, `continue`, `ff`, `apply`, `verify`, `sync`, `archive`).
-- The `openspec` CLI provides state: `list`, `status`, `instructions`, `validate --all --strict`.
-- Project configuration lives in `openspec/config.yaml` (default schema: `spec-driven`).
+- Proposals live in the notebook under `proposals/<change-id>/` via
+  `nbspec create`. The CLI verbs drive the workflow: `create`, `display`,
+  `render`, `merge`, `validate`, `review`, `import` (v0.3.0, forthcoming),
+  `export` (v0.3.0, forthcoming). `nbspec serve mcp` exposes each as an
+  MCP tool.
+- Project configuration lives in
+  `.auxiliary/configuration/nbspec/general.toml`; workflow schemata live
+  under `.auxiliary/configuration/nbspec/schemata/<name>/schema.toml`.
+- The `openspec` CLI appears only as an optional, version-pinned CI
+  conformance oracle scoped to grammar-level fixtures. The
+  `openspec/` symlink is bootstrap-only and slated for removal in
+  section 6.2 of the foundation change.
 
-When a commit completes an OpenSpec task or requirement, update the relevant OpenSpec task status in the same commit.
+Task status lives in the notebook under each change's `work` note
+and is the live execution record — it does not need a commit-time
+update because there is no separate filesystem-side `tasks.md` to
+keep in sync. Use `nbspec display` to confirm progress before a
+commit lands.
 
 # Commits
 
