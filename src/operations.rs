@@ -167,16 +167,16 @@ pub async fn create(
     if folder_exists(client, &folder, notebook).await {
         return Err(OperationError::AlreadyExists(change_id.to_string()));
     }
-    client.mkdir(&folder, notebook).await?;
+    client.add_folder(&folder, notebook).await?;
     for subfolder in namespace_folders(&schema) {
         client
-            .mkdir(&format!("{folder}/{subfolder}"), notebook)
+            .add_folder(&format!("{folder}/{subfolder}"), notebook)
             .await?;
     }
 
     let metadata = ChangeMetadata::new(change_id, title, &schema.name, &notebook_name)?;
     client
-        .add(
+        .add_note(
             Some(META_NOTE),
             &render_meta_note(&metadata)?,
             &[META_TAG.to_string()],
@@ -187,11 +187,11 @@ pub async fn create(
     for note in namespace_notes(&schema) {
         let placeholder = format!("<!-- Draft the {note} here. -->\n");
         client
-            .add(Some(&note), &placeholder, &[], Some(&folder), notebook)
+            .add_note(Some(&note), &placeholder, &[], Some(&folder), notebook)
             .await?;
     }
     client
-        .todo(
+        .add_todo(
             WORK_NOTE,
             Some(&format!("Execution checklist for {change_id}.")),
             &[],
@@ -238,7 +238,9 @@ pub async fn display(
     let mut output = metadata_summary(&metadata);
     if full {
         for note in namespace_notes(&schema) {
-            let content = client.show(&format!("{folder}/{note}"), notebook).await?;
+            let content = client
+                .show_note(&format!("{folder}/{note}"), notebook)
+                .await?;
             output.push_str(&format!("\n## {note}\n\n{}\n", content.trim_end()));
         }
     }
@@ -283,7 +285,7 @@ pub async fn display(
 
     output.push_str("\n## work\n\n");
     let change_directory = client
-        .notebook_path(notebook)
+        .show_notebook_path(notebook)
         .await?
         .join(change_folder(change_id));
     let work_summary = work_summary(&change_directory);
@@ -780,7 +782,7 @@ async fn load_change_context(
     let configuration = load_configuration(&root)?;
     let folder = change_folder(change_id);
     let change_directory = client
-        .notebook_path(Some(notebook_name.as_str()))
+        .show_notebook_path(Some(notebook_name.as_str()))
         .await?
         .join(&folder);
     if !change_directory.is_dir() {
@@ -940,13 +942,35 @@ pub async fn review(
     let verdicts_folder = format!("{}/{VERDICTS_FOLDER}", context.folder);
     let notebook = Some(context.notebook_name.as_str());
     ensure_folder(client, &verdicts_folder, notebook).await?;
-    client
-        .add(Some(&name), &body, &[], Some(&verdicts_folder), notebook)
+    // Pass `Some(&name)` as the title so `nb --title "{name}"`
+    // materializes the verdict id as both the note's display
+    // title and (because `nb` derives the filename from the
+    // title) the note's on-disk filename. The body deliberately
+    // omits the leading `# {name}` H1 to avoid the duplicate-
+    // title-heading path that `nb-api 0.2.1` rejects; the
+    // display title that `nb` writes from `--title` is the
+    // single source of truth for the note's name. The return
+    // value is `nb`'s authoritative note path; both the text
+    // output and the structured `note` field report it.
+    let created_note = client
+        .add_note(Some(&name), &body, &[], Some(&verdicts_folder), notebook)
         .await?;
+    // `nb add`'s stdout is `Added: [<index>] <notebook>:<folder>/<file> "<title>"`;
+    // extract the `<notebook>:<folder>/<file>` path (the third
+    // whitespace-separated field) so the structured `note` field
+    // reports the on-disk path that `nb` actually wrote, not the
+    // pre-normalization destination we passed. If the format
+    // doesn't match (e.g., future `nb` change), fall back to the
+    // pre-normalization path so the field is at least populated.
+    let created_note_path = created_note
+        .split_whitespace()
+        .nth(2)
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{verdicts_folder}/{name}.md"));
     let text = format!(
         "Recorded {verdict} verdict by {reviewer} for change {change_id} at gate {gate}.\n\
          aggregate=sha256:{aggregate_hash}\n\
-         note={verdicts_folder}/{name}.md",
+         note={created_note_path}",
     );
     let structured = json!({
         "change_id": change_id,
@@ -954,7 +978,7 @@ pub async fn review(
         "verdict": verdict.to_string(),
         "reviewer": reviewer,
         "aggregate_hash": aggregate_hash,
-        "note": format!("{verdicts_folder}/{name}.md"),
+        "note": created_note_path,
         "timestamp": record.timestamp.to_string(),
     });
     Ok(OperationOutcome::new(text, structured))
@@ -997,7 +1021,7 @@ async fn load_metadata(
     notebook: Option<&str>,
 ) -> Result<ChangeMetadata, OperationError> {
     let content = client
-        .show(&format!("{folder}/{META_NOTE}"), notebook)
+        .show_note(&format!("{folder}/{META_NOTE}"), notebook)
         .await?;
     Ok(parse_meta_note(&content)?)
 }
@@ -1021,7 +1045,7 @@ fn metadata_summary(metadata: &ChangeMetadata) -> String {
 
 async fn folder_exists(client: &NbClient, folder: &str, notebook: Option<&str>) -> bool {
     client
-        .list(Some(folder), &[], Some(1), notebook)
+        .list_notes(Some(folder), &[], Some(1), notebook)
         .await
         .is_ok()
 }
@@ -1034,12 +1058,12 @@ async fn ensure_folder(
     if folder_exists(client, folder, notebook).await {
         return Ok(());
     }
-    client.mkdir(folder, notebook).await?;
+    client.add_folder(folder, notebook).await?;
     Ok(())
 }
 
 async fn folder_listing(client: &NbClient, folder: &str, notebook: Option<&str>) -> String {
-    match client.list(Some(folder), &[], None, notebook).await {
+    match client.list_notes(Some(folder), &[], None, notebook).await {
         Ok(listing) => {
             let trimmed = listing.trim();
             // nb reports empty folders as "0 items." followed by help text.
@@ -1107,7 +1131,10 @@ async fn artifact_has_content(
     };
     match artifact_layout(artifact) {
         ArtifactLayout::Note(note) => {
-            match client.show(&format!("{folder}/{note}"), notebook).await {
+            match client
+                .show_note(&format!("{folder}/{note}"), notebook)
+                .await
+            {
                 Ok(content) => note_has_authored_content(&content),
                 Err(_) => false,
             }

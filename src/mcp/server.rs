@@ -142,7 +142,7 @@ pub fn resolve_notebook(explicit: &Option<String>) -> Result<(String, NotebookSo
 /// lookup would silently succeed for any notebook name `nb` has
 /// ever seen, even one that has been removed.
 async fn validate_notebook_exists(client: &NbClient, notebook: &str) -> Result<()> {
-    let listing = client.notebooks().await?;
+    let listing = client.list_notebooks().await?;
     if listing.lines().any(|line| line.trim() == notebook) {
         return Ok(());
     }

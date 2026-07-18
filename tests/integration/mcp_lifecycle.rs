@@ -737,6 +737,49 @@ async fn mcp_server_drives_change_lifecycle() {
             .is_some_and(|hash| hash.len() == 64),
         "aggregate hash must be a SHA-256 hex digest"
     );
+    // MCP callers receive the authoritative on-disk note path
+    // (text and structured surfaces must agree). The path is
+    // `<notebook>:<relative-path>` per `nb`'s qualified output;
+    // the basename must equal the verdict id so the structured
+    // field is selector-stable, not a synthesized pre-normalization
+    // destination.
+    let structured_note = review_structured["note"]
+        .as_str()
+        .expect("structured note must be a string");
+    let structured_note_relpath = structured_note
+        .split_once(':')
+        .map(|(_, rest)| rest)
+        .unwrap_or(structured_note);
+    let structured_note_basename = std::path::Path::new(structured_note_relpath)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("structured note must have a UTF-8 basename");
+    assert!(
+        structured_note_basename.ends_with(".md"),
+        "structured note filename must end with `.md`: {structured_note_basename:?}"
+    );
+    let structured_verdict_id = structured_note_basename
+        .strip_suffix(".md")
+        .expect(".md suffix");
+    assert!(
+        !structured_verdict_id.is_empty()
+            && structured_verdict_id
+                .chars()
+                .take(15)
+                .all(|c| c.is_ascii_digit() || c == '-'),
+        "structured note basename must be a non-empty compact-timestamp verdict id"
+    );
+    // MCP text and structured surfaces must agree on the path.
+    let review_text = first_text(reviewed_result);
+    let text_note_line = review_text
+        .lines()
+        .find(|line| line.starts_with("note="))
+        .expect("review text must contain `note=...` line");
+    assert_eq!(
+        text_note_line,
+        &format!("note={structured_note}"),
+        "MCP text and structured surfaces must agree on the note path"
+    );
 
     // merge: transfers durable documents with provenance + archive.
     let merged = harness

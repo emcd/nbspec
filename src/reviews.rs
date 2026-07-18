@@ -181,19 +181,27 @@ pub fn verdict_note_name(timestamp: &Timestamp) -> String {
     )
 }
 
-/// Renders a verdict note body: selector-stable H1 matching the note
-/// name, then the fenced JSON payload.
+/// Renders a verdict note body: the fenced JSON payload.
+///
+/// The note's name is conveyed via the `title` argument to
+/// `NbClient::add_note`, so `nb --title "{name}"` materializes
+/// it as both the note's display title and (because `nb`
+/// derives the filename from the title) the note's on-disk
+/// filename. The body therefore starts directly with the JSON
+/// code fence — including a leading `# {name}` H1 here would
+/// duplicate the title that `nb` already wrote from `--title`,
+/// which `NbError::DuplicateTitleHeading` rejects.
 ///
 /// # Errors
 ///
 /// Returns a serialization error when the record cannot be encoded
 /// (not expected for well-formed records).
 pub fn render_verdict_note(
-    name: &str,
+    _name: &str,
     record: &VerdictRecord,
 ) -> Result<String, serde_json::Error> {
     let json = serde_json::to_string_pretty(record)?;
-    Ok(format!("# {name}\n\n```json\n{json}\n```\n"))
+    Ok(format!("```json\n{json}\n```\n"))
 }
 
 /// Reads and strictly parses every verdict note under a change

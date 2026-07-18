@@ -396,7 +396,93 @@ fn change_lifecycle_end_to_end() {
         ],
     );
     assert!(approved.status.success(), "{}", stderr_of(&approved));
-    assert!(stdout_of(&approved).contains("Recorded approve verdict by itest"));
+    let approved_output = stdout_of(&approved);
+    assert!(approved_output.contains("Recorded approve verdict by itest"));
+
+    // The recorded verdict's `note={verdicts_folder}/{name}.md`
+    // structured output MUST point at a file that actually exists
+    // and whose basename equals the verdict id — the title is the
+    // single source of truth for the verdict's identity, and the
+    // on-disk filename is `nb`'s derivation of that title. This
+    // regression-guards the `add_note(None, ...)` → `add_note(
+    // Some(&name), ...)` switch in the verdict writer.
+    let verdict_note_qualified = approved_output
+        .lines()
+        .find_map(|line| line.strip_prefix("note=").map(str::to_string))
+        .expect("approved verdict output must contain `note=...` line");
+    // The `note=` line is `<notebook>:<relative-path>` (per `nb`'s
+    // qualified-path output). The test resolves relative to the
+    // notebook root, so strip the `<notebook>:` prefix.
+    let verdict_note_path = verdict_note_qualified
+        .split_once(':')
+        .map(|(_, rest)| rest.to_string())
+        .unwrap_or(verdict_note_qualified);
+    let verdict_note_filename = std::path::Path::new(&verdict_note_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("verdict note path must have a UTF-8 basename");
+    let absolute_verdict_note = notebook.path().join(&verdict_note_path);
+    assert!(
+        absolute_verdict_note.is_file(),
+        "recorded verdict note path must exist on disk: {verdict_note_path} \
+         (resolved: {})",
+        absolute_verdict_note.display()
+    );
+    assert!(
+        !verdict_note_filename.is_empty() && verdict_note_filename.ends_with(".md"),
+        "verdict note filename must be a non-empty `.md` basename: {verdict_note_filename:?}"
+    );
+    // The basename (without `.md`) is the verdict id the gate binds to.
+    let verdict_id = verdict_note_filename
+        .strip_suffix(".md")
+        .expect(".md suffix");
+    assert!(
+        !verdict_id.is_empty(),
+        "verdict id (basename without `.md`) must be non-empty"
+    );
+    // Verdict ids follow the format `<compact-timestamp>-<rand>-<sha-prefix>-<seq>`
+    // where the compact timestamp is `%Y%m%d%H%M%S` (14 digits). Assert the
+    // digit-and-dash prefix so a future format drift is caught.
+    assert!(
+        verdict_id
+            .chars()
+            .take(15)
+            .all(|c| c.is_ascii_digit() || c == '-'),
+        "verdict id should start with a compact timestamp, got: {verdict_id:?}"
+    );
+    // Body assertion per MCP Owner's [P1] regression spec:
+    // - starts with `# {verdict_id}\n\n```json\n` (nb materializes
+    //   the title as the leading H1, so the H1 is materializing
+    //   exactly once — NOT duplicated)
+    // - contains exactly one fenced JSON payload
+    // - does NOT contain a second duplicate `# {verdict_id}` heading
+    //   (which would be the `DuplicateTitleHeading` failure mode
+    //   that the verdict writer's body change guards against)
+    let body = std::fs::read_to_string(&absolute_verdict_note).expect("read verdict note body");
+    let expected_prefix = format!("# {verdict_id}\n\n```json\n");
+    let expected_prefix_crlf = format!("# {verdict_id}\r\n\r\n```json\r\n");
+    assert!(
+        body.starts_with(&expected_prefix) || body.starts_with(&expected_prefix_crlf),
+        "verdict body must start with `# {{verdict_id}}\\n\\n```json\\n` \
+         (or the line-ending-normalized CRLF equivalent); body starts with: {:?}",
+        body.chars().take(80).collect::<String>()
+    );
+    // Strip line endings for the count / containment assertions so
+    // the regression is robust to either LF or CRLF terminators.
+    let body_normalized = body.replace("\r\n", "\n");
+    let fence_count = body_normalized.matches("```json").count();
+    assert_eq!(
+        fence_count, 1,
+        "verdict body must contain exactly one fenced JSON payload (got {fence_count}):\n{body}"
+    );
+    let duplicate_h1_count = body_normalized
+        .matches(&format!("# {verdict_id}\n"))
+        .count();
+    assert_eq!(
+        duplicate_h1_count, 1,
+        "verdict body must contain the title-derived H1 exactly once \
+         (got {duplicate_h1_count}); body:\n{body}"
+    );
 
     // A second reviewer's outstanding revise coexists without blocking:
     // slice-1 policy is satisfied by any single current approval, and
