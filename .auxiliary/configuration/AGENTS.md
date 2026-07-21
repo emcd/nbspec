@@ -88,32 +88,12 @@ Before implementing code changes, consult these files in `.auxiliary/instruction
 
 ## Nbspec Instructions
 
-This project uses Nbspec (notebook-resident change orchestration). Workflow Guide: @documentation/agents/nbspec.md
-
-Always open `documentation/agents/nbspec.md` when the request:
-- Mentions planning or proposals (words like proposal, spec, change, plan).
-- Introduces new capabilities, breaking changes, architecture shifts, or big performance/security work.
-- Sounds ambiguous and you need the authoritative spec before coding.
-
-Quick orientation:
-- Proposals live in the notebook under `proposals/<change-id>/` via
-  `nbspec create`. The CLI verbs drive the workflow: `create`, `display`,
-  `render`, `merge`, `validate`, `review`, `import` (v0.3.0, forthcoming),
-  `export` (v0.3.0, forthcoming). `nbspec serve mcp` exposes each as an
-  MCP tool.
-- Project configuration lives in
-  `.auxiliary/configuration/nbspec/general.toml`; workflow schemata live
-  under `.auxiliary/configuration/nbspec/schemata/<name>/schema.toml`.
-- The `openspec` CLI appears only as an optional, version-pinned CI
-  conformance oracle scoped to grammar-level fixtures. The
-  `openspec/` symlink is bootstrap-only and slated for removal in
-  section 6.2 of the foundation change.
-
-Task status lives in the notebook under each change's `work` note
-and is the live execution record — it does not need a commit-time
-update because there is no separate filesystem-side `tasks.md` to
-keep in sync. Use `nbspec display` to confirm progress before a
-commit lands.
+Consult `documentation/agents/nbspec.md` when a request touches an
+existing normative specification, may require a new specification for
+substantial work, explicitly mentions Nbspec or a proposal, or when the
+operator requests formal planning. That file is the authoritative source
+for applicability. Consulting it does not itself authorize creating a
+proposal.
 
 # Commits
 

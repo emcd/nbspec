@@ -51,6 +51,10 @@ OpenSpec 1.x grammar compatibility is verified end-to-end against a
 pinned upstream `openspec validate --strict`; no runtime dependency
 on the `openspec` binary.
 
+The canonical procedure file for Nbspec is `documentation/agents/nbspec.md`
+— it is the agent-facing reference for the workflow and CLI/MCP
+surface. README sections below summarize the user-facing pieces.
+
 ## Usage
 
 All commands operate on the project notebook, derived from the git remote
