@@ -3,14 +3,20 @@
 - Overview and Quick Start: README.{md,rst}
 
 - Use the 'context7' MCP server to retrieve up-to-date documentation for any SDKs or APIs.
-- Use the 'nb' MCP server for project note-taking, issue tracking, and collaboration. The server provides LLM-friendly access to the `nb` note-taking system with proper escaping and project-specific notebook context.
 - Check README files in directories you're working with for insights about architecture and design decisions.
 
 ## Purpose
-[Describe your project's purpose and goals]
+
+Nbspec is a Rust CLI and MCP server for notebook-first OpenSpec orchestration. Change proposals (proposal text, specifications, designs, decisions, work checklists) live as `nb` notes; only durable documents (specifications, designs, decisions) and a compressed change archive reach the repository at merge. Review happens against deterministic scratch renders, never against the working tree. The change workflow follows the [OpenSpec 1.x](https://github.com/Fission-AI/OpenSpec) grammar; the canonical Nbspec procedure lives at `documentation/agents/nbspec.md`.
 
 ## Tech Stack
-[List your primary technologies]
+
+- **Language:** Rust 2024 edition, MSRV 1.88; `cargo` for build, test, and release.
+- **Notebook backend:** `nb-api` Rust client; `nb.sh@7.24.0` in CI.
+- **Surfaces:** `clap` for the CLI grammar; `rmcp` 1.7 with `transport-io` for the MCP server; `tokio` async runtime.
+- **Serialization:** `serde`, `serde_json`, `toml`, `schemars` (MCP JSON Schema).
+- **Plumbing:** `anyhow`/`thiserror` (errors); `directories` (platform config); `jiff` (timestamps); `sha2` (provenance hashes); `similar` (unified diffs); `tar`/`zstd` (change archives).
+
 
 # Development Standards
 Before implementing code changes, consult these files in `.auxiliary/instructions/`:

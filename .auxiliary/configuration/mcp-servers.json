@@ -17,6 +17,20 @@
         "--notebook", "nbspec",
         "--no-commit-signing"
       ]
+    },
+    "nbspec": {
+      "command": "reloaderoo",
+      "args": [
+        "--",
+        "cargo",
+        "run",
+        "--release",
+        "--",
+        "serve",
+        "mcp",
+        "--notebook",
+        "nbspec"
+      ]
     }
   }
 }
