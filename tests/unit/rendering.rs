@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use nbspec::rendering::{
     RenderedDocument, aggregate_content_hash, render_documents, review_diff, write_tree,
 };
-use nbspec::schemata::default_schema;
+use nbspec::schemata::{default_schema, parse_schema};
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
 
@@ -281,4 +281,232 @@ fn aggregate_hash_of_empty_set_is_stable() {
         aggregate_content_hash(&[]),
         "empty rendered set must hash deterministically"
     );
+}
+
+#[test]
+fn timestamp_filename_replaced_by_h1_slug_in_tree_path() {
+    let root = unique_temp_root("rendering-timestamp-slug");
+    let change = root.join("notebook/proposals/add-demo");
+    fs::create_dir_all(change.join("specifications")).unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\nWhy.\n").unwrap();
+    fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
+    fs::write(
+        change.join("20260101000000.todo.md"),
+        "# [ ] work\n\n- [ ] Do it.\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/20260710175830.md"),
+        "# Review Gating Model\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let spec = documents
+        .iter()
+        .find(|d| d.artifact_id == "specifications")
+        .unwrap();
+    assert_eq!(
+        spec.tree_path, "specifications/review-gating-model.md",
+        "timestamp filename must be replaced by H1-derived slug"
+    );
+    assert_eq!(
+        spec.target_path.as_deref(),
+        Some("documentation/specifications/review-gating-model.md"),
+        "target path must use the slug"
+    );
+    assert_eq!(
+        spec.source_note, "proposals/add-demo/specifications/20260710175830.md",
+        "source note must preserve the original notebook filename"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn non_timestamp_filename_preserved_in_tree_path() {
+    let root = unique_temp_root("rendering-non-timestamp");
+    let change = root.join("notebook/proposals/add-demo");
+    fs::create_dir_all(change.join("specifications")).unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\nWhy.\n").unwrap();
+    fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
+    fs::write(
+        change.join("20260101000000.todo.md"),
+        "# [ ] work\n\n- [ ] Do it.\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/user-auth.md"),
+        "# User Authentication\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let spec = documents
+        .iter()
+        .find(|d| d.artifact_id == "specifications")
+        .unwrap();
+    assert_eq!(
+        spec.tree_path, "specifications/user-auth.md",
+        "non-timestamp filename must be preserved"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn timestamp_filename_without_h1_falls_back_to_original() {
+    let root = unique_temp_root("rendering-timestamp-no-h1");
+    let change = root.join("notebook/proposals/add-demo");
+    fs::create_dir_all(change.join("specifications")).unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\nWhy.\n").unwrap();
+    fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
+    fs::write(
+        change.join("20260101000000.todo.md"),
+        "# [ ] work\n\n- [ ] Do it.\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/20260710175830.md"),
+        "<!-- no H1 here -->\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let spec = documents
+        .iter()
+        .find(|d| d.artifact_id == "specifications")
+        .unwrap();
+    assert_eq!(
+        spec.tree_path, "specifications/20260710175830.md",
+        "timestamp without H1 must fall back to original filename"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn duplicate_h1_slugs_across_timestamp_notes_collide() {
+    let root = unique_temp_root("rendering-collision-duplicate-h1");
+    let change = root.join("notebook/proposals/add-demo");
+    fs::create_dir_all(change.join("specifications")).unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\n## Why\n\nWhy.\n").unwrap();
+    fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
+    fs::write(
+        change.join("20260101000000.todo.md"),
+        "# [ ] work\n\n- [ ] Do it.\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/20260710175830.md"),
+        "# User Auth\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/20260710175831.md"),
+        "# User Auth\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+
+    let result = render_documents(&change, "proposals/add-demo", &default_schema());
+    let err = result.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("duplicate"), "{msg}");
+    assert!(msg.contains("user-auth.md"), "{msg}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn timestamp_slug_colliding_with_named_note_is_rejected() {
+    let root = unique_temp_root("rendering-collision-named");
+    let change = root.join("notebook/proposals/add-demo");
+    fs::create_dir_all(change.join("specifications")).unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\n## Why\n\nWhy.\n").unwrap();
+    fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
+    fs::write(
+        change.join("20260101000000.todo.md"),
+        "# [ ] work\n\n- [ ] Do it.\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/user-auth.md"),
+        "# User Auth\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/20260710175830.md"),
+        "# User Auth\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+
+    let result = render_documents(&change, "proposals/add-demo", &default_schema());
+    assert!(
+        result.is_err(),
+        "timestamp slug colliding with named note must error"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn distinct_tree_paths_sharing_durable_target_collide() {
+    let root = unique_temp_root("rendering-collision-shared-target");
+    let change = root.join("notebook/proposals/add-demo");
+    fs::create_dir_all(change.join("alpha")).unwrap();
+    fs::create_dir_all(change.join("beta")).unwrap();
+    fs::write(change.join("alpha/same.md"), "# Alpha same\n\nBody.\n").unwrap();
+    fs::write(change.join("beta/same.md"), "# Beta same\n\nBody.\n").unwrap();
+
+    let schema = parse_schema(
+        r#"
+name = "shared-target"
+version = 1
+
+[[artifacts]]
+id = "alpha"
+generates = "alpha/**/*.md"
+target = "documentation/shared"
+
+[[artifacts]]
+id = "beta"
+generates = "beta/**/*.md"
+target = "documentation/shared"
+"#,
+    )
+    .unwrap();
+
+    let result = render_documents(&change, "proposals/add-demo", &schema);
+    let err = result.expect_err("distinct tree paths sharing one durable target must collide");
+    let msg = err.to_string();
+    assert!(msg.contains("durable target"), "{msg}");
+    assert!(msg.contains("documentation/shared/same.md"), "{msg}");
+    assert!(msg.contains("alpha/same.md"), "{msg}");
+    assert!(msg.contains("beta/same.md"), "{msg}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn timestamp_filename_with_fenced_h1_falls_back_to_original() {
+    let root = unique_temp_root("rendering-timestamp-fenced-h1");
+    let change = root.join("notebook/proposals/add-demo");
+    fs::create_dir_all(change.join("specifications")).unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\n## Why\n\nWhy.\n").unwrap();
+    fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
+    fs::write(
+        change.join("20260101000000.todo.md"),
+        "# [ ] work\n\n- [ ] Do it.\n",
+    )
+    .unwrap();
+    fs::write(
+        change.join("specifications/20260710175830.md"),
+        "```\n# Not A Real H1\n```\n\n## ADDED Requirements\n",
+    )
+    .unwrap();
+
+    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let spec = documents
+        .iter()
+        .find(|d| d.artifact_id == "specifications")
+        .unwrap();
+    assert_eq!(
+        spec.tree_path, "specifications/20260710175830.md",
+        "fenced H1 must not produce a slug; fall back to original filename"
+    );
+    fs::remove_dir_all(&root).unwrap();
 }

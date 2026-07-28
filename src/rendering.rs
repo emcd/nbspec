@@ -24,6 +24,13 @@ pub enum RenderError {
         path: PathBuf,
         source: std::io::Error,
     },
+
+    #[error("duplicate {kind} {path} from {sources}")]
+    DuplicateTarget {
+        kind: String,
+        path: String,
+        sources: String,
+    },
 }
 
 impl RenderError {
@@ -105,15 +112,16 @@ pub fn render_documents(
                     let file = directory.join(&relative);
                     let content = std::fs::read_to_string(&file)
                         .map_err(|error| RenderError::io(&file, error))?;
-                    let tree_path = join_logical(&name, &relative);
+                    let materialization = materialization_filename(&relative, &content);
+                    let tree_path = join_logical(&name, &materialization);
                     let target_path = artifact
                         .target
                         .as_deref()
-                        .map(|target| join_logical(target, &relative));
+                        .map(|target| join_logical(target, &materialization));
                     documents.push(RenderedDocument {
                         artifact_id: artifact.id.clone(),
                         target_path,
-                        source_note: format!("{change_folder}/{tree_path}"),
+                        source_note: format!("{change_folder}/{name}/{relative}"),
                         tree_path,
                         content,
                     });
@@ -121,7 +129,45 @@ pub fn render_documents(
             }
         }
     }
+    detect_collisions(&documents)?;
     Ok(documents)
+}
+
+/// Rejects documents that share a `tree_path` or a durable
+/// `target_path` after H1-slug materialization. Two timestamp notes
+/// with the same H1, a timestamp note whose slug matches a named
+/// note, or distinct artifacts whose targets map to the same durable
+/// destination, would silently overwrite each other.
+fn detect_collisions(documents: &[RenderedDocument]) -> Result<(), RenderError> {
+    check_duplicates(documents, |d| Some(d.tree_path.as_str()), "rendered path")?;
+    check_duplicates(documents, |d| d.target_path.as_deref(), "durable target")?;
+    Ok(())
+}
+
+fn check_duplicates(
+    documents: &[RenderedDocument],
+    key: impl Fn(&RenderedDocument) -> Option<&str>,
+    kind: &str,
+) -> Result<(), RenderError> {
+    use std::collections::HashMap;
+    let mut seen: HashMap<&str, Vec<&str>> = HashMap::new();
+    for document in documents {
+        if let Some(k) = key(document) {
+            seen.entry(k)
+                .or_default()
+                .push(document.source_note.as_str());
+        }
+    }
+    for (path, sources) in &seen {
+        if sources.len() > 1 {
+            return Err(RenderError::DuplicateTarget {
+                kind: kind.to_string(),
+                path: path.to_string(),
+                sources: sources.join(", "),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Computes the aggregate content hash of a rendered document set:
@@ -276,4 +322,48 @@ fn join_logical(parent: &str, child: &str) -> String {
     } else {
         format!("{parent}/{child}")
     }
+}
+
+/// Checks whether a filename stem matches nb's timestamp naming
+/// pattern (`YYYYMMDDHHMMSS`, exactly 14 digits).
+fn looks_like_nb_timestamp(stem: &str) -> bool {
+    stem.len() == 14 && stem.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Extracts the first H1 heading from note content and converts it
+/// to a kebab-case slug. Returns `None` when no H1 is found or the
+/// slug would be empty. Uses [`crate::changes::first_h1_title`] for
+/// fence-aware, column-zero heading recognition.
+fn kebab_slug_from_h1(content: &str) -> Option<String> {
+    let title = crate::changes::first_h1_title(content)?;
+    let slug: String = title
+        .to_lowercase()
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .collect::<Vec<_>>()
+        .join("-");
+    if slug.is_empty() { None } else { Some(slug) }
+}
+
+/// Resolves the materialization filename for a document note within
+/// a folder artifact. When the filename stem matches nb's timestamp
+/// pattern, derives a kebab-case slug from the note's H1 heading
+/// instead. Falls back to the original filename when the H1 is
+/// absent or the filename is not a timestamp.
+fn materialization_filename(relative: &str, content: &str) -> String {
+    let path = Path::new(relative);
+    let filename = path
+        .file_name()
+        .and_then(|f| f.to_str())
+        .unwrap_or(relative);
+    let stem = filename.strip_suffix(".md").unwrap_or(filename);
+    if looks_like_nb_timestamp(stem)
+        && let Some(slug) = kebab_slug_from_h1(content)
+    {
+        return match path.parent().and_then(|p| p.to_str()) {
+            Some(parent) if !parent.is_empty() => format!("{parent}/{slug}.md"),
+            _ => format!("{slug}.md"),
+        };
+    }
+    relative.to_string()
 }

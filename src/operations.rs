@@ -554,6 +554,11 @@ pub async fn merge(
             previous = takeover.previous_owner,
         ));
     }
+    for path in &report.stale_target_overrides {
+        output.push_str(&format!(
+            "STALE TARGET (--force): {path} left behind by H1-slug rename; remove manually\n"
+        ));
+    }
     for succession in &report.successions {
         output.push_str(&format!(
             "TAKEOVER (clean succession): {target}: {previous} -> {change_id}\n",
@@ -620,6 +625,7 @@ pub async fn merge(
         "review_gate_overridden": report.review_gate_overridden,
         "successions": successions,
         "drift_overrides": drift_overrides,
+        "stale_target_overrides": report.stale_target_overrides,
     });
     Ok(OperationOutcome::new(output, structured))
 }

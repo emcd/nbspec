@@ -86,6 +86,146 @@ pub fn note_has_authored_content(content: &str) -> bool {
     })
 }
 
+/// Returns the title text of the first H1 heading outside fenced code
+/// blocks and HTML comments, at column zero. Returns `None` when no
+/// H1 is found. Recognizes backtick and tilde fences (length-aware),
+/// multi-line HTML comments, and tab-separated ATX headings.
+pub fn first_h1_title(content: &str) -> Option<String> {
+    scan_for_heading(content, 1, |_| true)
+}
+
+/// Checks whether content contains a `## <section>` heading outside
+/// fenced code blocks and HTML comments, at column zero. Matched
+/// case-insensitively. Scans every H2 so a required section that
+/// follows another H2 still validates.
+pub fn has_h2_section(content: &str, section: &str) -> bool {
+    scan_for_heading(content, 2, |title| title.eq_ignore_ascii_case(section)).is_some()
+}
+
+/// Markdown context state for heading scanning.
+#[derive(Clone, Copy)]
+enum MdContext {
+    Normal,
+    InBacktickFence(usize),
+    InTildeFence(usize),
+    InHtmlComment,
+}
+
+/// Fence classification for one line.
+enum FenceLine {
+    NotFence,
+    Opening(usize),
+    Closing(usize),
+}
+
+fn leading_spaces(line: &str) -> usize {
+    line.bytes().take_while(|&b| b == b' ').count()
+}
+
+fn classify_fence(line: &str, marker: char) -> FenceLine {
+    let spaces = leading_spaces(line);
+    if spaces > 3 {
+        return FenceLine::NotFence;
+    }
+    let rest = &line[spaces..];
+    if !rest.starts_with(marker) {
+        return FenceLine::NotFence;
+    }
+    let len = rest.chars().take_while(|&c| c == marker).count();
+    if len < 3 {
+        return FenceLine::NotFence;
+    }
+    // A line with markers but nothing after (except spaces) can close
+    // a fence. It can also open one — the caller resolves context.
+    if rest[len..].trim().is_empty() {
+        FenceLine::Closing(len)
+    } else {
+        FenceLine::Opening(len)
+    }
+}
+
+/// Parses an ATX heading at column zero for the given level.
+/// Requires at least one space or tab after the `#` markers.
+fn parse_atx_heading(line: &str, target_level: usize) -> Option<String> {
+    if !line.starts_with('#') {
+        return None;
+    }
+    let level = line.chars().take_while(|&c| c == '#').count();
+    if level != target_level {
+        return None;
+    }
+    let after = &line[level..];
+    let next = after.chars().next()?;
+    if !matches!(next, ' ' | '\t') {
+        return None;
+    }
+    Some(after.trim_start_matches([' ', '\t']).trim().to_string())
+}
+
+/// Scans content for an ATX heading at `target_level` outside fenced
+/// code blocks and HTML comments. Returns the title text of the first
+/// match for which `accept` returns true, preserving scanner state
+/// across non-matching headings of the same level.
+fn scan_for_heading(
+    content: &str,
+    target_level: usize,
+    mut accept: impl FnMut(&str) -> bool,
+) -> Option<String> {
+    let mut ctx = MdContext::Normal;
+    for line in content.lines() {
+        match ctx {
+            MdContext::InBacktickFence(open_len) => {
+                if let FenceLine::Closing(close_len) = classify_fence(line, '`')
+                    && close_len >= open_len
+                {
+                    ctx = MdContext::Normal;
+                }
+            }
+            MdContext::InTildeFence(open_len) => {
+                if let FenceLine::Closing(close_len) = classify_fence(line, '~')
+                    && close_len >= open_len
+                {
+                    ctx = MdContext::Normal;
+                }
+            }
+            MdContext::InHtmlComment => {
+                if line.contains("-->") {
+                    ctx = MdContext::Normal;
+                }
+            }
+            MdContext::Normal => {
+                match classify_fence(line, '`') {
+                    FenceLine::Opening(len) | FenceLine::Closing(len) => {
+                        ctx = MdContext::InBacktickFence(len);
+                        continue;
+                    }
+                    FenceLine::NotFence => {}
+                }
+                match classify_fence(line, '~') {
+                    FenceLine::Opening(len) | FenceLine::Closing(len) => {
+                        ctx = MdContext::InTildeFence(len);
+                        continue;
+                    }
+                    FenceLine::NotFence => {}
+                }
+                let trimmed = line.trim_start();
+                if trimmed.starts_with("<!--") {
+                    if !trimmed.contains("-->") {
+                        ctx = MdContext::InHtmlComment;
+                    }
+                    continue;
+                }
+                if let Some(title) = parse_atx_heading(line, target_level)
+                    && accept(&title)
+                {
+                    return Some(title);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Notebook layout of one schema artifact within a change namespace.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ArtifactLayout {

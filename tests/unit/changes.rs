@@ -1,6 +1,7 @@
 use nbspec::changes::{
     ArtifactLayout, ChangeError, ChangeMetadata, ChangeStatus, artifact_layout, change_folder,
-    namespace_folders, namespace_notes, parse_meta_note, render_meta_note, validate_change_id,
+    first_h1_title, has_h2_section, namespace_folders, namespace_notes, parse_meta_note,
+    render_meta_note, validate_change_id,
 };
 use nbspec::schemata::default_schema;
 
@@ -146,4 +147,130 @@ fn status_serializes_lowercase() {
     let json = serde_json::to_string(&metadata).unwrap();
     assert!(json.contains("\"status\":\"draft\""));
     assert!(json.contains("\"meta_version\":1"));
+}
+
+#[test]
+fn first_h1_title_skips_fenced_code_blocks() {
+    let content = "\
+```
+# Not A Heading
+```
+# Real Heading
+";
+    assert_eq!(first_h1_title(content).as_deref(), Some("Real Heading"));
+}
+
+#[test]
+fn first_h1_title_ignores_indented_heading() {
+    let content = "    # Indented (code block)\n# Real\n";
+    assert_eq!(first_h1_title(content).as_deref(), Some("Real"));
+}
+
+#[test]
+fn first_h1_title_returns_none_for_fence_only() {
+    let content = "\
+```
+# Only In Code Block
+```
+";
+    assert!(first_h1_title(content).is_none());
+}
+
+#[test]
+fn has_h2_section_skips_fenced_code_blocks() {
+    let content = "\
+```
+## Why
+```
+## Why
+";
+    assert!(has_h2_section(content, "Why"));
+    let fenced_only = "\
+```
+## Why
+```
+";
+    assert!(!has_h2_section(fenced_only, "Why"));
+}
+
+#[test]
+fn has_h2_section_ignores_indented_section() {
+    let content = "    ## Why\n## Why\n";
+    assert!(has_h2_section(content, "Why"));
+    let indented_only = "    ## Why\n";
+    assert!(!has_h2_section(indented_only, "Why"));
+}
+
+#[test]
+fn first_h1_title_skips_tilde_fences() {
+    let content = "~~~\n# Not A Heading\n~~~\n# Real\n";
+    assert_eq!(first_h1_title(content).as_deref(), Some("Real"));
+    let fenced_only = "~~~\n# Only In Tilde\n~~~\n";
+    assert!(first_h1_title(fenced_only).is_none());
+}
+
+#[test]
+fn first_h1_title_skips_html_comments() {
+    let content = "<!--\n# Commented Out\n-->\n# Real\n";
+    assert_eq!(first_h1_title(content).as_deref(), Some("Real"));
+    let inline = "<!-- # inline -->\n# Real\n";
+    assert_eq!(first_h1_title(inline).as_deref(), Some("Real"));
+}
+
+#[test]
+fn first_h1_title_respects_fence_length() {
+    let content = "````\n``` still inside\n````\n# Real\n";
+    assert_eq!(first_h1_title(content).as_deref(), Some("Real"));
+}
+
+#[test]
+fn first_h1_title_accepts_tab_after_marker() {
+    let content = "#\tTabbed Title\n";
+    assert_eq!(first_h1_title(content).as_deref(), Some("Tabbed Title"));
+}
+
+#[test]
+fn first_h1_title_rejects_no_space_after_marker() {
+    assert!(first_h1_title("#NotAHeading\n").is_none());
+}
+
+#[test]
+fn has_h2_section_finds_non_first_heading() {
+    let content = "\
+# proposal
+
+## Context
+
+Background.
+
+## Why
+
+Reasons.
+";
+    assert!(has_h2_section(content, "Why"));
+    assert!(has_h2_section(content, "Context"));
+    assert!(!has_h2_section(content, "Impact"));
+}
+
+#[test]
+fn has_h2_section_matches_each_of_multiple_required_names() {
+    let content = "\
+# design
+
+## Context
+
+Background.
+
+## Goals
+
+Ship it.
+
+## Decisions
+
+Use the shared scanner.
+";
+    assert!(has_h2_section(content, "Context"));
+    assert!(has_h2_section(content, "Goals"));
+    assert!(has_h2_section(content, "Decisions"));
+    assert!(has_h2_section(content, "goals"));
 }

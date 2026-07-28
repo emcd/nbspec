@@ -75,6 +75,16 @@ pub enum RefusalReason {
     /// outstanding revise, or unparseable verdict naming the note.
     /// Policy, not integrity: `--force` overrides it, loudly.
     ReviewGate(String),
+    /// A file in the repository has provenance naming a source note
+    /// in the current change, but its path no longer matches the
+    /// rendered target — typically because an H1 edit on a
+    /// timestamp-named note changed the materialization slug.
+    /// `--force` overrides (the old file remains and must be removed
+    /// manually).
+    StaleTarget {
+        source_note: String,
+        new_target: String,
+    },
 }
 
 impl std::fmt::Display for RefusalReason {
@@ -111,6 +121,15 @@ impl std::fmt::Display for RefusalReason {
                 "review gate unsatisfied: {state}; record an approving \
                  verdict with nbspec review, or rerun with --force to \
                  override the gate"
+            ),
+            RefusalReason::StaleTarget {
+                source_note,
+                new_target,
+            } => write!(
+                formatter,
+                "provenance names source note {source_note} but target moved \
+                 to {new_target} (H1-derived slug changed); remove this stale \
+                 file or rerun with --force to proceed"
             ),
         }
     }
@@ -216,13 +235,21 @@ pub struct MergeReport {
     /// silent either: merge output states that a drifted target was
     /// overridden, naming its previous owner.
     pub drift_overrides: Vec<Succession>,
+    /// Stale targets left behind when `--force` overrode an H1-slug
+    /// rename on a timestamp-named note. The old file remains in the
+    /// repository and must be removed manually. Never silent: merge
+    /// output announces each stale path.
+    pub stale_target_overrides: Vec<String>,
 }
 
 /// Classifies the merge target of one rendered document.
 ///
 /// # Errors
 ///
-/// Returns [`MergeError::Io`] when an existing target cannot be read.
+/// Returns [`MergeError::Io`] when the target path escapes confinement
+/// (symlink ancestor or target-file symlink), when an intermediate
+/// component exists but is not a directory, or when an existing real
+/// target file cannot be read.
 pub fn target_status(
     document: &RenderedDocument,
     project_root: &Path,
@@ -231,13 +258,11 @@ pub fn target_status(
     let Some(target_path) = &document.target_path else {
         return Ok(TargetStatus::NotMerged);
     };
-    let absolute = project_root.join(Path::new(target_path));
-    if !absolute.exists() {
-        return Ok(TargetStatus::NotMerged);
-    }
-    if !absolute.is_file() {
-        return Ok(TargetStatus::NonFile);
-    }
+    let absolute = match inspect_confined_target(project_root, target_path)? {
+        ConfinedTarget::Absent { .. } => return Ok(TargetStatus::NotMerged),
+        ConfinedTarget::NonFile { .. } => return Ok(TargetStatus::NonFile),
+        ConfinedTarget::RealFile { absolute } => absolute,
+    };
     let content =
         std::fs::read_to_string(&absolute).map_err(|error| MergeError::io(&absolute, error))?;
     let (header, body) = provenance::split_document(&content);
@@ -292,6 +317,14 @@ pub fn merge_documents(
                 reason: RefusalReason::ReviewGate(state.to_string()),
             });
         }
+    }
+    let stale = detect_stale_targets(documents, project_root, change_id)?;
+    if force {
+        for r in &stale {
+            report.stale_target_overrides.push(r.target.clone());
+        }
+    } else {
+        refusals.extend(stale);
     }
     for document in documents {
         let Some(target_path) = &document.target_path else {
@@ -361,7 +394,20 @@ pub fn merge_documents(
         return Err(MergeError::Refused { refusals });
     }
     for (target_path, content) in writes {
-        let absolute = project_root.join(Path::new(&target_path));
+        // Re-validate confinement immediately before effects so a
+        // race that introduces a symlink cannot open an escape.
+        let absolute = match inspect_confined_target(project_root, &target_path)? {
+            ConfinedTarget::Absent { absolute } | ConfinedTarget::RealFile { absolute } => absolute,
+            ConfinedTarget::NonFile { absolute } => {
+                return Err(MergeError::io(
+                    &absolute,
+                    std::io::Error::new(
+                        std::io::ErrorKind::AlreadyExists,
+                        "non-file occupies target at write time",
+                    ),
+                ));
+            }
+        };
         if let Some(parent) = absolute.parent() {
             std::fs::create_dir_all(parent).map_err(|error| MergeError::io(parent, error))?;
         }
@@ -390,4 +436,203 @@ fn unsupported_operations(content: &str) -> Option<Vec<String>> {
     } else {
         Some(operations)
     }
+}
+
+/// Scans merge-target directories for files whose provenance names a
+/// source note in the current change but whose path no longer matches
+/// the rendered target. This detects H1-slug renames on
+/// timestamp-named notes: the old target remains in the repository
+/// after the slug changes.
+///
+/// Fails closed: any filesystem error (metadata, read_dir, entry,
+/// read) returns `MergeError::Io` before any merge effects. Every
+/// existing path component under the project root is validated with
+/// non-following metadata; symlink ancestors and non-directory
+/// intermediate components refuse. Symlink entries inside a real
+/// directory are skipped (not followed).
+fn detect_stale_targets(
+    documents: &[RenderedDocument],
+    project_root: &Path,
+    change_id: &str,
+) -> Result<Vec<Refusal>, MergeError> {
+    use std::collections::HashMap;
+    let mut source_to_target: HashMap<&str, &str> = HashMap::new();
+    let mut target_dirs: HashMap<String, ()> = HashMap::new();
+    for doc in documents {
+        let Some(target) = &doc.target_path else {
+            continue;
+        };
+        source_to_target.insert(doc.source_note.as_str(), target.as_str());
+        let parent = Path::new(target)
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("");
+        target_dirs.entry(parent.to_string()).or_default();
+    }
+    let mut refusals = Vec::new();
+    for dir in target_dirs.keys() {
+        let Some(abs_dir) = probe_confined_directory(project_root, dir)? else {
+            continue;
+        };
+        let entries = std::fs::read_dir(&abs_dir).map_err(|e| MergeError::io(&abs_dir, e))?;
+        for entry in entries {
+            let entry = entry.map_err(|e| MergeError::io(&abs_dir, e))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|e| MergeError::io(&entry.path(), e))?;
+            if file_type.is_symlink() || !file_type.is_file() {
+                continue;
+            }
+            let path = entry.path();
+            let filename = entry.file_name().to_string_lossy().to_string();
+            if !filename.ends_with(".md") {
+                continue;
+            }
+            let rel_path = if dir.is_empty() {
+                filename
+            } else {
+                format!("{dir}/{filename}")
+            };
+            let content = std::fs::read_to_string(&path).map_err(|e| MergeError::io(&path, e))?;
+            let (header, _) = provenance::split_document(&content);
+            let Some(header) = header else {
+                continue;
+            };
+            if header.change_id != change_id {
+                continue;
+            }
+            if let Some(&expected_target) = source_to_target.get(header.note.as_str())
+                && rel_path != expected_target
+            {
+                refusals.push(Refusal {
+                    target: rel_path,
+                    reason: RefusalReason::StaleTarget {
+                        source_note: header.note.clone(),
+                        new_target: expected_target.to_string(),
+                    },
+                });
+            }
+        }
+    }
+    Ok(refusals)
+}
+
+/// Outcome of a confined inspection of one durable target path.
+enum ConfinedTarget {
+    /// No final component; every existing ancestor is a real directory.
+    Absent { absolute: PathBuf },
+    /// Final component is a real regular file under confined ancestors.
+    RealFile { absolute: PathBuf },
+    /// Final component is a real non-file (directory or special).
+    NonFile { absolute: PathBuf },
+}
+
+/// Walks each component of `relative` under `project_root` with
+/// non-following metadata. Rejects symlink components (ancestors or
+/// final) and intermediate non-directory occupants so merge never
+/// follows a link out of the repository or treats ENOTDIR as absence.
+fn inspect_confined_target(
+    project_root: &Path,
+    relative: &str,
+) -> Result<ConfinedTarget, MergeError> {
+    let relative_path = Path::new(relative);
+    let mut absolute = project_root.to_path_buf();
+    let components: Vec<_> = relative_path
+        .components()
+        .filter_map(|component| match component {
+            std::path::Component::Normal(name) => Some(name),
+            _ => None,
+        })
+        .collect();
+    if components.is_empty() {
+        return Err(MergeError::io(
+            project_root,
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "empty durable target path",
+            ),
+        ));
+    }
+    let last = components.len() - 1;
+    for (index, name) in components.iter().enumerate() {
+        absolute.push(name);
+        let metadata = match std::fs::symlink_metadata(&absolute) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                // Remainder is absent. Ancestors so far were real dirs.
+                return Ok(ConfinedTarget::Absent {
+                    absolute: project_root.join(relative_path),
+                });
+            }
+            Err(error) => return Err(MergeError::io(&absolute, error)),
+            Ok(metadata) => metadata,
+        };
+        if metadata.file_type().is_symlink() {
+            return Err(symlink_refusal(&absolute));
+        }
+        if index < last {
+            if !metadata.is_dir() {
+                return Err(MergeError::io(
+                    &absolute,
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotADirectory,
+                        "intermediate path component is not a directory",
+                    ),
+                ));
+            }
+            continue;
+        }
+        // Final component.
+        if metadata.is_file() {
+            return Ok(ConfinedTarget::RealFile { absolute });
+        }
+        return Ok(ConfinedTarget::NonFile { absolute });
+    }
+    unreachable!("components non-empty")
+}
+
+/// Probes a target-directory relative path with full ancestor
+/// confinement. Returns `Ok(Some(absolute))` for a real directory,
+/// `Ok(None)` when absent, and `Err` for symlinks, non-directory
+/// intermediates/final, or metadata failures.
+fn probe_confined_directory(
+    project_root: &Path,
+    relative: &str,
+) -> Result<Option<PathBuf>, MergeError> {
+    if relative.is_empty() {
+        return Ok(Some(project_root.to_path_buf()));
+    }
+    match inspect_confined_target(project_root, relative)? {
+        ConfinedTarget::Absent { .. } => Ok(None),
+        ConfinedTarget::RealFile { absolute } | ConfinedTarget::NonFile { absolute } => {
+            // For a directory probe the final component must be a real
+            // directory. RealFile and non-dir NonFile are failures;
+            // a real directory arrives as NonFile (not is_file).
+            let metadata = std::fs::symlink_metadata(&absolute)
+                .map_err(|error| MergeError::io(&absolute, error))?;
+            if metadata.file_type().is_symlink() {
+                return Err(symlink_refusal(&absolute));
+            }
+            if metadata.is_dir() {
+                Ok(Some(absolute))
+            } else {
+                Err(MergeError::io(
+                    &absolute,
+                    std::io::Error::new(
+                        std::io::ErrorKind::NotADirectory,
+                        "target parent exists and is not a directory",
+                    ),
+                ))
+            }
+        }
+    }
+}
+
+fn symlink_refusal(path: &Path) -> MergeError {
+    MergeError::io(
+        path,
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "symlink on durable target path; refusing to follow",
+        ),
+    )
 }
