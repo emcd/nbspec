@@ -605,3 +605,136 @@ fn change_lifecycle_end_to_end() {
              requirement User authentication has no #### Scenario: block"
     ));
 }
+
+/// Regression for issues/1 + issues/8: `display` constructed nb
+/// selectors using filename stems (e.g. `proposal`) instead of full
+/// filenames (`proposal.md`). When a proposal note's H1 diverged from
+/// the literal stem, `nb` could not resolve the selector, and
+/// `artifact_has_content` swallowed the error as "no content" —
+/// reporting an authored proposal as "ready to author".
+#[test]
+fn display_reports_authored_when_h1_diverges_from_selector_stem() {
+    let notebook = ScratchNotebook::create();
+    let project = ScratchProject::create();
+
+    let created = nbspec(
+        &project,
+        &notebook,
+        &["create", CHANGE_ID, "--title", "Demo"],
+    );
+    assert!(created.status.success(), "{}", stderr_of(&created));
+
+    // Author the proposal with an H1 that does NOT match the note
+    // filename stem ("proposal"). Before the fix, this caused nb to
+    // fail selector resolution, and display reported "ready to author".
+    let change_directory = notebook.path().join("proposals").join(CHANGE_ID);
+    std::fs::write(
+        change_directory.join("proposal.md"),
+        "# A Human-Readable Title\n\n## Why\n\nBody text that counts as authored.\n",
+    )
+    .unwrap();
+
+    let displayed = nbspec(&project, &notebook, &["display", CHANGE_ID]);
+    assert!(displayed.status.success(), "{}", stderr_of(&displayed));
+    let output = stdout_of(&displayed);
+    assert!(
+        output.contains("- proposal: authored"),
+        "expected authored state, got: {output}"
+    );
+
+    // display --full must also succeed (reads the note via show_note).
+    let full_displayed = nbspec(&project, &notebook, &["display", "--full", CHANGE_ID]);
+    assert!(
+        full_displayed.status.success(),
+        "{}",
+        stderr_of(&full_displayed)
+    );
+    let full_output = stdout_of(&full_displayed);
+    assert!(
+        full_output.contains("A Human-Readable Title"),
+        "expected proposal content in --full output: {full_output}"
+    );
+}
+/// Missing note/folder must classify as absence (ready/empty), not
+/// unreadable. Non-not-found failures must surface as unreadable for
+/// both short and `--full` display.
+///
+/// Non-not-found injection uses occupants nb cannot treat as the
+/// expected note/folder type (directory-as-note, file-as-folder).
+/// chmod is not viable against nb 7.24.0: `nb show` can serve via git
+/// and `nb ls` exits 0 with `0 items` on unreadable directories.
+#[test]
+fn display_classifies_missing_and_unreadable_note_and_folder() {
+    let notebook = ScratchNotebook::create();
+    let project = ScratchProject::create();
+
+    let created = nbspec(
+        &project,
+        &notebook,
+        &["create", CHANGE_ID, "--title", "Demo"],
+    );
+    assert!(created.status.success(), "{}", stderr_of(&created));
+
+    let change_directory = notebook.path().join("proposals").join(CHANGE_ID);
+
+    // --- missing note: delete proposal.md ---
+    std::fs::remove_file(change_directory.join("proposal.md")).unwrap();
+    let displayed = nbspec(&project, &notebook, &["display", CHANGE_ID]);
+    assert!(displayed.status.success(), "{}", stderr_of(&displayed));
+    let output = stdout_of(&displayed);
+    assert!(
+        output.contains("- proposal: ready to author"),
+        "missing proposal must be ready, not unreadable: {output}"
+    );
+    assert!(
+        !output.contains("unreadable"),
+        "missing must not report unreadable: {output}"
+    );
+
+    // --- missing folder: remove specifications/ ---
+    let specs = change_directory.join("specifications");
+    if specs.exists() {
+        std::fs::remove_dir_all(&specs).unwrap();
+    }
+    let full_missing = nbspec(&project, &notebook, &["display", "--full", CHANGE_ID]);
+    assert!(
+        full_missing.status.success(),
+        "{}",
+        stderr_of(&full_missing)
+    );
+    let full_missing_out = stdout_of(&full_missing);
+    assert!(
+        full_missing_out.contains("## specifications/") && full_missing_out.contains("(empty)"),
+        "missing folder must render (empty): {full_missing_out}"
+    );
+    assert!(
+        !full_missing_out.contains("(unreadable:"),
+        "missing folder must not be unreadable: {full_missing_out}"
+    );
+    assert!(
+        full_missing_out.contains("(missing)") || full_missing_out.contains("## proposal"),
+        "full display must tolerate missing proposal note: {full_missing_out}"
+    );
+
+    // --- unreadable note: directory occupies the note path ---
+    std::fs::create_dir(change_directory.join("proposal.md")).unwrap();
+    let unreadable = nbspec(&project, &notebook, &["display", CHANGE_ID]);
+    assert!(unreadable.status.success(), "{}", stderr_of(&unreadable));
+    let unreadable_out = stdout_of(&unreadable);
+    assert!(
+        unreadable_out.contains("- proposal: unreadable:"),
+        "directory-as-note must be unreadable: {unreadable_out}"
+    );
+
+    let full_note = nbspec(&project, &notebook, &["display", "--full", CHANGE_ID]);
+    assert!(full_note.status.success(), "{}", stderr_of(&full_note));
+    let full_note_out = stdout_of(&full_note);
+    assert!(
+        full_note_out.contains("(unreadable:"),
+        "full display must surface unreadable proposal: {full_note_out}"
+    );
+    // Folder non-not-found classification is covered by unit tests of
+    // classify_folder_listing: nb 7.24.0 does not surface a reliable
+    // non-not-found failure for folder listing via chmod or file-as-
+    // folder occupants (ls exits 0 with a listing or 0 items).
+}

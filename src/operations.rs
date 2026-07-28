@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use nb_api::NbClient;
+use nb_api::{NbClient, NbError};
 use serde_json::{Map, Value, json};
 use thiserror::Error;
 
@@ -238,17 +238,22 @@ pub async fn display(
     let mut output = metadata_summary(&metadata);
     if full {
         for note in namespace_notes(&schema) {
-            let content = client
-                .show_note(&format!("{folder}/{note}"), notebook)
-                .await?;
-            output.push_str(&format!("\n## {note}\n\n{}\n", content.trim_end()));
+            let selector = format!("{folder}/{note}.md");
+            let body = match client.show_note(&selector, notebook).await {
+                Ok(content) => content.trim_end().to_string(),
+                Err(NbError::CommandFailed(msg)) if is_nb_missing_item(&msg, &selector) => {
+                    "(missing)".to_string()
+                }
+                Err(error) => format!("(unreadable: {error})"),
+            };
+            output.push_str(&format!("\n## {note}\n\n{body}\n"));
         }
     }
     output.push_str("\n## artifacts\n\n");
     let mut authored: Vec<&str> = Vec::new();
     let mut artifact_states: Vec<Value> = Vec::new();
     for artifact in schema.authoring_order() {
-        let has_content =
+        let content_result =
             artifact_has_content(client, &folder, &schema, &artifact.id, notebook).await;
         let unmet: Vec<&str> = artifact
             .requires
@@ -256,13 +261,14 @@ pub async fn display(
             .map(String::as_str)
             .filter(|dependency| !authored.contains(dependency))
             .collect();
-        let state = if has_content {
-            authored.push(artifact.id.as_str());
-            "authored".to_string()
-        } else if unmet.is_empty() {
-            "ready to author".to_string()
-        } else {
-            format!("blocked on {}", unmet.join(", "))
+        let state = match &content_result {
+            Ok(true) => {
+                authored.push(artifact.id.as_str());
+                "authored".to_string()
+            }
+            Ok(false) if unmet.is_empty() => "ready to author".to_string(),
+            Ok(false) => format!("blocked on {}", unmet.join(", ")),
+            Err(msg) => format!("unreadable: {msg}"),
         };
         output.push_str(&format!("- {}: {state}\n", artifact.id));
         let mut entry = Map::new();
@@ -279,7 +285,8 @@ pub async fn display(
     if full {
         for subfolder in namespace_folders(&schema) {
             let listing = folder_listing(client, &format!("{folder}/{subfolder}"), notebook).await;
-            output.push_str(&format!("\n## {subfolder}/\n\n{listing}\n"));
+            let listing_text = listing.unwrap_or_else(|msg| format!("(unreadable: {msg})"));
+            output.push_str(&format!("\n## {subfolder}/\n\n{listing_text}\n"));
         }
     }
 
@@ -364,7 +371,15 @@ fn drift_report_lines(
     change_id: &str,
 ) -> Result<DriftReportLines, OperationError> {
     let root = project_root();
-    let documents = render_documents(change_directory, folder, schema)?;
+    let documents = match render_documents(change_directory, folder, schema) {
+        Ok(documents) => documents,
+        Err(error) => {
+            return Ok(DriftReportLines {
+                text: format!("cannot compute drift: {error}\n"),
+                items: Vec::new(),
+            });
+        }
+    };
     let mut items: Vec<DriftItem> = Vec::new();
     let mut text = String::new();
     for document in &documents {
@@ -1021,7 +1036,7 @@ async fn load_metadata(
     notebook: Option<&str>,
 ) -> Result<ChangeMetadata, OperationError> {
     let content = client
-        .show_note(&format!("{folder}/{META_NOTE}"), notebook)
+        .show_note(&format!("{folder}/{META_NOTE}.md"), notebook)
         .await?;
     Ok(parse_meta_note(&content)?)
 }
@@ -1062,18 +1077,100 @@ async fn ensure_folder(
     Ok(())
 }
 
-async fn folder_listing(client: &NbClient, folder: &str, notebook: Option<&str>) -> String {
-    match client.list_notes(Some(folder), &[], None, notebook).await {
+async fn folder_listing(
+    client: &NbClient,
+    folder: &str,
+    notebook: Option<&str>,
+) -> Result<String, String> {
+    classify_folder_listing(
+        client.list_notes(Some(folder), &[], None, notebook).await,
+        folder,
+    )
+}
+
+/// Maps a `list_notes` result to display text: real listings pass
+/// through, genuine absence becomes `(empty)`, and any other failure
+/// becomes `Err` for the display unreadable path.
+pub fn classify_folder_listing(
+    result: Result<String, NbError>,
+    folder: &str,
+) -> Result<String, String> {
+    match result {
         Ok(listing) => {
             let trimmed = listing.trim();
-            // nb reports empty folders as "0 items." followed by help text.
             if trimmed.is_empty() || trimmed.starts_with("0 items") {
-                "(empty)".to_string()
+                Ok("(empty)".to_string())
             } else {
-                trimmed.to_string()
+                Ok(trimmed.to_string())
             }
         }
-        Err(_) => "(empty)".to_string(),
+        Err(NbError::CommandFailed(msg)) if is_nb_missing_item(&msg, folder) => {
+            Ok("(empty)".to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Maps a `show_note` result to authored-content detection: genuine
+/// absence is `Ok(false)`, other failures are `Err` for the display
+/// unreadable path.
+pub fn classify_note_content(
+    result: Result<String, NbError>,
+    selector: &str,
+) -> Result<bool, String> {
+    match result {
+        Ok(content) => Ok(note_has_authored_content(&content)),
+        Err(NbError::CommandFailed(msg)) if is_nb_missing_item(&msg, selector) => Ok(false),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+/// Recognizes the pinned `nb` 7.24.0 missing-item diagnostic for a
+/// requested note or folder selector.
+///
+/// After `nb-api` strips ANSI, the diagnostic is a line of the form
+/// `!<C0>* Not found: <target>` where `<target>` is the bare selector
+/// or `notebook:selector`, and folders may carry a trailing slash.
+/// Compound backend output that merely embeds the `Not found:` token
+/// against a different selector is not treated as absence.
+pub fn is_nb_missing_item(message: &str, selector: &str) -> bool {
+    let requested = selector.trim().trim_end_matches('/');
+    if requested.is_empty() {
+        return false;
+    }
+    message.lines().any(|line| {
+        let Some(target) = nb_not_found_target(line) else {
+            return false;
+        };
+        let target = target.trim_end_matches('/');
+        target == requested
+            || target
+                .rsplit_once(':')
+                .is_some_and(|(_, path)| path == requested)
+    })
+}
+
+/// Extracts the target from a single pinned `! Not found: <target>`
+/// line. Prefix may include C0 controls (nb emits SI after SGR reset).
+fn nb_not_found_target(line: &str) -> Option<&str> {
+    const MARKER: &str = "Not found: ";
+    let trimmed = line.trim();
+    let index = trimmed.find(MARKER)?;
+    let prefix = &trimmed[..index];
+    if !prefix.contains('!') {
+        return None;
+    }
+    if !prefix
+        .chars()
+        .all(|c| c == '!' || c.is_whitespace() || c.is_control())
+    {
+        return None;
+    }
+    let target = trimmed[index + MARKER.len()..].trim();
+    if target.is_empty() {
+        None
+    } else {
+        Some(target)
     }
 }
 
@@ -1124,24 +1221,20 @@ async fn artifact_has_content(
     schema: &WorkflowSchema,
     artifact_id: &str,
     notebook: Option<&str>,
-) -> bool {
+) -> Result<bool, String> {
     use crate::changes::{ArtifactLayout, artifact_layout};
     let Some(artifact) = schema.artifact(artifact_id) else {
-        return false;
+        return Ok(false);
     };
     match artifact_layout(artifact) {
         ArtifactLayout::Note(note) => {
-            match client
-                .show_note(&format!("{folder}/{note}"), notebook)
-                .await
-            {
-                Ok(content) => note_has_authored_content(&content),
-                Err(_) => false,
-            }
+            let selector = format!("{folder}/{note}.md");
+            classify_note_content(client.show_note(&selector, notebook).await, &selector)
         }
         ArtifactLayout::Folder(subfolder) => {
-            let listing = folder_listing(client, &format!("{folder}/{subfolder}"), notebook).await;
-            listing != "(empty)" && !listing.starts_with("0 ")
+            let listing =
+                folder_listing(client, &format!("{folder}/{subfolder}"), notebook).await?;
+            Ok(listing != "(empty)" && !listing.starts_with("0 "))
         }
     }
 }
