@@ -13,7 +13,9 @@ use std::fmt;
 
 use serde::Serialize;
 
-use crate::changes::{ArtifactLayout, artifact_layout, note_has_authored_content};
+use crate::changes::{
+    ArtifactLayout, artifact_layout, first_h1_title, has_h2_section, note_has_authored_content,
+};
 use crate::grammar::{Requirement, parse_delta_specification};
 use crate::rendering::RenderedDocument;
 use crate::schemata::{ArtifactGrammar, WorkflowSchema};
@@ -153,6 +155,37 @@ pub fn validate_change(
         }
         validate_delta_document(document, &mut diagnostics);
     }
+
+    // Structural checks: H1 heading presence and required sections.
+    for document in documents {
+        let Some(artifact) = schema.artifact(&document.artifact_id) else {
+            continue;
+        };
+        let authored = match artifact_layout(artifact) {
+            ArtifactLayout::Note(_) => note_has_authored_content(&document.content),
+            ArtifactLayout::Folder(_) => true,
+        };
+        if !authored {
+            continue;
+        }
+        if first_h1_title(&document.content).is_none() {
+            diagnostics.push(document_diagnostic(
+                document,
+                None,
+                "document has no H1 heading".to_string(),
+            ));
+        }
+        for section in &artifact.required_sections {
+            if !has_h2_section(&document.content, section) {
+                diagnostics.push(document_diagnostic(
+                    document,
+                    None,
+                    format!("missing required ## {section} section"),
+                ));
+            }
+        }
+    }
+
     diagnostics
 }
 

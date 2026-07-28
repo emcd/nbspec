@@ -95,6 +95,11 @@ pub struct Artifact {
     /// must satisfy under `nbspec validate`. `None` means free-form.
     #[serde(default)]
     pub grammar: Option<ArtifactGrammar>,
+    /// nbspec extension: section headings (without the `## ` prefix)
+    /// that must appear in authored documents for this artifact.
+    /// Matched case-insensitively against `## <section>` lines.
+    #[serde(default)]
+    pub required_sections: Vec<String>,
 }
 
 /// Structured grammars nbspec validates artifact documents against.

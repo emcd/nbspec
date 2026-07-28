@@ -23,7 +23,7 @@ fn proposal_document() -> RenderedDocument {
         tree_path: "proposal.md".to_string(),
         target_path: None,
         source_note: format!("{CHANGE_FOLDER}/proposal.md"),
-        content: "# proposal\n\nWhy: reasons.\n".to_string(),
+        content: "# proposal\n\n## Why\n\nReasons.\n".to_string(),
     }
 }
 
@@ -329,4 +329,176 @@ fn failure_display_lists_one_diagnostic_per_line() {
     assert_eq!(lines[0], "change add-demo is invalid: 2 violations");
     assert_eq!(lines.len(), 3);
     assert!(lines[1].starts_with("proposals/add-demo/proposal.md: "));
+}
+
+#[test]
+fn proposal_missing_why_section_is_reported() {
+    let mut proposal = proposal_document();
+    proposal.content = "# proposal\n\n## What Changes\n\nSome change.\n".to_string();
+    let documents = vec![
+        proposal,
+        specification_document("user-auth", VALID_SPECIFICATION),
+    ];
+    let diagnostics = validate(&documents);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].artifact_id, "proposal");
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("missing required ## Why section")
+    );
+}
+
+#[test]
+fn authored_document_without_h1_is_reported() {
+    let content = "\
+Some prose with no H1 heading.
+
+## ADDED Requirements
+
+### Requirement: User authentication
+The system SHALL authenticate users.
+
+#### Scenario: Valid login
+- **WHEN** correct credentials
+- **THEN** session begins
+";
+    let documents = vec![
+        proposal_document(),
+        specification_document("user-auth", content),
+    ];
+    let diagnostics = validate(&documents);
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0].artifact_id, "specifications");
+    assert!(diagnostics[0].message.contains("no H1 heading"));
+}
+
+#[test]
+fn required_sections_matched_case_insensitively() {
+    let mut proposal = proposal_document();
+    proposal.content = "# proposal\n\n## why\n\nLowercase heading.\n".to_string();
+    let documents = vec![
+        proposal,
+        specification_document("user-auth", VALID_SPECIFICATION),
+    ];
+    assert_eq!(validate(&documents), Vec::new());
+}
+
+#[test]
+fn h1_inside_fenced_code_block_does_not_satisfy_h1_check() {
+    let content = "\
+```
+# Fake Heading
+```
+Some prose.
+
+## ADDED Requirements
+
+### Requirement: User authentication
+The system SHALL authenticate users.
+
+#### Scenario: Valid login
+- **WHEN** correct credentials
+- **THEN** session begins
+";
+    let documents = vec![
+        proposal_document(),
+        specification_document("user-auth", content),
+    ];
+    let diagnostics = validate(&documents);
+    assert_eq!(diagnostics.len(), 1);
+    assert!(diagnostics[0].message.contains("no H1 heading"));
+}
+
+#[test]
+fn section_inside_fenced_code_block_does_not_satisfy_required_section() {
+    let mut proposal = proposal_document();
+    proposal.content = "\
+# proposal
+
+```
+## Why
+```
+
+Reasons outside any section.
+"
+    .to_string();
+    let documents = vec![
+        proposal,
+        specification_document("user-auth", VALID_SPECIFICATION),
+    ];
+    let diagnostics = validate(&documents);
+    assert_eq!(diagnostics.len(), 1);
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("missing required ## Why section")
+    );
+}
+
+#[test]
+fn required_section_after_another_h2_still_validates() {
+    let mut proposal = proposal_document();
+    proposal.content = "\
+# proposal
+
+## Context
+
+Background.
+
+## Why
+
+Reasons.
+"
+    .to_string();
+    let documents = vec![
+        proposal,
+        specification_document("user-auth", VALID_SPECIFICATION),
+    ];
+    assert_eq!(validate(&documents), Vec::new());
+}
+
+#[test]
+fn multiple_required_sections_all_must_be_present() {
+    use nbspec::schemata::parse_schema;
+
+    let schema = parse_schema(
+        r#"
+name = "multi-section"
+version = 1
+
+[[artifacts]]
+id = "proposal"
+generates = "proposal.md"
+required = true
+required_sections = ["Why", "Impact"]
+"#,
+    )
+    .unwrap();
+
+    let only_why = RenderedDocument {
+        artifact_id: "proposal".to_string(),
+        tree_path: "proposal.md".to_string(),
+        target_path: None,
+        source_note: format!("{CHANGE_FOLDER}/proposal.md"),
+        content: "# proposal\n\n## Why\n\nReasons.\n".to_string(),
+    };
+    let diagnostics = validate_change(std::slice::from_ref(&only_why), &schema, CHANGE_FOLDER);
+    assert_eq!(diagnostics.len(), 1);
+    assert!(
+        diagnostics[0]
+            .message
+            .contains("missing required ## Impact section"),
+        "{}",
+        diagnostics[0].message
+    );
+
+    let both = RenderedDocument {
+        content: "# proposal\n\n## Why\n\nReasons.\n\n## Impact\n\nWide.\n".to_string(),
+        ..only_why.clone()
+    };
+    assert_eq!(
+        validate_change(std::slice::from_ref(&both), &schema, CHANGE_FOLDER),
+        Vec::new()
+    );
 }

@@ -11,6 +11,7 @@ generates = "proposal.md"
 description = "Proposal note outlining why the change is needed"
 requires = []
 required = true
+required_sections = ["Why"]
 instruction = """
 Write the proposal note that establishes WHY this change is needed.
 
