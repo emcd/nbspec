@@ -103,14 +103,13 @@ fn show_note_on_directory_is_not_classified_as_missing() {
         .output()
         .expect("spawn nb show");
     let msg = combined_output(&output.stdout, &output.stderr);
-    assert!(
-        !output.status.success() || msg.contains("folder") || msg.contains("directory"),
-        "directory selector should not look like a normal note: status={} msg={msg:?}",
-        output.status
-    );
+    // nb 7.24.0 may exit non-zero, or exit 0 with an ls-style listing
+    // of the directory. Neither shape is the pinned missing-item
+    // diagnostic, which is the classifier contract under test.
     assert!(
         !is_nb_missing_item(&msg, selector),
-        "directory occupant must not classify as missing: {msg:?}"
+        "directory occupant must not classify as missing: status={} msg={msg:?}",
+        output.status
     );
 }
 
