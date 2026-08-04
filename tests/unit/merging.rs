@@ -675,6 +675,7 @@ fn h1_slug_rename_force_override_announces_stale_target() {
 }
 
 #[test]
+#[cfg(unix)]
 fn stale_scan_refuses_symlinked_target_directory() {
     let root = unique_temp_root("merging-stale-symlink-dir");
     let real = root.join("real-specifications");
@@ -704,6 +705,7 @@ fn stale_scan_refuses_symlinked_target_directory() {
 }
 
 #[test]
+#[cfg(unix)]
 fn stale_scan_fails_closed_on_unreadable_target_directory() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -731,6 +733,7 @@ fn stale_scan_fails_closed_on_unreadable_target_directory() {
 }
 
 #[test]
+#[cfg(unix)]
 fn stale_scan_fails_closed_on_unreadable_candidate_file() {
     use std::os::unix::fs::PermissionsExt;
 
@@ -760,6 +763,7 @@ fn stale_scan_fails_closed_on_unreadable_candidate_file() {
 }
 
 #[test]
+#[cfg(unix)]
 fn stale_scan_skips_symlink_entries_inside_real_directory() {
     let root = unique_temp_root("merging-stale-symlink-entry");
     let target_dir = root.join("documentation/specifications");
@@ -798,6 +802,7 @@ fn stale_scan_skips_symlink_entries_inside_real_directory() {
 }
 
 #[test]
+#[cfg(unix)]
 fn merge_refuses_symlinked_ancestor_without_external_effects() {
     let root = unique_temp_root("merging-symlink-ancestor");
     let outside = unique_temp_root("merging-symlink-ancestor-outside");
@@ -840,6 +845,7 @@ fn merge_refuses_symlinked_ancestor_without_external_effects() {
 }
 
 #[test]
+#[cfg(unix)]
 fn merge_refuses_live_target_symlink_without_external_effects() {
     let root = unique_temp_root("merging-live-target-symlink");
     let outside = unique_temp_root("merging-live-target-symlink-outside");
@@ -874,6 +880,7 @@ fn merge_refuses_live_target_symlink_without_external_effects() {
 }
 
 #[test]
+#[cfg(unix)]
 fn merge_refuses_dangling_target_symlink_without_creating_external() {
     let root = unique_temp_root("merging-dangling-target-symlink");
     let outside = unique_temp_root("merging-dangling-target-symlink-outside");
