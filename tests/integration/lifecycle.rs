@@ -656,15 +656,17 @@ fn display_reports_authored_when_h1_diverges_from_selector_stem() {
     );
 }
 /// Missing note/folder must classify as absence (ready/empty), not
-/// unreadable. Non-not-found failures must surface as unreadable for
-/// both short and `--full` display.
+/// unreadable, on both short and `--full` display.
 ///
-/// Non-not-found injection uses occupants nb cannot treat as the
-/// expected note/folder type (directory-as-note, file-as-folder).
-/// chmod is not viable against nb 7.24.0: `nb show` can serve via git
-/// and `nb ls` exits 0 with `0 items` on unreadable directories.
+/// Non-not-found → unreadable classification is locked by unit tests
+/// of `classify_note_content` / `classify_folder_listing` with
+/// synthetic `CommandFailed` payloads. Real-nb injection is not
+/// reliable on nb 7.24.0: `nb show` can serve deleted paths from git,
+/// directory-as-note can still resolve authored content, chmod is
+/// ignored for show via git, and `nb ls` exits 0 with `0 items` on
+/// unreadable directories.
 #[test]
-fn display_classifies_missing_and_unreadable_note_and_folder() {
+fn display_classifies_missing_note_and_folder_as_absence() {
     let notebook = ScratchNotebook::create();
     let project = ScratchProject::create();
 
@@ -715,26 +717,4 @@ fn display_classifies_missing_and_unreadable_note_and_folder() {
         full_missing_out.contains("(missing)") || full_missing_out.contains("## proposal"),
         "full display must tolerate missing proposal note: {full_missing_out}"
     );
-
-    // --- unreadable note: directory occupies the note path ---
-    std::fs::create_dir(change_directory.join("proposal.md")).unwrap();
-    let unreadable = nbspec(&project, &notebook, &["display", CHANGE_ID]);
-    assert!(unreadable.status.success(), "{}", stderr_of(&unreadable));
-    let unreadable_out = stdout_of(&unreadable);
-    assert!(
-        unreadable_out.contains("- proposal: unreadable:"),
-        "directory-as-note must be unreadable: {unreadable_out}"
-    );
-
-    let full_note = nbspec(&project, &notebook, &["display", "--full", CHANGE_ID]);
-    assert!(full_note.status.success(), "{}", stderr_of(&full_note));
-    let full_note_out = stdout_of(&full_note);
-    assert!(
-        full_note_out.contains("(unreadable:"),
-        "full display must surface unreadable proposal: {full_note_out}"
-    );
-    // Folder non-not-found classification is covered by unit tests of
-    // classify_folder_listing: nb 7.24.0 does not surface a reliable
-    // non-not-found failure for folder listing via chmod or file-as-
-    // folder occupants (ls exits 0 with a listing or 0 items).
 }
