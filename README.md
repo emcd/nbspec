@@ -39,7 +39,7 @@ cargo install --git https://github.com/emcd/nbspec
 
 ## Status
 
-**[v0.2.0](CHANGELOG.md#020---2026-07-11)** released 2026-07-11 — see
+**[v0.2.1](CHANGELOG.md#021---2026-08-04)** released 2026-08-04 — see
 [CHANGELOG.md](CHANGELOG.md) for full release notes.
 
 The verbs in the [Usage](#usage) section below are all implemented:

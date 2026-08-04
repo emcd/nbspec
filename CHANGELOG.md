@@ -5,6 +5,38 @@ All notable changes to `nbspec` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and `nbspec` adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-08-04
+
+### Fixed
+
+- **Note selectors use full filenames**: `display` and related paths
+  resolve artifact notes as `proposal.md` (and peers) rather than
+  bare stems, so authored notes are not reported as ready-to-author
+  when the H1 diverges from the filename stem, and cross-notebook
+  display no longer fails selector resolution (issues/1, issues/8).
+- **Read failures surface as unreadable**: note and folder artifact
+  probes map only the pinned `nb` 7.24.0 missing-item diagnostic for
+  the requested selector to absence; other failures report
+  `unreadable` on short and `--full` display instead of empty/ready.
+- **Timestamp note materialization**: document notes with nb-timestamp
+  filenames materialize to kebab-case H1-derived slugs at render and
+  merge; collisions on rendered path or durable target are refused
+  with source diagnostics (issue/3).
+- **Stale targets after H1 rename**: merge planning detects
+  provenance-owned files left behind when an H1-derived slug changes
+  and refuses (or announces under `--force`) rather than creating a
+  second durable document silently.
+- **Durable-path confinement**: merge planning and pre-write checks
+  walk every path component with non-following metadata; symlink
+  ancestors and live or dangling target-file symlinks are refused
+  with no external effects. Non-directory parents fail during
+  planning so multi-document merges write nothing on refusal.
+- **Structural validation**: authored documents require an H1 outside
+  fenced code and HTML comments; schema-declared `required_sections`
+  (default proposal: `## Why`) are checked with a shared
+  Markdown-context scanner that continues past non-matching H2s
+  (issue/2).
+
 ## [0.2.0] - 2026-07-11
 
 ### Added
