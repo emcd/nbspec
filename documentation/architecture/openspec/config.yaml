@@ -5,9 +5,8 @@ schema: spec-driven
 # Add your tech stack, conventions, style guides, domain knowledge, etc.
 # Example:
 #   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+#     Tech stack: rust
+#     Project: nbspec
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.
