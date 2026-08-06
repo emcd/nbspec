@@ -440,15 +440,10 @@ fn change_lifecycle_end_to_end() {
         !verdict_id.is_empty(),
         "verdict id (basename without `.md`) must be non-empty"
     );
-    // Verdict ids follow the format `<compact-timestamp>-<rand>-<sha-prefix>-<seq>`
-    // where the compact timestamp is `%Y%m%d%H%M%S` (14 digits). Assert the
-    // digit-and-dash prefix so a future format drift is caught.
+    // Verdict ids: `<YYYYMMDDHHMMSS>-<pid-hex>-<6-hex>-<seq-hex>`.
     assert!(
-        verdict_id
-            .chars()
-            .take(15)
-            .all(|c| c.is_ascii_digit() || c == '-'),
-        "verdict id should start with a compact timestamp, got: {verdict_id:?}"
+        nbspec::reviews::is_verdict_note_id(verdict_id),
+        "verdict id must match collision-resistant note-id shape, got: {verdict_id:?}"
     );
     // Body assertion per MCP Owner's [P1] regression spec:
     // - starts with `# {verdict_id}\n\n```json\n` (nb materializes

@@ -762,12 +762,8 @@ async fn mcp_server_drives_change_lifecycle() {
         .strip_suffix(".md")
         .expect(".md suffix");
     assert!(
-        !structured_verdict_id.is_empty()
-            && structured_verdict_id
-                .chars()
-                .take(15)
-                .all(|c| c.is_ascii_digit() || c == '-'),
-        "structured note basename must be a non-empty compact-timestamp verdict id"
+        nbspec::reviews::is_verdict_note_id(structured_verdict_id),
+        "structured note basename must be a collision-resistant verdict id, got: {structured_verdict_id:?}"
     );
     // MCP text and structured surfaces must agree on the path.
     let review_text = first_text(reviewed_result);

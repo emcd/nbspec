@@ -166,6 +166,8 @@ pub fn resolve_reviewer(explicit: Option<&str>) -> Option<String> {
 /// timestamp in compact form plus process/time entropy. The name is
 /// unique for concurrency (new files merge additively under Git); it
 /// is NOT the semantic ordering key.
+///
+/// Format: `<YYYYMMDDHHMMSS>-<pid-hex>-<6-hex-entropy>-<seq-hex>`.
 pub fn verdict_note_name(timestamp: &Timestamp) -> String {
     static SEQUENCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let compact = timestamp.strftime("%Y%m%d%H%M%S");
@@ -179,6 +181,51 @@ pub fn verdict_note_name(timestamp: &Timestamp) -> String {
         std::process::id(),
         nanos & 0xff_ffff
     )
+}
+
+/// Reports whether `id` begins with a compact `%Y%m%d%H%M%S` timestamp
+/// followed by `-` (the collision-resistant suffix starts after that).
+///
+/// Rejects loose "digits or dashes in the first 15 characters" checks
+/// that would accept all-dash or ISO-like prefixes.
+pub fn verdict_id_has_compact_timestamp_prefix(id: &str) -> bool {
+    let bytes = id.as_bytes();
+    bytes.len() > 14 && bytes[..14].iter().all(u8::is_ascii_digit) && bytes[14] == b'-'
+}
+
+/// Reports whether `id` matches the full collision-resistant verdict
+/// note-id shape produced by [`verdict_note_name`] (basename without
+/// `.md`).
+pub fn is_verdict_note_id(id: &str) -> bool {
+    if !verdict_id_has_compact_timestamp_prefix(id) {
+        return false;
+    }
+    let mut parts = id.split('-');
+    let Some(compact) = parts.next() else {
+        return false;
+    };
+    if compact.len() != 14 || !compact.bytes().all(|b| b.is_ascii_digit()) {
+        return false;
+    }
+    let Some(pid) = parts.next() else {
+        return false;
+    };
+    if pid.is_empty() || !pid.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    let Some(entropy) = parts.next() else {
+        return false;
+    };
+    if entropy.len() != 6 || !entropy.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    let Some(sequence) = parts.next() else {
+        return false;
+    };
+    if sequence.is_empty() || !sequence.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return false;
+    }
+    parts.next().is_none()
 }
 
 /// Renders a verdict note body: the fenced JSON payload.

@@ -3,8 +3,9 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use nbspec::reviews::{
-    GateEvaluation, VerdictError, VerdictRecord, VerdictValue, evaluate_gate, read_verdicts,
-    render_verdict_note, reviewer_positions, verdict_note_name,
+    GateEvaluation, VerdictError, VerdictRecord, VerdictValue, evaluate_gate, is_verdict_note_id,
+    read_verdicts, render_verdict_note, reviewer_positions,
+    verdict_id_has_compact_timestamp_prefix, verdict_note_name,
 };
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -358,7 +359,34 @@ fn note_names_are_unique_across_calls() {
     let first = verdict_note_name(&timestamp);
     let second = verdict_note_name(&timestamp);
     assert_ne!(first, second, "entropy suffix must differ across calls");
-    assert!(first.starts_with("20260711"));
+    assert!(first.starts_with("20260711020000-"));
+    assert!(verdict_id_has_compact_timestamp_prefix(&first));
+    assert!(is_verdict_note_id(&first));
+    assert!(is_verdict_note_id(&second));
+}
+
+#[test]
+fn compact_timestamp_prefix_rejects_loose_digit_or_dash_shapes() {
+    assert!(verdict_id_has_compact_timestamp_prefix(
+        "20260711020000-1a2b-c0ffee-0"
+    ));
+    assert!(!verdict_id_has_compact_timestamp_prefix(""));
+    assert!(!verdict_id_has_compact_timestamp_prefix("20260711020000"));
+    assert!(!verdict_id_has_compact_timestamp_prefix("---------------"));
+    assert!(!verdict_id_has_compact_timestamp_prefix("2026-07-11T02:00"));
+    assert!(!verdict_id_has_compact_timestamp_prefix(
+        "20260711T020000-x"
+    ));
+}
+
+#[test]
+fn verdict_note_id_shape_matches_generator() {
+    assert!(is_verdict_note_id("20260711020000-1a2b-c0ffee-0"));
+    assert!(is_verdict_note_id("20260711020000-abc-000001-ff"));
+    assert!(!is_verdict_note_id("20260711020000-1a2b-c0ffe-0")); // entropy not 6
+    assert!(!is_verdict_note_id("20260711020000-1a2b-c0ffee")); // missing seq
+    assert!(!is_verdict_note_id("20260711020000-1a2b-c0ffee-0-extra"));
+    assert!(!is_verdict_note_id("20260711020000--c0ffee-0")); // empty pid
 }
 
 #[test]
