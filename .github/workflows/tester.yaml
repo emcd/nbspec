@@ -64,6 +64,28 @@ jobs:
       - name: Install nb
         run: npm install -g nb.sh@7.24.0
 
+      - name: Put npm global bin on PATH
+        # Windows runners often omit the npm global prefix from PATH for
+        # subsequent steps; Unix is harmless if already present. Add both
+        # `prefix` (Windows shims) and `prefix/bin` (Unix layout).
+        shell: bash
+        run: |
+          prefix="$(npm prefix -g)"
+          echo "$prefix" >> "$GITHUB_PATH"
+          if [[ -d "$prefix/bin" ]]; then
+            echo "$prefix/bin" >> "$GITHUB_PATH"
+          fi
+          echo "npm prefix -g: $prefix"
+          ls -la "$prefix" | head -40 || true
+          ls -la "$prefix/bin" 2>/dev/null | head -20 || true
+
+      - name: Verify nb is spawnable
+        shell: bash
+        run: |
+          export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
+          command -v nb
+          nb --version
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 

@@ -51,6 +51,23 @@ jobs:
       - name: Install nb
         run: npm install -g nb.sh@7.24.0
 
+      - name: Put npm global bin on PATH
+        shell: bash
+        run: |
+          prefix="$(npm prefix -g)"
+          echo "$prefix" >> "$GITHUB_PATH"
+          if [[ -d "$prefix/bin" ]]; then
+            echo "$prefix/bin" >> "$GITHUB_PATH"
+          fi
+          echo "npm prefix -g: $prefix"
+
+      - name: Verify nb is spawnable
+        shell: bash
+        run: |
+          export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
+          command -v nb
+          nb --version
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
