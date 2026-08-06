@@ -60,56 +60,89 @@ surface. README sections below summarize the user-facing pieces.
 All commands operate on the project notebook, derived from the git remote
 by default or named explicitly with `--notebook <name>`.
 
+### Create
+
+Scaffold a change namespace under `proposals/<change-id>/`: meta
+control-plane note, work todo checklist, artifact notes, and folders.
+
 ```sh
-# Scaffold a change namespace (proposals/add-foo/) in the notebook:
-# meta control-plane note, work todo checklist, artifact notes and folders.
 nbspec create add-foo --title "Add the foo capability"
+```
 
-# Status view: metadata, artifact readiness against the schema dependency
-# graph, work checklist progress, merge-target drift.
+### Display
+
+Status view: metadata, artifact readiness against the schema dependency
+graph, work checklist progress, and merge-target drift. `--full` adds
+note contents and folder listings.
+
+```sh
 nbspec display add-foo
-nbspec display add-foo --full   # adds note contents and folder listings
+nbspec display add-foo --full
+```
 
-# Render the change to a scratch tree (never the repository working tree).
+### Render
+
+Write the change to a scratch tree — never the repository working tree.
+`--diff` emits only a git-format unified diff against current merge
+targets, suitable for piping into review tooling.
+
+```sh
 nbspec render add-foo
-
-# Emit only a git-format diff against current merge targets — pipes
-# straight into review tooling.
 nbspec render add-foo --diff | difit --clean
+```
 
-# Record a review verdict bound to the change's CURRENT rendered
-# content: any subsequent edit stales it. Each verdict is one immutable
-# note under proposals/add-foo/verdicts/; a newer verdict from the same
-# reviewer supersedes their older one. Revise verdicts require a
-# findings comment: --comment takes literal content; --comment-file
-# reads a file, or stdin when the path is - (the two conflict).
+### Review
+
+Record a verdict bound to the change's **current** rendered content;
+any later edit stales it. Each verdict is one immutable note under
+`proposals/<change-id>/verdicts/`. A newer verdict from the same
+reviewer supersedes their older one.
+
+Revise verdicts require a findings comment: `--comment` takes literal
+text; `--comment-file` reads a file, or stdin when the path is `-`
+(the two flags conflict).
+
+```sh
 nbspec review add-foo --verdict approve
 nbspec review add-foo --verdict revise --comment "findings at reviews/9"
 nbspec review add-foo --verdict revise --comment-file findings.md
-nbspec render add-foo --diff | summarize | nbspec review add-foo --verdict revise --comment-file -
+nbspec render add-foo --diff | summarize \
+  | nbspec review add-foo --verdict revise --comment-file -
+```
 
-# Transfer durable documents to their configured repository targets with
-# provenance headers, and write the change archive. Merge REFUSES
-# without a current approving verdict (no verdict, stale approval,
-# outstanding revise, or an unparseable verdict note all refuse;
-# --force overrides the review gate, loudly). Hand-edited targets
-# refuse without --force; a refused merge writes nothing. A target
-# inherited from an earlier change succeeds cleanly when it still
-# matches its recorded provenance (the takeover is announced, never
-# silent); a foreign target that drifted refuses without --force.
-# Verdict notes ride the change archive and never materialize to the
-# repository.
+### Merge
+
+Transfer durable documents to their configured repository targets with
+provenance headers, and write the change archive. Verdict notes ride the
+archive and never materialize into the repository.
+
+Merge **refuses** without a current approving verdict (no verdict, stale
+approval, outstanding revise, or an unparseable verdict note). `--force`
+overrides the review gate, loudly. Hand-edited targets refuse without
+`--force`; a refused merge writes nothing.
+
+A target inherited from an earlier change succeeds when it still matches
+its recorded provenance — the takeover is announced, never silent. A
+foreign target that has drifted refuses without `--force`.
+
+```sh
 nbspec merge add-foo
+```
 
-# Native OpenSpec-grammar validation, no external binary. Exits zero
-# with a one-line summary when valid; otherwise exits nonzero, with a
-# summary line and one "note:line: [artifact] message" diagnostic per
-# line on stderr, each anchored to a notebook note rather than a
-# filesystem path.
+### Validate
+
+Native OpenSpec-grammar validation (no external binary). Exits zero with
+a one-line summary when valid; otherwise exits nonzero with a summary
+line and one `note:line: [artifact] message` diagnostic per line on
+stderr, each anchored to a notebook note rather than a filesystem path.
+
+```sh
 nbspec validate add-foo
 ```
 
-Authoring happens with ordinary `nb` tooling: edit
+### Authoring
+
+Authoring uses ordinary `nb` tooling: edit
 `proposals/<change-id>/proposal`, add specification notes under
 `proposals/<change-id>/specifications/`, and check off work items with
 `nb tasks do`.
@@ -122,13 +155,11 @@ exposes one tool per CLI verb (`create`, `display`, `validate`,
 `--notebook` flag is inherited from the parent CLI) and holds that
 notebook for the server lifetime — there is no per-tool override.
 
-```sh
-# Start the MCP server. Notebook resolves from --notebook, falling back
-# to the git-derived project name.
-nbspec serve mcp --notebook myproject
+Pass `--notebook` explicitly, or omit it inside a project checkout so the
+server derives the name from the working directory:
 
-# Or, when run inside the project's git checkout, let the server
-# derive the notebook name from the working directory.
+```sh
+nbspec serve mcp --notebook myproject
 nbspec serve mcp
 ```
 
