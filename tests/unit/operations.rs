@@ -142,15 +142,21 @@ fn classify_note_content_maps_absence_and_failures() {
     assert!(classify_note_content(Ok("# proposal\n\nBody.\n".into()), selector).unwrap());
     assert!(
         !classify_note_content(
-            Err(NbError::CommandFailed(
-                "!\u{0f} Not found: home:proposals/x/proposal.md\n".into()
-            )),
+            Err(NbError::CommandFailed {
+                command: "nb show".into(),
+                stderr: "!\u{0f} Not found: home:proposals/x/proposal.md\n".into(),
+                exit_code: Some(1),
+            }),
             selector
         )
         .unwrap()
     );
     let err = classify_note_content(
-        Err(NbError::CommandFailed("permission denied".into())),
+        Err(NbError::CommandFailed {
+            command: "nb show".into(),
+            stderr: "permission denied".into(),
+            exit_code: Some(1),
+        }),
         selector,
     )
     .unwrap_err();
@@ -166,16 +172,22 @@ fn classify_folder_listing_maps_absence_and_failures() {
     );
     assert_eq!(
         classify_folder_listing(
-            Err(NbError::CommandFailed(
-                "!\u{0f} Not found: home:proposals/x/specifications/\n".into()
-            )),
+            Err(NbError::CommandFailed {
+                command: "nb ls".into(),
+                stderr: "!\u{0f} Not found: home:proposals/x/specifications/\n".into(),
+                exit_code: Some(1),
+            }),
             folder
         )
         .unwrap(),
         "(empty)"
     );
     let err = classify_folder_listing(
-        Err(NbError::CommandFailed("backend exploded".into())),
+        Err(NbError::CommandFailed {
+            command: "nb ls".into(),
+            stderr: "backend exploded".into(),
+            exit_code: Some(1),
+        }),
         folder,
     )
     .unwrap_err();

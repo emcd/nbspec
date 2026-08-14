@@ -9,5 +9,6 @@ mod operations;
 mod rendering;
 mod reviews;
 mod schemata;
+mod transaction_atomicity;
 mod validation;
 mod worknotes;

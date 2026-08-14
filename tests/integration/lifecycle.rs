@@ -713,3 +713,65 @@ fn display_classifies_missing_note_and_folder_as_absence() {
         "full display must tolerate missing proposal note: {full_missing_out}"
     );
 }
+
+/// Regression for reviews/8: the FIRST review on a change must report
+/// the authoritative QUALIFIED note path (`<notebook>:<folder>/<file>`)
+/// in both text and structured output. Before the fix, `review` found
+/// the note op via `outcome.ops.first()`; when the `verdicts/` folder
+/// was created in the same transaction (first review), op zero was the
+/// folder op with no selector, so the reported `note=` fell back to an
+/// unqualified `verdicts/<name>.md`.
+#[test]
+fn first_review_reports_qualified_note_path() {
+    let notebook = ScratchNotebook::create();
+    let project = ScratchProject::create();
+
+    let created = nbspec(
+        &project,
+        &notebook,
+        &["create", CHANGE_ID, "--title", "Demo"],
+    );
+    assert!(created.status.success(), "{}", stderr_of(&created));
+
+    // First review on the change: the `verdicts/` folder does not
+    // exist yet, so it is created inside the same transaction.
+    let reviewed = nbspec(
+        &project,
+        &notebook,
+        &[
+            "review",
+            CHANGE_ID,
+            "--verdict",
+            "approve",
+            "--reviewer",
+            "itest",
+            "--comment",
+            "first review",
+        ],
+    );
+    assert!(reviewed.status.success(), "{}", stderr_of(&reviewed));
+    let output = stdout_of(&reviewed);
+
+    // The text `note=` MUST be the qualified `<notebook>:<path>`
+    // selector, never a bare `verdicts/<name>.md`.
+    let note_line = output
+        .lines()
+        .find_map(|line| line.strip_prefix("note=").map(str::to_string))
+        .expect("review output must contain `note=...` line");
+    let qualified_prefix = format!("{}:proposals/{CHANGE_ID}/verdicts/", notebook.name);
+    assert!(
+        note_line.starts_with(&qualified_prefix),
+        "first-review note= must be qualified as \
+         `<notebook>:proposals/<change>/verdicts/<name>.md`, got: {note_line:?}"
+    );
+
+    // The resolved on-disk file must exist under the notebook.
+    let relative_path = note_line
+        .split_once(':')
+        .map(|(_, rest)| rest)
+        .unwrap_or(&note_line);
+    assert!(
+        notebook.path().join(relative_path).is_file(),
+        "recorded verdict note must exist on disk: {relative_path}"
+    );
+}

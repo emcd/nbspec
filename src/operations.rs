@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use nb_api::{NbClient, NbError};
+use nb_api::{NbClient, NbError, ShowNote};
 use serde_json::{Map, Value, json};
 use thiserror::Error;
 
@@ -163,43 +163,55 @@ pub async fn create(
     let schema = resolve_schema(None, &configuration)?;
     let folder = change_folder(change_id);
 
-    ensure_folder(client, PROPOSALS_FOLDER, notebook).await?;
     if folder_exists(client, &folder, notebook).await {
         return Err(OperationError::AlreadyExists(change_id.to_string()));
     }
-    client.add_folder(&folder, notebook).await?;
-    for subfolder in namespace_folders(&schema) {
-        client
-            .add_folder(&format!("{folder}/{subfolder}"), notebook)
-            .await?;
-    }
 
+    // One transaction materializes the whole namespace under a single
+    // checkpoint: the `proposals/` parent root (when missing), the
+    // change folder, its artifact subfolders, the meta note, the
+    // placeholder notes, and the work todo. Explicit paths are
+    // mandatory because nb-api 0.3.0 one-shot `add_note` auto-names
+    // (ignoring the title argument for the filename), and the change
+    // namespace depends on stable names (`meta.md`, `proposal.md`,
+    // `work.todo.md`, ...). Enqueueing the parent root here (rather
+    // than committing it via a separate `ensure_folder` checkpoint)
+    // keeps first-create atomic: a transaction failure rolls back the
+    // parent root too, so no durable partial folder or checkpoint
+    // survives.
+    let proposals_missing = !folder_exists(client, PROPOSALS_FOLDER, notebook).await;
     let metadata = ChangeMetadata::new(change_id, title, &schema.name, &notebook_name)?;
-    client
-        .add_note(
-            Some(META_NOTE),
-            &render_meta_note(&metadata)?,
-            &[META_TAG.to_string()],
-            Some(&folder),
-            notebook,
-        )
-        .await?;
+    let mut tx = client.transaction(notebook).await?;
+    if proposals_missing {
+        tx.add_folder(PROPOSALS_FOLDER)?;
+    }
+    tx.add_folder(&folder)?;
+    for subfolder in namespace_folders(&schema) {
+        tx.add_folder(&format!("{folder}/{subfolder}"))?;
+    }
+    tx.add_note(
+        &format!("{folder}/{META_NOTE}.md"),
+        Some(META_NOTE),
+        &render_meta_note(&metadata)?,
+        &[META_TAG.to_string()],
+    )?;
     for note in namespace_notes(&schema) {
         let placeholder = format!("<!-- Draft the {note} here. -->\n");
-        client
-            .add_note(Some(&note), &placeholder, &[], Some(&folder), notebook)
-            .await?;
-    }
-    client
-        .add_todo(
-            WORK_NOTE,
-            Some(&format!("Execution checklist for {change_id}.")),
+        tx.add_note(
+            &format!("{folder}/{note}.md"),
+            Some(&note),
+            &placeholder,
             &[],
-            &[META_TAG.to_string()],
-            Some(&folder),
-            notebook,
-        )
-        .await?;
+        )?;
+    }
+    tx.add_todo(
+        &format!("{folder}/{WORK_NOTE}.todo.md"),
+        WORK_NOTE,
+        Some(&format!("Execution checklist for {change_id}.")),
+        &[],
+        &[META_TAG.to_string()],
+    )?;
+    tx.commit().await?;
 
     let text = format!(
         "Created change {change_id} (schema {schema_name}) under {folder}/ in notebook {notebook_name}.",
@@ -240,10 +252,10 @@ pub async fn display(
         for note in namespace_notes(&schema) {
             let selector = format!("{folder}/{note}.md");
             let body = match client.show_note(&selector, notebook).await {
-                Ok(content) => content.trim_end().to_string(),
-                Err(NbError::CommandFailed(msg)) if is_nb_missing_item(&msg, &selector) => {
-                    "(missing)".to_string()
+                Ok(show) => {
+                    show_note_source(&show).unwrap_or_else(|error| format!("(unreadable: {error})"))
                 }
+                Err(NbError::NotFound { .. }) => "(missing)".to_string(),
                 Err(error) => format!("(unreadable: {error})"),
             };
             output.push_str(&format!("\n## {note}\n\n{body}\n"));
@@ -962,32 +974,41 @@ pub async fn review(
     let body = render_verdict_note(&name, &record)?;
     let verdicts_folder = format!("{}/{VERDICTS_FOLDER}", context.folder);
     let notebook = Some(context.notebook_name.as_str());
-    ensure_folder(client, &verdicts_folder, notebook).await?;
-    // Pass `Some(&name)` as the title so `nb --title "{name}"`
-    // materializes the verdict id as both the note's display
-    // title and (because `nb` derives the filename from the
-    // title) the note's on-disk filename. The body deliberately
-    // omits the leading `# {name}` H1 to avoid the duplicate-
-    // title-heading path that `nb-api 0.2.1` rejects; the
-    // display title that `nb` writes from `--title` is the
-    // single source of truth for the note's name. The return
-    // value is `nb`'s authoritative note path; both the text
-    // output and the structured `note` field report it.
-    let created_note = client
-        .add_note(Some(&name), &body, &[], Some(&verdicts_folder), notebook)
-        .await?;
-    // `nb add`'s stdout is `Added: [<index>] <notebook>:<folder>/<file> "<title>"`;
-    // extract the `<notebook>:<folder>/<file>` path (the third
-    // whitespace-separated field) so the structured `note` field
-    // reports the on-disk path that `nb` actually wrote, not the
-    // pre-normalization destination we passed. If the format
-    // doesn't match (e.g., future `nb` change), fall back to the
-    // pre-normalization path so the field is at least populated.
-    let created_note_path = created_note
-        .split_whitespace()
-        .nth(2)
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("{verdicts_folder}/{name}.md"));
+    // nb-api 0.3.0 one-shot `add_note` auto-names (ignores the title
+    // argument for the filename), so the verdict note is written via
+    // a transaction with an explicit path: the on-disk filename is
+    // the verdict id (`{name}.md`). `Some(&name)` is passed as the
+    // title so the note's display title is the verdict id; the body
+    // deliberately omits the leading `# {name}` H1 to avoid the
+    // duplicate-title-heading rejection. The transaction's
+    // `CommitOutcome.ops` carries the authoritative note path, which
+    // both the text output and the structured `note` field report.
+    // The `verdicts/` parent folder (when missing, i.e. first review)
+    // is enqueued in the SAME transaction — never committed by a
+    // separate `ensure_folder` checkpoint — so a failed verdict
+    // transaction rolls the parent root back too and leaves no
+    // durable partial folder or checkpoint.
+    let verdicts_missing = !folder_exists(client, &verdicts_folder, notebook).await;
+    let mut tx = client.transaction(notebook).await?;
+    if verdicts_missing {
+        tx.add_folder(&verdicts_folder)?;
+    }
+    let note_path = format!("{verdicts_folder}/{name}.md");
+    tx.add_note(&note_path, Some(&name), &body, &[])?;
+    let outcome = tx.commit().await?;
+    // Find the verdict-note operation by its explicit final path, not
+    // by `ops.first()`: when the `verdicts/` folder was created in the
+    // same transaction (first review), the folder op is op zero and
+    // carries no selector, so the first op is not the note. The note
+    // op's `selector` is the authoritative qualified
+    // `<notebook>:<folder>/<file>` path; fall back to the explicit
+    // unqualified path only if the op is absent.
+    let created_note_path = outcome
+        .ops
+        .iter()
+        .find(|op| op.path.as_deref() == Some(note_path.as_str()))
+        .and_then(|op| op.selector.clone())
+        .unwrap_or_else(|| note_path.clone());
     let text = format!(
         "Recorded {verdict} verdict by {reviewer} for change {change_id} at gate {gate}.\n\
          aggregate=sha256:{aggregate_hash}\n\
@@ -1041,9 +1062,10 @@ async fn load_metadata(
     folder: &str,
     notebook: Option<&str>,
 ) -> Result<ChangeMetadata, OperationError> {
-    let content = client
+    let show = client
         .show_note(&format!("{folder}/{META_NOTE}.md"), notebook)
         .await?;
+    let content = show_note_body(&show)?;
     Ok(parse_meta_note(&content)?)
 }
 
@@ -1069,18 +1091,6 @@ async fn folder_exists(client: &NbClient, folder: &str, notebook: Option<&str>) 
         .list_notes(Some(folder), &[], Some(1), notebook)
         .await
         .is_ok()
-}
-
-async fn ensure_folder(
-    client: &NbClient,
-    folder: &str,
-    notebook: Option<&str>,
-) -> Result<(), OperationError> {
-    if folder_exists(client, folder, notebook).await {
-        return Ok(());
-    }
-    client.add_folder(folder, notebook).await?;
-    Ok(())
 }
 
 async fn folder_listing(
@@ -1110,7 +1120,7 @@ pub fn classify_folder_listing(
                 Ok(trimmed.to_string())
             }
         }
-        Err(NbError::CommandFailed(msg)) if is_nb_missing_item(&msg, folder) => {
+        Err(NbError::CommandFailed { stderr, .. }) if is_nb_missing_item(&stderr, folder) => {
             Ok("(empty)".to_string())
         }
         Err(error) => Err(error.to_string()),
@@ -1126,9 +1136,29 @@ pub fn classify_note_content(
 ) -> Result<bool, String> {
     match result {
         Ok(content) => Ok(note_has_authored_content(&content)),
-        Err(NbError::CommandFailed(msg)) if is_nb_missing_item(&msg, selector) => Ok(false),
+        Err(NbError::NotFound { .. }) => Ok(false),
+        Err(NbError::CommandFailed { stderr, .. }) if is_nb_missing_item(&stderr, selector) => {
+            Ok(false)
+        }
         Err(error) => Err(error.to_string()),
     }
+}
+
+/// Extracts the body bytes of a structured `show_note` result as a
+/// lossy UTF-8 string. nb-api 0.3.0 `show_note` returns [`ShowNote`]
+/// with the body as a base64 [`nb_api::ByteString`]; the display and
+/// metadata paths operate on the decoded body text.
+fn show_note_body(show: &ShowNote) -> Result<String, NbError> {
+    Ok(String::from_utf8_lossy(&show.body.as_bytes()?).into_owned())
+}
+
+/// Extracts the raw source bytes of a structured `show_note` result
+/// as a lossy UTF-8 string. Unlike the parsed `body` (which excludes
+/// the title heading and tags prefix), `source` is the complete note
+/// file, matching what `nb show` printed before nb-api returned
+/// structured results.
+fn show_note_source(show: &ShowNote) -> Result<String, NbError> {
+    Ok(String::from_utf8_lossy(&show.source.as_bytes()?).into_owned())
 }
 
 /// Recognizes the pinned `nb` 7.24.0 missing-item diagnostic for a
@@ -1235,7 +1265,11 @@ async fn artifact_has_content(
     match artifact_layout(artifact) {
         ArtifactLayout::Note(note) => {
             let selector = format!("{folder}/{note}.md");
-            classify_note_content(client.show_note(&selector, notebook).await, &selector)
+            let content = client
+                .show_note(&selector, notebook)
+                .await
+                .and_then(|show| show_note_body(&show));
+            classify_note_content(content, &selector)
         }
         ArtifactLayout::Folder(subfolder) => {
             let listing =
