@@ -52,6 +52,7 @@ jobs:
         run: npm install -g nb.sh@7.24.0
 
       - name: Put npm global bin on PATH
+        # See tester.yaml: GITHUB_PATH + Windows nb.cmd shim for CreateProcess.
         shell: bash
         run: |
           prefix="$(npm prefix -g)"
@@ -59,6 +60,15 @@ jobs:
           if [[ -d "$prefix/bin" ]]; then
             echo "$prefix/bin" >> "$GITHUB_PATH"
           fi
+          ensure_cmd_shim() {
+            local dir="$1"
+            if [[ -f "$dir/nb" && ! -f "$dir/nb.cmd" ]]; then
+              printf '%s\r\n' '@echo off' 'bash "%~dp0nb" %*' > "$dir/nb.cmd"
+              echo "wrote $dir/nb.cmd"
+            fi
+          }
+          ensure_cmd_shim "$prefix"
+          ensure_cmd_shim "$prefix/bin"
           echo "npm prefix -g: $prefix"
 
       - name: Verify nb is spawnable
@@ -67,6 +77,10 @@ jobs:
           export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
           command -v nb
           nb --version
+          if command -v cmd.exe >/dev/null 2>&1; then
+            cmd.exe //c "where nb"
+            cmd.exe //c "nb --version"
+          fi
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -85,7 +99,10 @@ jobs:
         run: cargo build --release
 
       - name: Test
-        run: cargo test --release
+        shell: bash
+        run: |
+          export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
+          cargo test --release
 
   build-binaries:
     needs: [initialize, test]

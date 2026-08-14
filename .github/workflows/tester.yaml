@@ -68,6 +68,9 @@ jobs:
         # Windows runners often omit the npm global prefix from PATH for
         # subsequent steps; Unix is harmless if already present. Add both
         # `prefix` (Windows shims) and `prefix/bin` (Unix layout).
+        # Rust `Command::new("nb")` on Windows only finds PATHEXT shims
+        # (nb.cmd), not the extensionless bash script npm installs — so
+        # synthesize nb.cmd when missing (issues/9).
         shell: bash
         run: |
           prefix="$(npm prefix -g)"
@@ -75,6 +78,15 @@ jobs:
           if [[ -d "$prefix/bin" ]]; then
             echo "$prefix/bin" >> "$GITHUB_PATH"
           fi
+          ensure_cmd_shim() {
+            local dir="$1"
+            if [[ -f "$dir/nb" && ! -f "$dir/nb.cmd" ]]; then
+              printf '%s\r\n' '@echo off' 'bash "%~dp0nb" %*' > "$dir/nb.cmd"
+              echo "wrote $dir/nb.cmd"
+            fi
+          }
+          ensure_cmd_shim "$prefix"
+          ensure_cmd_shim "$prefix/bin"
           echo "npm prefix -g: $prefix"
           ls -la "$prefix" | head -40 || true
           ls -la "$prefix/bin" 2>/dev/null | head -20 || true
@@ -85,6 +97,11 @@ jobs:
           export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
           command -v nb
           nb --version
+          # Match CreateProcess / PATHEXT discovery used by Rust on Windows.
+          if command -v cmd.exe >/dev/null 2>&1; then
+            cmd.exe //c "where nb"
+            cmd.exe //c "nb --version"
+          fi
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -93,7 +110,12 @@ jobs:
         run: cargo build --release
 
       - name: Test
-        run: cargo test --release
+        # Keep npm global bins first so child processes (NbTestEnv) see nb
+        # even when the runner shell is PowerShell on Windows.
+        shell: bash
+        run: |
+          export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
+          cargo test --release
 
   package:
     needs: [initialize, lint, test]
