@@ -52,7 +52,7 @@ jobs:
         run: npm install -g nb.sh@7.24.0
 
       - name: Put npm global bin on PATH
-        # See tester.yaml: GITHUB_PATH + Windows nb.cmd shim for CreateProcess.
+        # See tester.yaml: GITHUB_PATH + replace npm nb.cmd with Git-Bash launcher.
         shell: bash
         run: |
           prefix="$(npm prefix -g)"
@@ -60,15 +60,30 @@ jobs:
           if [[ -d "$prefix/bin" ]]; then
             echo "$prefix/bin" >> "$GITHUB_PATH"
           fi
-          ensure_cmd_shim() {
+          write_bash_cmd_shim() {
             local dir="$1"
-            if [[ -f "$dir/nb" && ! -f "$dir/nb.cmd" ]]; then
-              printf '%s\r\n' '@echo off' 'bash "%~dp0nb" %*' > "$dir/nb.cmd"
-              echo "wrote $dir/nb.cmd"
-            fi
+            local script="$2"
+            [[ -f "$dir/$script" ]] || return 0
+            {
+              printf '%s\r\n' '@echo off'
+              printf '%s\r\n' 'setlocal'
+              printf '%s\r\n' "set \"SCRIPT=%~dp0${script}\""
+              printf '%s\r\n' 'if exist "C:\Program Files\Git\bin\bash.exe" ('
+              printf '%s\r\n' '  "C:\Program Files\Git\bin\bash.exe" "%SCRIPT%" %*'
+              printf '%s\r\n' '  exit /b %ERRORLEVEL%'
+              printf '%s\r\n' ')'
+              printf '%s\r\n' 'where bash >nul 2>&1 && ('
+              printf '%s\r\n' '  bash "%SCRIPT%" %*'
+              printf '%s\r\n' '  exit /b %ERRORLEVEL%'
+              printf '%s\r\n' ')'
+              printf '%s\r\n' 'echo nb.cmd: bash not found 1>&2'
+              printf '%s\r\n' 'exit /b 1'
+            } > "$dir/${script}.cmd"
+            echo "wrote $dir/${script}.cmd -> bash $script"
           }
-          ensure_cmd_shim "$prefix"
-          ensure_cmd_shim "$prefix/bin"
+          write_bash_cmd_shim "$prefix" "nb"
+          write_bash_cmd_shim "$prefix" "nb.sh"
+          write_bash_cmd_shim "$prefix/bin" "nb"
           echo "npm prefix -g: $prefix"
 
       - name: Verify nb is spawnable
