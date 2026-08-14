@@ -52,7 +52,6 @@ jobs:
         run: npm install -g nb.sh@7.24.0
 
       - name: Put npm global bin on PATH
-        # See tester.yaml: GITHUB_PATH + replace npm nb.cmd with Git-Bash launcher.
         shell: bash
         run: |
           prefix="$(npm prefix -g)"
@@ -60,42 +59,15 @@ jobs:
           if [[ -d "$prefix/bin" ]]; then
             echo "$prefix/bin" >> "$GITHUB_PATH"
           fi
-          write_bash_cmd_shim() {
-            local dir="$1"
-            local script="$2"
-            [[ -f "$dir/$script" ]] || return 0
-            {
-              printf '%s\r\n' '@echo off'
-              printf '%s\r\n' 'setlocal'
-              printf '%s\r\n' "set \"SCRIPT=%~dp0${script}\""
-              printf '%s\r\n' 'if exist "C:\Program Files\Git\bin\bash.exe" ('
-              printf '%s\r\n' '  "C:\Program Files\Git\bin\bash.exe" "%SCRIPT%" %*'
-              printf '%s\r\n' '  exit /b %ERRORLEVEL%'
-              printf '%s\r\n' ')'
-              printf '%s\r\n' 'where bash >nul 2>&1 && ('
-              printf '%s\r\n' '  bash "%SCRIPT%" %*'
-              printf '%s\r\n' '  exit /b %ERRORLEVEL%'
-              printf '%s\r\n' ')'
-              printf '%s\r\n' 'echo nb.cmd: bash not found 1>&2'
-              printf '%s\r\n' 'exit /b 1'
-            } > "$dir/${script}.cmd"
-            echo "wrote $dir/${script}.cmd -> bash $script"
-          }
-          write_bash_cmd_shim "$prefix" "nb"
-          write_bash_cmd_shim "$prefix" "nb.sh"
-          write_bash_cmd_shim "$prefix/bin" "nb"
           echo "npm prefix -g: $prefix"
 
       - name: Verify nb is spawnable
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
           command -v nb
           nb --version
-          if command -v cmd.exe >/dev/null 2>&1; then
-            cmd.exe //c "where nb"
-            cmd.exe //c "nb --version"
-          fi
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -114,10 +86,7 @@ jobs:
         run: cargo build --release
 
       - name: Test
-        shell: bash
-        run: |
-          export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
-          cargo test --release
+        run: cargo test --release
 
   build-binaries:
     needs: [initialize, test]

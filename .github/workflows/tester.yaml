@@ -65,14 +65,10 @@ jobs:
         run: npm install -g nb.sh@7.24.0
 
       - name: Put npm global bin on PATH
-        # Windows runners often omit the npm global prefix from PATH for
-        # subsequent steps; Unix is harmless if already present. Add both
-        # `prefix` (Windows shims) and `prefix/bin` (Unix layout).
-        #
-        # npm's generated nb.cmd tries to run the bash entrypoint with
-        # node and segfaults under cmd/CreateProcess. Rust only finds
-        # PATHEXT shims, so replace nb.cmd with a Git-Bash launcher
-        # (issues/9).
+        # Ensure `nb` is on PATH for Unix live-nb probes and any future
+        # steps. Live NbTestEnv probes are #[cfg(unix)]; Windows CI does
+        # not run them (CreateProcess cannot reliably spawn npm's bash
+        # entrypoint — see issues/9).
         shell: bash
         run: |
           prefix="$(npm prefix -g)"
@@ -80,45 +76,16 @@ jobs:
           if [[ -d "$prefix/bin" ]]; then
             echo "$prefix/bin" >> "$GITHUB_PATH"
           fi
-          write_bash_cmd_shim() {
-            local dir="$1"
-            local script="$2"
-            [[ -f "$dir/$script" ]] || return 0
-            # CRLF batch file; invoke the extensionless bash script via Git Bash.
-            {
-              printf '%s\r\n' '@echo off'
-              printf '%s\r\n' 'setlocal'
-              printf '%s\r\n' "set \"SCRIPT=%~dp0${script}\""
-              printf '%s\r\n' 'if exist "C:\Program Files\Git\bin\bash.exe" ('
-              printf '%s\r\n' '  "C:\Program Files\Git\bin\bash.exe" "%SCRIPT%" %*'
-              printf '%s\r\n' '  exit /b %ERRORLEVEL%'
-              printf '%s\r\n' ')'
-              printf '%s\r\n' 'where bash >nul 2>&1 && ('
-              printf '%s\r\n' '  bash "%SCRIPT%" %*'
-              printf '%s\r\n' '  exit /b %ERRORLEVEL%'
-              printf '%s\r\n' ')'
-              printf '%s\r\n' 'echo nb.cmd: bash not found 1>&2'
-              printf '%s\r\n' 'exit /b 1'
-            } > "$dir/${script}.cmd"
-            echo "wrote $dir/${script}.cmd -> bash $script"
-          }
-          write_bash_cmd_shim "$prefix" "nb"
-          write_bash_cmd_shim "$prefix" "nb.sh"
-          write_bash_cmd_shim "$prefix/bin" "nb"
           echo "npm prefix -g: $prefix"
-          ls -la "$prefix"/nb* 2>/dev/null || true
 
       - name: Verify nb is spawnable
+        # Skip on Windows: no live-nb unit/integration coverage there.
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
           command -v nb
           nb --version
-          # Match CreateProcess / PATHEXT discovery used by Rust on Windows.
-          if command -v cmd.exe >/dev/null 2>&1; then
-            cmd.exe //c "where nb"
-            cmd.exe //c "nb --version"
-          fi
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -127,12 +94,7 @@ jobs:
         run: cargo build --release
 
       - name: Test
-        # Keep npm global bins first so child processes (NbTestEnv) see nb
-        # even when the runner shell is PowerShell on Windows.
-        shell: bash
-        run: |
-          export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
-          cargo test --release
+        run: cargo test --release
 
   package:
     needs: [initialize, lint, test]

@@ -1,8 +1,12 @@
 //! Observes pinned nb 7.24.0 diagnostics through nb-api's hermetic
 //! [`NbTestEnv`] harness. Locks the absence shapes that
-//! `operations::is_nb_missing_item` depends on. Pure classifier edge
-//! cases need no `nb`; live probes require `nb` on `PATH` (CI installs
-//! `nb.sh@7.24.0` and puts the npm global bin on `GITHUB_PATH`).
+//! `operations::is_nb_missing_item` depends on.
+//!
+//! Pure classifier edge cases run on every platform. Live probes are
+//! **Unix-only**: `NbTestEnv` / bare `Command::new("nb")` is not
+//! reliable under Windows CreateProcess (MSYS PATH, npm `nb.cmd` →
+//! node/bash). nb-api CI also skips live-nb on windows-latest
+//! (issues/9; nb-api@notebook 2026-08-14).
 
 use nbspec::operations::is_nb_missing_item;
 
@@ -16,6 +20,7 @@ fn compound_prose_with_embedded_token_is_not_absence() {
     ));
 }
 
+#[cfg(unix)]
 mod live_nb {
     use nb_api::testing::NbTestEnv;
     use nbspec::operations::is_nb_missing_item;
