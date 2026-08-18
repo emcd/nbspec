@@ -47,54 +47,32 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
-      - name: Install Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-
-      - name: Configure git for nb
-        # nb prompts for git user.name/email on first use; without a
-        # TTY, the prompt fails the command. Pre-set global identity
-        # so nb proceeds non-interactively.
-        run: |
-          git config --global user.name "nbspec CI"
-          git config --global user.email "nbspec-ci@users.noreply.github.com"
-          git config --global init.defaultBranch master
-
       - name: Install nb
-        run: npm install -g nb.sh@7.24.0
-
-      - name: Put npm global bin on PATH
-        # Ensure `nb` is on PATH for Unix live-nb probes and any future
-        # steps. Live NbTestEnv probes are #[cfg(unix)]; Windows CI does
-        # not run them (CreateProcess cannot reliably spawn npm's bash
-        # entrypoint — see issues/9).
-        shell: bash
-        run: |
-          prefix="$(npm prefix -g)"
-          echo "$prefix" >> "$GITHUB_PATH"
-          if [[ -d "$prefix/bin" ]]; then
-            echo "$prefix/bin" >> "$GITHUB_PATH"
-          fi
-          echo "npm prefix -g: $prefix"
-
-      - name: Verify nb is spawnable
-        # Skip on Windows: no live-nb unit/integration coverage there.
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
-          command -v nb
-          nb --version
+        # Cross-platform install (Git Bash .cmd launcher on Windows,
+        # symlink on Unix) pinned to the version we develop against,
+        # from nb-api's reusable action. Exposes nb-exec for
+        # NB_API_TEST_NB so NbTestEnv resolves nb deterministically.
+        # Live-nb probes stay #[cfg(unix)] for now: nb 7.24.0 itself
+        # misbehaves under Git Bash on Windows (qualified-selector
+        # path-in-regex; background auto-checkpoint race), independent
+        # of install method. See nb-api:artifacts/2.
+        id: setup-nb
+        uses: emcd/nb-api/.github/actions/setup-nb@v0.3.1
+        with:
+          version: '7.24.0'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build
         run: cargo build --release
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
 
       - name: Test
         run: cargo test --release
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
 
   package:
     needs: [initialize, lint, test]
