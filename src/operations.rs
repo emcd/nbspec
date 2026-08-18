@@ -659,15 +659,14 @@ fn write_change_archive(
         .iter()
         .map(|document| ArchiveEntry {
             path: prefix.join(Path::new(&document.tree_path)),
-            content: document.content.clone(),
+            content: document.content.clone().into_bytes(),
         })
         .collect();
     let meta_path = change_directory.join(format!("{META_NOTE}.md"));
-    let meta_content =
-        std::fs::read_to_string(&meta_path).map_err(|source| OperationError::NoteRead {
-            path: meta_path,
-            source,
-        })?;
+    let meta_content = std::fs::read(&meta_path).map_err(|source| OperationError::NoteRead {
+        path: meta_path,
+        source,
+    })?;
     entries.push(ArchiveEntry {
         path: prefix.join(format!("{META_NOTE}.md")),
         content: meta_content,
@@ -675,7 +674,7 @@ fn write_change_archive(
     if let Some(work_content) = read_work_note(change_directory) {
         entries.push(ArchiveEntry {
             path: prefix.join(format!("{WORK_NOTE}.md")),
-            content: work_content,
+            content: work_content.into_bytes(),
         });
     }
     // Verdict notes ride the archive EXPLICITLY: nothing from the
@@ -698,11 +697,10 @@ fn write_change_archive(
         names.sort();
         for name in names {
             let path = verdicts_directory.join(&name);
-            let content =
-                std::fs::read_to_string(&path).map_err(|source| OperationError::NoteRead {
-                    path: path.clone(),
-                    source,
-                })?;
+            let content = std::fs::read(&path).map_err(|source| OperationError::NoteRead {
+                path: path.clone(),
+                source,
+            })?;
             entries.push(ArchiveEntry {
                 path: prefix.join(VERDICTS_FOLDER).join(&name),
                 content,

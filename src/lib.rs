@@ -10,6 +10,7 @@ pub mod cli;
 pub mod configuration;
 pub mod git_env;
 pub mod grammar;
+pub mod interchange;
 pub mod mcp;
 pub mod merging;
 pub mod operations;

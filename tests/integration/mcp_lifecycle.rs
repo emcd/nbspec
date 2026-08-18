@@ -1,5 +1,5 @@
 //! End-to-end MCP integration test: spawn `nbspec serve mcp` on stdio
-//! inside a scratch project, drive the six tools (create, display,
+//! inside a scratch fixture, drive the six tools (create, display,
 //! validate, render, merge, review) over JSON-RPC, and verify text
 //! + structured responses match the contracts the specification
 //!   pins.
@@ -20,6 +20,7 @@
 //! `nb` away from the notebook's repository and the subprocess exits
 //! before responding. Per `nbspec:issues/4`.
 
+use std::path::Path;
 use std::{
     process::Stdio,
     sync::atomic::{AtomicI64, Ordering},
@@ -322,7 +323,7 @@ async fn mcp_server_drives_change_lifecycle() {
     let fixture = Fixture::new();
     let mut harness = McpHarness::spawn(&fixture).await;
 
-    // List tools: must include exactly the five verbs.
+    // List tools: must include exactly the eight verbs.
     let tools_response = harness.list_tools().await;
     let tools = tools_response["result"]["tools"]
         .as_array()
@@ -333,8 +334,10 @@ async fn mcp_server_drives_change_lifecycle() {
         .collect();
     assert_eq!(
         names,
-        vec!["create", "display", "merge", "render", "review", "validate"],
-        "tools/list must expose exactly the six CLI verbs"
+        vec![
+            "create", "display", "export", "import", "merge", "render", "review", "validate",
+        ],
+        "tools/list must expose exactly the eight CLI verbs"
     );
 
     // create: scaffold the change namespace.
@@ -713,5 +716,215 @@ async fn mcp_server_rejects_unknown_field() {
     assert!(
         text.contains("unknown field `notebook`"),
         "expected unknown-field message, got: {text}"
+    );
+}
+
+/// MCP Owner ring-1 v0.3.0-pause re-review (msg 1265cd09) bounded
+/// correction #2 (live side): the MCP `import` tool's
+/// `structuredContent` must surface typed per-entry payloads
+/// (kind / status / change_id / source_path / prerequisite) for
+/// `ActiveWrite` entries and the `ArchiveWrite` entries. The CLI
+/// subprocess surface emits text only; the MCP surface carries the
+/// structured payload that agents branch on.
+#[tokio::test]
+async fn mcp_import_structured_payload_carries_typed_entries() {
+    let fixture = Fixture::new();
+
+    // Symlink the canonical interchange fixture (one active change
+    // `add-foo/` and one legacy archive tree under
+    // `openspec/changes/archive/legacy/`) into the scratch fixture.
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/import-classic");
+    let fixture_link = fixture.project_root().join("import-classic");
+    std::os::unix::fs::symlink(&fixture_root, &fixture_link)
+        .expect("symlinking fixture should succeed");
+
+    let mut harness = McpHarness::spawn(&fixture).await;
+
+    // import: mixed fixture, no --no-active, no --delete-original.
+    let response = harness
+        .call_tool(
+            "import",
+            json!({
+                "root": fixture_link.display().to_string(),
+            })
+            .as_object()
+            .cloned()
+            .expect("import args object"),
+        )
+        .await;
+    let result = assert_success(&response);
+    let structured = result
+        .get("structuredContent")
+        .expect("import must return structuredContent");
+    let entries = structured
+        .get("entries")
+        .and_then(|v| v.as_array())
+        .expect("structured.entries must be an array");
+
+    // ActiveWrite typed payload (bounded correction #2: live side).
+    let active = entries
+        .iter()
+        .find(|entry| entry.get("kind").and_then(|v| v.as_str()) == Some("active-write"))
+        .expect("an active-write entry must be present in the import structured payload");
+    assert_eq!(
+        active.get("status").and_then(|v| v.as_str()),
+        Some("paused"),
+        "active-write status must be paused: {active}"
+    );
+    assert_eq!(
+        active.get("change_id").and_then(|v| v.as_str()),
+        Some("add-foo"),
+        "active-write change_id must match fixture: {active}"
+    );
+    assert!(
+        active
+            .get("source_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.contains("add-foo"))
+            .unwrap_or(false),
+        "active-write source_path must point at the active source: {active}"
+    );
+    let prerequisite = active
+        .get("prerequisite")
+        .and_then(|v| v.as_str())
+        .expect("active-write prerequisite must be present");
+    assert!(
+        prerequisite.contains("NbApi 0.3"),
+        "active-write prerequisite must name NbApi 0.3: {prerequisite}"
+    );
+
+    // ArchiveWrite typed payload.
+    let archive = entries
+        .iter()
+        .find(|entry| entry.get("kind").and_then(|v| v.as_str()) == Some("archive-write"))
+        .expect("an archive-write entry must be present");
+    assert_eq!(
+        archive.get("change_id").and_then(|v| v.as_str()),
+        Some("legacy"),
+        "archive-write change_id must match fixture: {archive}"
+    );
+    assert!(
+        archive
+            .get("target_path")
+            .and_then(|v| v.as_str())
+            .map(|s| s.contains("legacy.tar.zst"))
+            .unwrap_or(false),
+        "archive-write target_path must point at the tar.zst: {archive}"
+    );
+
+    // pending_deletions is empty (delete_original was not set).
+    let pending = structured
+        .get("pending_deletions")
+        .and_then(|v| v.as_array())
+        .expect("pending_deletions must be an array");
+    assert!(
+        pending.is_empty(),
+        "pending_deletions must be empty without delete_original: {pending:?}"
+    );
+
+    // The archive write is reported in `written`.
+    let written = structured
+        .get("written")
+        .and_then(|v| v.as_array())
+        .expect("written must be an array");
+    assert!(
+        written
+            .iter()
+            .any(|v| v.as_str().map(|s| s.contains("legacy")).unwrap_or(false)),
+        "archive write must be reported in `written`: {written:?}"
+    );
+}
+
+/// MCP Owner ring-1 v0.3.0-pause re-review of 48967d8 (msg
+/// 3fba4c1a) bounded correction B2: the prior pending-deletion
+/// unit test manually injected `pending_deletions` into the plan
+/// fixture (testing `from_plan`'s serialization, not the filter),
+/// and the prior live MCP test omitted `delete_original`. This
+/// test exercises the real `build_import_plan` filter end-to-end:
+/// dry_run=true + delete_original=true against the mixed fixture
+/// (one active `add-foo`, one archive `legacy`). Dry-run writes
+/// nothing, so the fixture is not mutated; the structured payload
+/// carries the plan's pending_deletions field directly from
+/// `build_import_plan`'s filter. Asserts the paused active source
+/// is excluded and only the archive source appears.
+#[tokio::test]
+async fn mcp_import_dry_run_delete_original_exercises_real_pending_deletions_filter() {
+    let fixture = Fixture::new();
+
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/import-classic");
+    let fixture_link = fixture.project_root().join("import-classic");
+    std::os::unix::fs::symlink(&fixture_root, &fixture_link)
+        .expect("symlinking fixture should succeed");
+
+    let mut harness = McpHarness::spawn(&fixture).await;
+
+    let response = harness
+        .call_tool(
+            "import",
+            json!({
+                "root": fixture_link.display().to_string(),
+                "dry_run": true,
+                "delete_original": true,
+            })
+            .as_object()
+            .cloned()
+            .expect("import args object"),
+        )
+        .await;
+    let result = assert_success(&response);
+    let structured = result
+        .get("structuredContent")
+        .expect("import dry-run must return structuredContent");
+
+    // dry_run must be reflected in the structured payload.
+    assert_eq!(
+        structured.get("dry_run").and_then(|v| v.as_bool()),
+        Some(true),
+        "dry_run must be true in structured payload: {structured}"
+    );
+
+    // The real filter output: pending_deletions must contain the
+    // archive source and must NOT contain the paused active source.
+    let pending = structured
+        .get("pending_deletions")
+        .and_then(|v| v.as_array())
+        .expect("pending_deletions must be an array");
+    assert_eq!(
+        pending.len(),
+        1,
+        "exactly the archive source must be pending deletion (paused active excluded): {pending:?}"
+    );
+    let pending_path = pending[0]
+        .as_str()
+        .expect("pending entry must be a string path");
+    assert!(
+        pending_path.contains("legacy"),
+        "pending deletion must be the archive source: {pending_path}"
+    );
+    assert!(
+        !pending_path.contains("add-foo"),
+        "paused active source must NOT appear in pending_deletions: {pending_path}"
+    );
+    assert!(
+        !pending
+            .iter()
+            .any(|v| v.as_str().map(|s| s.contains("add-foo")).unwrap_or(false)),
+        "no pending deletion entry may reference the active source: {pending:?}"
+    );
+
+    // delete_original flag is reflected for downstream consumers.
+    assert_eq!(
+        structured.get("delete_original").and_then(|v| v.as_bool()),
+        Some(true),
+        "delete_original must be true in structured payload: {structured}"
+    );
+
+    // The dry-run must not have written any archive.
+    assert!(
+        !fixture
+            .project_root()
+            .join("documentation/archives/legacy.tar.zst")
+            .exists(),
+        "dry-run must not write the archive"
     );
 }

@@ -138,6 +138,19 @@ stderr, each anchored to a notebook note rather than a filesystem path.
 
 ```sh
 nbspec validate add-foo
+
+# Filesystem <-> notebook change interchange (v0.3.0). Active change
+# trees are detected and emitted as ActiveWrite entries with a
+# "paused" status: the v0.3.0 execute arm is a no-op that leaves the
+# source filesystem tree untouched, pending an NbApi 0.3 notebook
+# transaction/checkpoint primitive (the implementation is paused, not
+# deferred to a future version). Legacy archive trees under
+# openspec/changes/archive/ become deterministic
+# documentation/archives/<change-id>.tar.zst archives (the v0.3.0
+# default write path). --delete-original is gated on a clean
+# round-trip proof; paused active sources are never deleted.
+nbspec import path/to/source
+nbspec export add-foo path/to/target
 ```
 
 ### Authoring
@@ -151,15 +164,25 @@ Authoring uses ordinary `nb` tooling: edit
 
 `nbspec serve mcp` starts a Model Context Protocol server on stdio that
 exposes one tool per CLI verb (`create`, `display`, `validate`,
-`render`, `merge`, `review`). The notebook resolves once at startup (the
+`render`, `merge`, `review`, `import`, `export`). The notebook resolves once at startup (the
 `--notebook` flag is inherited from the parent CLI) and holds that
 notebook for the server lifetime — there is no per-tool override.
 
-Pass `--notebook` explicitly, or omit it inside a project checkout so the
-server derives the name from the working directory:
+The `import` and `export` tools surfaced in v0.3.0 carry a `paused`
+status for active change trees: the structured payload records
+`kind="active-write"`, `status="paused"`, and the prerequisite
+(NbApi 0.3 notebook transaction/checkpoint primitive). Legacy
+archive trees are converted to deterministic tar.zst archives as
+the v0.3.0 default write path. See `nbspec import --help` and
+`documentation/agents/nbspec.md` for the full pause contract.
 
 ```sh
+# Start the MCP server. Notebook resolves from --notebook, falling back
+# to the git-derived project name.
 nbspec serve mcp --notebook myproject
+
+# Or, when run inside the project's git checkout, let the server
+# derive the notebook name from the working directory.
 nbspec serve mcp
 ```
 

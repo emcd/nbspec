@@ -64,6 +64,11 @@ similar = "2.6"
 tar = "0.4"
 zstd = "0.13"
 
+# FFI for `renameat2(RENAME_NOREPLACE)` on Linux. Already in the
+# transitive tree via tokio; promoted to a direct dependency for
+# the atomic-no-replace publication contract.
+libc = "0.2"
+
 # Error handling
 anyhow = "1.0"
 thiserror = "2.0"
@@ -75,3 +80,15 @@ thiserror = "2.0"
 nb-api = { version = "0.3.1", features = ["testing", "testing-tokio"] }
 
 [workspace]
+
+# v0.3.0 ships without active filesystem-tree ingest: the unsafe
+# per-note nb-api mutations that would commit staging paths into
+# the notebook Git worktree are paused pending an NbApi 0.3
+# notebook transaction/checkpoint primitive with Git/index
+# locking. The v0.3.0 binary emits `PlanEntry::ActiveWrite` for
+# each detected active tree and the execute arm is a no-op that
+# leaves the source filesystem tree untouched. The pre-pause
+# `import_active_tree` body is preserved in source under
+# `#[cfg(any())]` gates and in git history; the 0.3.0-resume
+# cycle restores it once NbApi 0.3 ships. There is no public
+# Cargo feature for active import.

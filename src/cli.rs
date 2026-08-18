@@ -7,6 +7,7 @@
 //! tool vocabulary the MCP surface exposes.
 
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 use crate::operations::OperationError;
 use crate::reviews::VerdictValue;
@@ -125,6 +126,72 @@ pub enum Command {
         /// empty value is refused, never treated as absence.
         #[arg(long)]
         reviewer: Option<String>,
+    },
+
+    /// Brings a filesystem OpenSpec-style change tree into the
+    /// notebook-resident model.
+    ///
+    /// Walks `<root>` for active change trees
+    /// (`<root>/<change-id>/{proposal.md,specs/<cap>/spec.md,
+    /// design.md,tasks.md,decisions/<adr>.md}`) and legacy archive
+    /// trees (`<root>/openspec/changes/archive/<change-id>/...`).
+    /// Active trees are emitted as `ActiveWrite` entries with a
+    /// `paused` status: the v0.3.0 execute arm is a no-op that
+    /// leaves the source filesystem tree untouched, pending an
+    /// NbApi 0.3 notebook transaction/checkpoint primitive. Legacy
+    /// archives become deterministic
+    /// `documentation/archives/<change-id>.tar.zst` archives. All
+    /// refusals are collected before any write.
+    Import {
+        /// Filesystem root to scan for change trees.
+        root: PathBuf,
+
+        /// Emit the plan only; do not write notes or archives and
+        /// do not delete the source filesystem tree.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Authorize deletion of the source filesystem tree after
+        /// a clean round-trip proof. Refused absent a clean proof.
+        #[arg(long)]
+        delete_original: bool,
+
+        /// Skip active change tree detection (default: detect
+        /// both). In v0.3.0 the active execute arm is a no-op;
+        /// this flag emits a `Skip` entry instead of a paused
+        /// `ActiveWrite` entry for each detected active tree.
+        #[arg(long)]
+        no_active: bool,
+
+        /// Skip legacy archive tree ingestion (default: ingest both).
+        #[arg(long)]
+        no_archives: bool,
+    },
+
+    /// Writes a notebook change back out as a filesystem OpenSpec
+    /// tree.
+    ///
+    /// Inverse of `import`: walks the notebook change and writes
+    /// `<target>/<change-id>/{proposal.md,specs/<cap>/spec.md,
+    /// design.md,tasks.md,decisions/<adr>.md}`. The `work` todo
+    /// note is reconstructed as `tasks.md`; verdicts do not export.
+    /// Refuses to overwrite an existing target unless `--overwrite`
+    /// is given.
+    Export {
+        /// Change identifier (notebook folder under `proposals/`).
+        change_id: String,
+
+        /// Filesystem directory under which to write the change tree.
+        target: PathBuf,
+
+        /// Emit the plan only; do not write the filesystem tree.
+        #[arg(long)]
+        dry_run: bool,
+
+        /// Overwrite an existing `<target>/<change-id>/` filesystem
+        /// tree without refusing.
+        #[arg(long)]
+        overwrite: bool,
     },
 
     /// Runs a long-running service exposed by nbspec.

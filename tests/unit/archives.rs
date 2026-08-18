@@ -21,7 +21,7 @@ fn unique_temp_root(label: &str) -> PathBuf {
 fn entry(path: &str, content: &str) -> ArchiveEntry {
     ArchiveEntry {
         path: PathBuf::from(path),
-        content: content.to_string(),
+        content: content.as_bytes().to_vec(),
     }
 }
 

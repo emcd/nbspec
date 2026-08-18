@@ -2,6 +2,7 @@ mod archives;
 mod changes;
 mod cli;
 mod grammar;
+mod interchange;
 mod mcp;
 mod merging;
 mod nb_diagnostics;

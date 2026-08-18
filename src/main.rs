@@ -4,6 +4,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use nbspec::cli::{Cli, Command, ServeService, failure_report};
+use nbspec::interchange::{self, ExportOptions, ImportOptions};
 use nbspec::mcp::{self, McpConfiguration};
 use nbspec::operations::{self, OperationError};
 
@@ -126,6 +127,44 @@ async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), Dispa
                 (*verdict).into(),
                 reviewer.as_deref(),
                 comment.as_deref(),
+            )
+            .await
+        }
+        Command::Import {
+            root,
+            dry_run,
+            delete_original,
+            no_active,
+            no_archives,
+        } => {
+            interchange::import(
+                &client,
+                notebook,
+                root,
+                ImportOptions {
+                    dry_run: *dry_run,
+                    delete_original: *delete_original,
+                    no_active: *no_active,
+                    no_archives: *no_archives,
+                },
+            )
+            .await
+        }
+        Command::Export {
+            change_id,
+            target,
+            dry_run,
+            overwrite,
+        } => {
+            interchange::export(
+                &client,
+                notebook,
+                change_id,
+                target,
+                ExportOptions {
+                    dry_run: *dry_run,
+                    overwrite: *overwrite,
+                },
             )
             .await
         }

@@ -107,3 +107,50 @@ pub struct MergeArgs {
     #[serde(default)]
     pub force: bool,
 }
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ImportArgs {
+    /// Filesystem root to scan for change trees.
+    pub root: std::path::PathBuf,
+
+    /// Emit the plan only; do not write notes or archives and do
+    /// not delete the source filesystem tree.
+    #[serde(default)]
+    pub dry_run: bool,
+
+    /// Authorize deletion of the source filesystem tree after a
+    /// clean round-trip proof. Refused absent a clean proof.
+    #[serde(default)]
+    pub delete_original: bool,
+
+    /// Skip active change tree detection (default: detect both).
+    /// In v0.3.0 the active execute arm is a no-op; this flag
+    /// emits a `Skip` entry instead of a paused `ActiveWrite`
+    /// entry for each detected active tree.
+    #[serde(default)]
+    pub no_active: bool,
+
+    /// Skip legacy archive tree ingestion (default: ingest both).
+    #[serde(default)]
+    pub no_archives: bool,
+}
+
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExportArgs {
+    /// Change identifier (notebook folder under `proposals/`).
+    pub change_id: String,
+
+    /// Filesystem directory under which to write the change tree.
+    pub target: std::path::PathBuf,
+
+    /// Emit the plan only; do not write the filesystem tree.
+    #[serde(default)]
+    pub dry_run: bool,
+
+    /// Overwrite an existing `<target>/<change-id>/` filesystem
+    /// tree without refusing.
+    #[serde(default)]
+    pub overwrite: bool,
+}

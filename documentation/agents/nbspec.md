@@ -95,10 +95,15 @@ this file is the procedure reference, not the implementation.
 - `nbspec review <change-id>` — record a verdict against a rendered set.
 - `nbspec validate <change-id>` — OpenSpec grammar validation with
   note-level diagnostics.
-- `nbspec import <path>` (v0.3.0, forthcoming) — filesystem → notebook
-  change interchange (and legacy archive tree conversion to
-  deterministic tar.zst).
-- `nbspec export <change-id> <path>` (v0.3.0, forthcoming) — notebook →
+- `nbspec import <path>` (v0.3.0) — filesystem → notebook
+  change interchange. Active change trees are detected and
+  emitted as `ActiveWrite` entries with a `paused` status: the
+  v0.3.0 execute arm is a no-op that leaves the source
+  filesystem tree untouched, pending an NbApi 0.3 notebook
+  transaction/checkpoint primitive. Legacy archive trees become
+  deterministic `documentation/archives/<change-id>.tar.zst`
+  archives (the v0.3.0 default write path).
+- `nbspec export <change-id> <path>` (v0.3.0) — notebook →
   filesystem change interchange.
 - `nbspec serve mcp` — start the MCP server (one tool per CLI verb).
 

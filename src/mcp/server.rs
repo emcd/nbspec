@@ -21,7 +21,8 @@ use rmcp::{
 
 use crate::mcp::errors::{operation_result, validation_result};
 use crate::mcp::params::{
-    CreateArgs, DisplayArgs, MergeArgs, RenderArgs, ReviewArgs, ValidateArgs,
+    CreateArgs, DisplayArgs, ExportArgs, ImportArgs, MergeArgs, RenderArgs, ReviewArgs,
+    ValidateArgs,
 };
 
 /// Configuration provided when booting the MCP stdio service.
@@ -296,7 +297,7 @@ impl McpServer {
                        any subsequent edit stales it. Each verdict is \
                        one immutable note under the change's verdicts/ \
                        subfolder; recording never modifies existing \
-                       verdicts and never transitions lifecycle. A \
+                       verdicts and never transitions change lifecycle. A \
                        revise verdict REQUIRES a comment naming the \
                        findings. The comment string is recorded \
                        verbatim."
@@ -317,6 +318,92 @@ impl McpServer {
         .await;
         operation_result(output)
     }
+
+    /// Brings a filesystem OpenSpec-style change tree into the
+    /// notebook-resident model (CLI: `nbspec import <root>`).
+    ///
+    /// Detects active change trees and legacy archive trees under
+    /// `root`. Active trees are emitted with a `paused` status:
+    /// the v0.3.0 execute arm is a no-op that leaves the source
+    /// filesystem tree untouched, pending an NbApi 0.3 notebook
+    /// transaction/checkpoint primitive. Legacy archives become
+    /// deterministic `documentation/archives/<change-id>.tar.zst`
+    /// archives. `--delete-original` is gated on a clean
+    /// round-trip proof. All refusals are collected before any
+    /// write.
+    #[tool(
+        name = "import",
+        description = "Brings a filesystem OpenSpec-style change tree \
+                       into the notebook-resident model. Maps to the \
+                       `nbspec import` CLI verb. Active change trees \
+                       are detected and emitted with a `paused` \
+                       status — v0.3.0 does not mutate the notebook \
+                       for active trees (the source is left \
+                       untouched), pending an NbApi 0.3 notebook \
+                       transaction/checkpoint primitive. Legacy \
+                       archive trees become deterministic \
+                       `documentation/archives/<change-id>.tar.zst` \
+                       archives. All refusals are collected before \
+                       any write. Plan-then-execute by default; \
+                       dry_run=true emits the plan without effect."
+    )]
+    async fn import(
+        &self,
+        Parameters(args): Parameters<ImportArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let output = crate::interchange::import(
+            &self.context.client,
+            Some(&self.context.notebook),
+            &args.root,
+            crate::interchange::ImportOptions {
+                dry_run: args.dry_run,
+                delete_original: args.delete_original,
+                no_active: args.no_active,
+                no_archives: args.no_archives,
+            },
+        )
+        .await;
+        operation_result(output)
+    }
+
+    /// Writes a notebook change back out as a filesystem OpenSpec
+    /// tree (CLI: `nbspec export <change-id> <target>`).
+    ///
+    /// Inverse of `import`: notebook `proposal`, `specifications/`,
+    /// `designs/`, and `decisions/` notes become a filesystem tree;
+    /// the `work` todo note is reconstructed as `tasks.md`. Verdicts
+    /// do not export. Refuses to overwrite an existing
+    /// `<target>/<change-id>/` tree unless `overwrite=true`.
+    #[tool(
+        name = "export",
+        description = "Writes a notebook change back out as a \
+                       filesystem OpenSpec tree. Maps to the `nbspec \
+                       export` CLI verb. Inverse of `import`: \
+                       notebook notes become a filesystem tree, and \
+                       the `work` todo note is reconstructed as \
+                       `tasks.md`. Verdicts do not export (they are \
+                       notebook-resident process records). Refuses to \
+                       overwrite an existing target unless \
+                       overwrite=true. Plan-then-execute by default; \
+                       dry_run=true emits the plan without effect."
+    )]
+    async fn export(
+        &self,
+        Parameters(args): Parameters<ExportArgs>,
+    ) -> Result<CallToolResult, McpError> {
+        let output = crate::interchange::export(
+            &self.context.client,
+            Some(&self.context.notebook),
+            &args.change_id,
+            &args.target,
+            crate::interchange::ExportOptions {
+                dry_run: args.dry_run,
+                overwrite: args.overwrite,
+            },
+        )
+        .await;
+        operation_result(output)
+    }
 }
 
 #[tool_handler]
@@ -325,14 +412,16 @@ impl rmcp::ServerHandler for McpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
             "nbspec MCP server wrapping the operations library. \
              Exposes one tool per CLI verb: create, display, validate, \
-             render, merge, review. The notebook is resolved once at \
-             startup (--notebook flag wins; otherwise git-derived) and \
-             held for the server lifetime; per-call notebook overrides \
-             are not honored. `render` and `merge` mutate the scratch \
-             workspace and the repository working tree respectively; \
-             use `validate` to dry-run a change before either, and \
-             `review` to record the content-bound verdict that merge's \
-             review gate requires.",
+             render, merge, review, import, export. The notebook is \
+             resolved once at startup (--notebook flag wins; \
+             otherwise git-derived) and held for the server \
+             lifetime; per-call notebook overrides are not honored. \
+             `render` and `merge` mutate the scratch workspace and \
+             the repository working tree respectively; `import` and \
+             `export` perform filesystem ↔ notebook change \
+             interchange. Use `validate` to dry-run a change before \
+             either, and `review` to record the content-bound \
+             verdict that merge's review gate requires.",
         )
     }
 }
