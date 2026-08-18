@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::interchange::export::{build_export_plan, execute_export_plan};
-use crate::interchange::plan::{InterchangeError, RoundTripProof};
+use crate::interchange::plan::RoundTripProof;
 use crate::interchange::proof::round_trip_proof;
 use crate::worknotes::parse_work_note;
 
@@ -11,25 +11,46 @@ pub async fn execute_active_via_transaction(
     change_id: &str,
     source_path: &Path,
 ) -> Result<(), crate::operations::OperationError> {
+    let tx = build_active_transaction(client, notebook_name, change_id, source_path).await?;
+    let _outcome = tx.commit().await.map_err(|e| match &e {
+        nb_api::NbError::DirtyBaseline { .. }
+        | nb_api::NbError::PathCollision { .. }
+        | nb_api::NbError::PathIgnored { .. }
+        | nb_api::NbError::UnsupportedStructure { .. }
+        | nb_api::NbError::DuplicateTitleHeading { .. } => {
+            crate::operations::OperationError::from(e)
+        }
+        _ => crate::operations::OperationError::from(e),
+    })?;
+    Ok(())
+}
+
+async fn build_active_transaction(
+    client: &nb_api::NbClient,
+    notebook_name: &str,
+    change_id: &str,
+    source_path: &Path,
+) -> Result<nb_api::Transaction, crate::operations::OperationError> {
     use crate::interchange::detect::{
         ACTIVE_DECISIONS_DIR, ACTIVE_DESIGN_FILE, ACTIVE_PROPOSAL_FILE, ACTIVE_SPECS_DIR,
         ACTIVE_TASKS_FILE,
     };
     use nb_api::NoteTarget;
 
-    // Collect source tree into a single Transaction.
     let mut tx = client
         .transaction(Some(notebook_name))
         .await
         .map_err(crate::operations::OperationError::from)?;
 
-    // 1. proposal.md — required, normalize H1 to selector-stable form.
+    // proposal.md
     let proposal_path = source_path.join(ACTIVE_PROPOSAL_FILE);
     let proposal_raw = std::fs::read_to_string(&proposal_path).map_err(|source| {
-        crate::operations::OperationError::from(InterchangeError::SourceRead {
-            path: proposal_path.clone(),
-            source,
-        })
+        crate::operations::OperationError::from(
+            crate::interchange::plan::InterchangeError::SourceRead {
+                path: proposal_path.clone(),
+                source,
+            },
+        )
     })?;
     let proposal_content = {
         let expected = format!("# {change_id}");
@@ -51,27 +72,35 @@ pub async fn execute_active_via_transaction(
             }
         }
     };
-    let proposal_nb_path = format!("proposals/{change_id}/proposal.md");
     tx.add_folder(&format!("proposals/{change_id}"))
         .map_err(crate::operations::OperationError::from)?;
-    tx.add_note(&proposal_nb_path, Some("proposal"), &proposal_content, &[])
-        .map_err(crate::operations::OperationError::from)?;
+    tx.add_note(
+        &format!("proposals/{change_id}/proposal.md"),
+        Some("proposal"),
+        &proposal_content,
+        &[],
+    )
+    .map_err(crate::operations::OperationError::from)?;
 
-    // 2. specs/<cap>/spec.md — each capability as specifications/<cap>.md
+    // specs
     let specs_root = source_path.join(ACTIVE_SPECS_DIR);
     if specs_root.is_dir() {
         let mut caps: Vec<String> = Vec::new();
         for entry in std::fs::read_dir(&specs_root).map_err(|source| {
-            crate::operations::OperationError::from(InterchangeError::SourceRead {
-                path: specs_root.clone(),
-                source,
-            })
-        })? {
-            let entry = entry.map_err(|source| {
-                crate::operations::OperationError::from(InterchangeError::SourceRead {
+            crate::operations::OperationError::from(
+                crate::interchange::plan::InterchangeError::SourceRead {
                     path: specs_root.clone(),
                     source,
-                })
+                },
+            )
+        })? {
+            let entry = entry.map_err(|source| {
+                crate::operations::OperationError::from(
+                    crate::interchange::plan::InterchangeError::SourceRead {
+                        path: specs_root.clone(),
+                        source,
+                    },
+                )
             })?;
             if !entry.path().is_dir() {
                 continue;
@@ -91,36 +120,38 @@ pub async fn execute_active_via_transaction(
                 continue;
             }
             let content = std::fs::read_to_string(&spec_file).map_err(|source| {
-                crate::operations::OperationError::from(InterchangeError::SourceRead {
-                    path: spec_file.clone(),
-                    source,
-                })
+                crate::operations::OperationError::from(
+                    crate::interchange::plan::InterchangeError::SourceRead {
+                        path: spec_file.clone(),
+                        source,
+                    },
+                )
             })?;
-            // Strip leading H1 for notebook form (title is the capability name).
-            let body = content
-                .lines()
-                .skip_while(|l| l.trim().is_empty())
-                .collect::<Vec<_>>()
-                .join("\n");
-            let stripped = if body.starts_with("# ") {
-                body.lines().skip(1).collect::<Vec<_>>().join("\n")
+            let stripped = if content.trim_start().starts_with("# ") {
+                content.lines().skip(1).collect::<Vec<_>>().join("\n")
             } else {
                 content.clone()
             };
-            let nb_path = format!("proposals/{change_id}/specifications/{cap}.md");
-            tx.add_note(&nb_path, Some(&cap), &stripped, &[])
-                .map_err(crate::operations::OperationError::from)?;
+            tx.add_note(
+                &format!("proposals/{change_id}/specifications/{cap}.md"),
+                Some(&cap),
+                &stripped,
+                &[],
+            )
+            .map_err(crate::operations::OperationError::from)?;
         }
     }
 
-    // 3. design.md → designs/main.md
+    // design
     let design_path = source_path.join(ACTIVE_DESIGN_FILE);
     if design_path.is_file() {
         let design_raw = std::fs::read_to_string(&design_path).map_err(|source| {
-            crate::operations::OperationError::from(InterchangeError::SourceRead {
-                path: design_path.clone(),
-                source,
-            })
+            crate::operations::OperationError::from(
+                crate::interchange::plan::InterchangeError::SourceRead {
+                    path: design_path.clone(),
+                    source,
+                },
+            )
         })?;
         let stripped = if design_raw.trim_start().starts_with("# ") {
             design_raw.lines().skip(1).collect::<Vec<_>>().join("\n")
@@ -138,21 +169,25 @@ pub async fn execute_active_via_transaction(
         .map_err(crate::operations::OperationError::from)?;
     }
 
-    // 4. decisions/*.md → decisions/<name>.md
+    // decisions
     let decisions_root = source_path.join(ACTIVE_DECISIONS_DIR);
     if decisions_root.is_dir() {
         let mut names: Vec<(String, PathBuf)> = Vec::new();
         for entry in std::fs::read_dir(&decisions_root).map_err(|source| {
-            crate::operations::OperationError::from(InterchangeError::SourceRead {
-                path: decisions_root.clone(),
-                source,
-            })
-        })? {
-            let entry = entry.map_err(|source| {
-                crate::operations::OperationError::from(InterchangeError::SourceRead {
+            crate::operations::OperationError::from(
+                crate::interchange::plan::InterchangeError::SourceRead {
                     path: decisions_root.clone(),
                     source,
-                })
+                },
+            )
+        })? {
+            let entry = entry.map_err(|source| {
+                crate::operations::OperationError::from(
+                    crate::interchange::plan::InterchangeError::SourceRead {
+                        path: decisions_root.clone(),
+                        source,
+                    },
+                )
             })?;
             let path = entry.path();
             if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
@@ -169,30 +204,38 @@ pub async fn execute_active_via_transaction(
         }
         for (name, path) in names {
             let content = std::fs::read_to_string(&path).map_err(|source| {
-                crate::operations::OperationError::from(InterchangeError::SourceRead {
-                    path: path.clone(),
-                    source,
-                })
+                crate::operations::OperationError::from(
+                    crate::interchange::plan::InterchangeError::SourceRead {
+                        path: path.clone(),
+                        source,
+                    },
+                )
             })?;
             let stripped = if content.trim_start().starts_with("# ") {
                 content.lines().skip(1).collect::<Vec<_>>().join("\n")
             } else {
                 content.clone()
             };
-            let nb_path = format!("proposals/{change_id}/decisions/{name}.md");
-            tx.add_note(&nb_path, Some(&name), &stripped, &[])
-                .map_err(crate::operations::OperationError::from)?;
+            tx.add_note(
+                &format!("proposals/{change_id}/decisions/{name}.md"),
+                Some(&name),
+                &stripped,
+                &[],
+            )
+            .map_err(crate::operations::OperationError::from)?;
         }
     }
 
-    // 5. tasks.md → work.todo.md (explicit path, preserve checked state via mark_task_done)
+    // tasks → work.todo.md
     let tasks_path = source_path.join(ACTIVE_TASKS_FILE);
     if tasks_path.is_file() {
         let tasks_raw = std::fs::read_to_string(&tasks_path).map_err(|source| {
-            crate::operations::OperationError::from(InterchangeError::SourceRead {
-                path: tasks_path.clone(),
-                source,
-            })
+            crate::operations::OperationError::from(
+                crate::interchange::plan::InterchangeError::SourceRead {
+                    path: tasks_path.clone(),
+                    source,
+                },
+            )
         })?;
         let checklist =
             parse_work_note(&tasks_raw).map_err(crate::operations::OperationError::WorkNote)?;
@@ -204,7 +247,6 @@ pub async fn execute_active_via_transaction(
         let todo_path = format!("proposals/{change_id}/work.todo.md");
         tx.add_todo(&todo_path, &todo_title, None, &task_texts, &[])
             .map_err(crate::operations::OperationError::from)?;
-        // Preserve checked state: Transaction's add_todo starts all unchecked.
         for (idx, item) in checklist.items.iter().enumerate() {
             if item.complete {
                 let task_number = (idx + 1) as u32;
@@ -219,7 +261,7 @@ pub async fn execute_active_via_transaction(
         }
     }
 
-    // 6. meta.json control-plane note (migrated: true)
+    // meta
     let meta_content = {
         let payload = serde_json::json!({
             "meta_version": 1,
@@ -247,23 +289,7 @@ pub async fn execute_active_via_transaction(
     )
     .map_err(crate::operations::OperationError::from)?;
 
-    // Single checkpoint.
-    let outcome = tx.commit().await.map_err(|e| match &e {
-        nb_api::NbError::DirtyBaseline { .. }
-        | nb_api::NbError::PathCollision { .. }
-        | nb_api::NbError::PathIgnored { .. }
-        | nb_api::NbError::UnsupportedStructure { .. }
-        | nb_api::NbError::DuplicateTitleHeading { .. } => {
-            // Map to OperationError via From, caller will surface as write failure
-            crate::operations::OperationError::from(e)
-        }
-        _ => crate::operations::OperationError::from(e),
-    })?;
-    // CommitOutcome carries commit_created and ops; success is at least one op or folder creation.
-    if !outcome.commit_created && outcome.ops.is_empty() {
-        // No-op commit is still success for empty active tree (should not happen as proposal ensures at least one write).
-    }
-    Ok(())
+    Ok(tx)
 }
 
 pub async fn preflight_active_source(
@@ -273,9 +299,6 @@ pub async fn preflight_active_source(
     source_path: &Path,
 ) -> Result<(), crate::operations::OperationError> {
     use crate::changes::validate_change_id;
-    use crate::interchange::detect::{
-        ACTIVE_DECISIONS_DIR, ACTIVE_PROPOSAL_FILE, ACTIVE_SPECS_DIR, ACTIVE_TASKS_FILE,
-    };
 
     // Validate change_id shape.
     validate_change_id(change_id).map_err(|_| {
@@ -303,55 +326,10 @@ pub async fn preflight_active_source(
         }
     }
 
-    // Validate proposal.md readable and H1 normalizable.
-    let proposal_path = source_path.join(ACTIVE_PROPOSAL_FILE);
-    let _proposal_raw = std::fs::read_to_string(&proposal_path).map_err(|source| {
-        crate::operations::OperationError::from(
-            crate::interchange::plan::InterchangeError::SourceRead {
-                path: proposal_path.clone(),
-                source,
-            },
-        )
-    })?;
-
-    // Validate tasks.md if present.
-    let tasks_path = source_path.join(ACTIVE_TASKS_FILE);
-    if tasks_path.is_file() {
-        let tasks_raw = std::fs::read_to_string(&tasks_path).map_err(|source| {
-            crate::operations::OperationError::from(
-                crate::interchange::plan::InterchangeError::SourceRead {
-                    path: tasks_path.clone(),
-                    source,
-                },
-            )
-        })?;
-        parse_work_note(&tasks_raw).map_err(crate::operations::OperationError::WorkNote)?;
-    }
-
-    // Validate specs and decisions are readable (not their content, just that they can be listed).
-    let specs_root = source_path.join(ACTIVE_SPECS_DIR);
-    if specs_root.is_dir() {
-        let _ = std::fs::read_dir(&specs_root).map_err(|source| {
-            crate::operations::OperationError::from(
-                crate::interchange::plan::InterchangeError::SourceRead {
-                    path: specs_root.clone(),
-                    source,
-                },
-            )
-        })?;
-    }
-    let decisions_root = source_path.join(ACTIVE_DECISIONS_DIR);
-    if decisions_root.is_dir() {
-        let _ = std::fs::read_dir(&decisions_root).map_err(|source| {
-            crate::operations::OperationError::from(
-                crate::interchange::plan::InterchangeError::SourceRead {
-                    path: decisions_root.clone(),
-                    source,
-                },
-            )
-        })?;
-    }
-
+    // Build the full Transaction plan without committing — this validates
+    // every spec/decision read and every add_note/add_todo path (including
+    // DuplicateTitleHeading, PathCollision, etc.). Drop without commit.
+    let _tx = build_active_transaction(client, notebook_name, change_id, source_path).await?;
     Ok(())
 }
 

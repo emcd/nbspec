@@ -927,3 +927,72 @@ fn preflight_prevents_partial_writes_with_colliding_active_and_archive() {
         "archive must NOT be written when colliding active fails preflight"
     );
 }
+
+/// P1: later construction-time failure (spec duplicate title heading)
+/// must be caught by preflight before any commit. A valid first active
+/// plus a second active with a spec that triggers DuplicateTitleHeading
+/// plus an archive must leave no partial writes.
+#[test]
+fn preflight_prevents_partial_writes_with_later_spec_duplicate_title() {
+    let fixture = Fixture::new();
+
+    let source_root = fixture.project_root().join("scratch-later-spec-preflight");
+    // Valid active: add-foo
+    std::fs::create_dir_all(source_root.join("add-foo")).unwrap();
+    std::fs::write(
+        source_root.join("add-foo/proposal.md"),
+        "# add-foo\n\nbody\n",
+    )
+    .unwrap();
+    // Second active: add-bar with a spec that will trigger DuplicateTitleHeading
+    // The spec file's title is "cap" and its content starts with "# cap" — the
+    // Transaction's add_note will detect the duplicate and fail at preflight.
+    std::fs::create_dir_all(source_root.join("add-bar/specs/cap")).unwrap();
+    std::fs::write(
+        source_root.join("add-bar/proposal.md"),
+        "# add-bar\n\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        source_root.join("add-bar/specs/cap/spec.md"),
+        "# cap\n\n# cap\n\nbody\n",
+    )
+    .unwrap();
+    // Archive: legacy3
+    let archive_tree = source_root.join("openspec/changes/archive").join("legacy3");
+    std::fs::create_dir_all(&archive_tree).unwrap();
+    std::fs::write(archive_tree.join("proposal.md"), "# legacy3\n\nbody\n").unwrap();
+
+    let imported = nbspec(&fixture, &["import", &source_root.display().to_string()]);
+    assert!(
+        !imported.status.success(),
+        "later spec duplicate must fail preflight; stderr: {} stdout: {}",
+        stderr_of(&imported),
+        stdout_of(&imported)
+    );
+    // No actives should be committed.
+    let notebook_path = fixture.notebook_path();
+    assert!(
+        !notebook_path.join("proposals/add-foo").exists(),
+        "valid first active must NOT be committed when later spec fails preflight"
+    );
+    assert!(
+        !notebook_path.join("proposals/add-bar").exists(),
+        "failing second active must not be committed"
+    );
+    // Archive must NOT be written.
+    let archive = fixture
+        .project_root()
+        .join("documentation/archives/legacy3.tar.zst");
+    assert!(
+        !archive.exists(),
+        "archive must NOT be written when later spec fails preflight"
+    );
+    let combined = format!("{}{}", stdout_of(&imported), stderr_of(&imported));
+    assert!(
+        combined.contains("preflight failure")
+            || combined.contains("DuplicateTitleHeading")
+            || combined.contains("failure"),
+        "output must mention preflight failure: {combined}"
+    );
+}
