@@ -3,17 +3,18 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::changes::validate_change_id;
+use crate::interchange::active::{
+    execute_active_via_transaction, preflight_active_source, run_round_trip,
+};
 use crate::interchange::archive::archive_fidelity_proof;
 use crate::interchange::archive::{import_archive_tree, write_archive_file};
 use crate::interchange::detect::{
     ArchiveTree, DetectedTree, detect_trees, quarantine_path_for, rename_no_replace,
 };
-use crate::interchange::export::{build_export_plan, execute_export_plan};
 use crate::interchange::plan::{
     ImportOptions, InterchangeError, InterchangePlan, InterchangePlanStructured, PlanEntry,
-    RoundTripProof, render_plan_text, resolve_notebook,
+    render_plan_text, resolve_notebook,
 };
-use crate::interchange::proof::round_trip_proof;
 
 /// Placeholder for the eventual `import` operation. Wired in tasks
 /// 3.x (active-tree import) and 4.x (archive conversion); until
@@ -81,16 +82,12 @@ pub async fn build_import_plan(
                     });
                     continue;
                 }
-                // v0.3.0-pause: active filesystem-tree ingest is
-                // paused pending an NbApi 0.3 notebook transaction/
-                // checkpoint primitive. Always emit `ActiveWrite`
-                // before any collision/body validation; the v0.3.0
-                // execute arm is a no-op regardless of collision, so
-                // pre-checking collisions here would surface refusals
-                // the binary cannot act on. The collision check and
-                // body validation move into the 0.3.0-resume cycle
-                // when the pre-pause `import_active_tree` body is
-                // restored.
+                // Active filesystem-tree ingest via Transaction: emit
+                // `ActiveWrite` without pre-checking collisions/body
+                // validation; `Transaction::commit` validates
+                // `PathCollision` / `DuplicateTitleHeading` / `PathIgnored`
+                // at commit time (collect-then-abort, one checkpoint per
+                // change_id).
                 entries.push(PlanEntry::ActiveWrite {
                     change_id: active.change_id.clone(),
                     source_path: active.root.clone(),
@@ -118,14 +115,7 @@ pub async fn build_import_plan(
         entries
             .iter()
             .filter_map(|entry| match entry {
-                // v0.3.0-pause: paused ActiveWrite sources are
-                // never deleted (the execute arm is a no-op;
-                // `active_to_prove` stays empty). Including them
-                // in `pending_deletions` would advertise
-                // deletions the binary cannot perform. Filter
-                // them out; the per-entry paused status already
-                // conveys the source's presence to the operator.
-                PlanEntry::ActiveWrite { .. } => None,
+                PlanEntry::ActiveWrite { source_path, .. } => Some(source_path.clone()),
                 PlanEntry::ArchiveWrite { source_path, .. } => Some(source_path.clone()),
                 _ => None,
             })
@@ -154,7 +144,6 @@ pub async fn build_import_plan(
 /// backend failure. We now distinguish a "notebook has no
 /// `proposals/` folder yet" absence (legitimate empty Vec)
 /// from genuine `nb-api` failures (propagated).
-#[cfg(any())] // v0.3.0-pause: restored by the 0.3.0-resume cycle
 #[allow(dead_code)]
 pub async fn list_existing_change_ids(
     client: &nb_api::NbClient,
@@ -255,9 +244,27 @@ pub async fn execute_import_plan(
     let mut proof_divergences: Vec<String> = Vec::new();
     let mut write_failures: Vec<String> = Vec::new();
 
+    // Phase 1: preflight every active entry before any commit.
+    // Collects all active validation failures before any notebook mutation
+    // or archive write, so a valid-plus-malformed or colliding active plus
+    // archive never leaves partial writes (P1).
+    let mut preflight_failures: Vec<String> = Vec::new();
+    for entry in &plan.entries {
+        if let PlanEntry::ActiveWrite {
+            change_id,
+            source_path,
+        } = entry
+            && let Err(error) =
+                preflight_active_source(client, notebook_name, change_id, source_path).await
+        {
+            let msg = format!("{error}");
+            preflight_failures.push(format!("active:{change_id}:{msg}"));
+            output.push_str(&format!("preflight failure: active {change_id}: {msg}\n"));
+        }
+    }
     // Phase 1: writes. Track active trees that need a proof
     // and archive trees whose source is eligible for deletion.
-    let active_to_prove: Vec<(String, PathBuf)> = Vec::new();
+    let mut active_to_prove: Vec<(String, PathBuf)> = Vec::new();
     let mut archive_to_delete: Vec<(String, PathBuf)> = Vec::new();
     // R2'''' / F2 second re-review 2026-07-25: archive deletion
     // requires an explicit fidelity proof against the PERSISTED
@@ -267,67 +274,83 @@ pub async fn execute_import_plan(
     let mut archive_target_path_by_id: std::collections::HashMap<String, PathBuf> =
         std::collections::HashMap::new();
 
-    for entry in &plan.entries {
-        match entry {
-            PlanEntry::ActiveWrite {
-                change_id,
-                source_path,
-            } => {
-                // v0.3.0-pause: the execute arm is a no-op. Source
-                // filesystem tree is left untouched; no notebook
-                // mutation occurs. The pre-pause `import_active_tree`
-                // body that computed writes + delta warnings and
-                // validated collisions is preserved in source under
-                // `#[cfg(any())]` and in git history, restored by
-                // the 0.3.0-resume cycle once NbApi 0.3 ships the
-                // notebook transaction/checkpoint primitive.
-                output.push_str(&format!(
-                    "paused: active {change_id} at {source} — source untouched; \
-                     active filesystem-tree ingest is paused in v0.3.0 pending the \
-                     NbApi 0.3 notebook transaction/checkpoint primitive\n",
-                    change_id = change_id,
-                    source = source_path.display()
-                ));
-            }
-            PlanEntry::ArchiveWrite {
-                change_id,
-                source_path,
-                target_path,
-            } => {
-                let archive = ArchiveTree {
-                    root: source_path.clone(),
-                    change_id: change_id.clone(),
-                };
-                let bytes = match import_archive_tree(&archive)
-                    .map_err(crate::operations::OperationError::from)
-                {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
+    if preflight_failures.is_empty() {
+        for entry in &plan.entries {
+            match entry {
+                PlanEntry::ActiveWrite {
+                    change_id,
+                    source_path,
+                } => {
+                    match execute_active_via_transaction(
+                        client,
+                        notebook_name,
+                        change_id,
+                        source_path,
+                    )
+                    .await
+                    {
+                        Ok(()) => {
+                            written.push(format!("active:{change_id}"));
+                            output.push_str(&format!(
+                                "wrote active {change_id} at {source} via Transaction (1 checkpoint)\n",
+                                change_id = change_id,
+                                source = source_path.display()
+                            ));
+                            if plan.delete_original {
+                                active_to_prove.push((change_id.clone(), source_path.clone()));
+                            }
+                        }
+                        Err(error) => {
+                            let msg = format!("{error}");
+                            write_failures.push(format!("active:{change_id}:{msg}"));
+                            output.push_str(&format!("write failure: active {change_id}: {msg}\n"));
+                        }
+                    }
+                }
+                PlanEntry::ArchiveWrite {
+                    change_id,
+                    source_path,
+                    target_path,
+                } => {
+                    let archive = ArchiveTree {
+                        root: source_path.clone(),
+                        change_id: change_id.clone(),
+                    };
+                    let bytes = match import_archive_tree(&archive)
+                        .map_err(crate::operations::OperationError::from)
+                    {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            write_failures.push(format!("archive:{change_id}:{error}"));
+                            output.push_str(&format!(
+                                "write failure: archive {change_id}: {error}\n"
+                            ));
+                            continue;
+                        }
+                    };
+                    if let Err(error) = write_archive_file(change_id, target_path, &bytes) {
                         write_failures.push(format!("archive:{change_id}:{error}"));
                         output.push_str(&format!("write failure: archive {change_id}: {error}\n"));
                         continue;
                     }
-                };
-                if let Err(error) = write_archive_file(change_id, target_path, &bytes) {
-                    write_failures.push(format!("archive:{change_id}:{error}"));
-                    output.push_str(&format!("write failure: archive {change_id}: {error}\n"));
-                    continue;
+                    written.push(format!("archive:{change_id}"));
+                    output.push_str(&format!(
+                        "wrote archive {target} ({size} bytes)\n",
+                        target = target_path.display(),
+                        size = bytes.len()
+                    ));
+                    if plan.delete_original {
+                        archive_to_delete.push((change_id.clone(), source_path.clone()));
+                        archive_target_path_by_id.insert(change_id.clone(), target_path.clone());
+                    }
                 }
-                written.push(format!("archive:{change_id}"));
-                output.push_str(&format!(
-                    "wrote archive {target} ({size} bytes)\n",
-                    target = target_path.display(),
-                    size = bytes.len()
-                ));
-                if plan.delete_original {
-                    archive_to_delete.push((change_id.clone(), source_path.clone()));
-                    archive_target_path_by_id.insert(change_id.clone(), target_path.clone());
+                PlanEntry::Refusal { .. } | PlanEntry::Skip { .. } => {
+                    // Already excluded by the gate before we got here.
                 }
-            }
-            PlanEntry::Refusal { .. } | PlanEntry::Skip { .. } => {
-                // Already excluded by the gate before we got here.
             }
         }
+    } else {
+        write_failures.extend(preflight_failures);
     }
 
     // Phase 2: quarantine all sources (rename-to-quarantine with
@@ -573,62 +596,11 @@ pub async fn execute_import_plan(
         "retained_quarantines": retained_serialized,
     });
     if !write_failures.is_empty() || !rollback_failures.is_empty() {
-        return Err(crate::operations::OperationError::NoteRead {
-            path: PathBuf::from("<import-plan>"),
-            source: std::io::Error::other(format!(
-                "import plan completed with {} failure(s); see structured payload",
-                write_failures.len() + rollback_failures.len()
-            )),
+        let outcome = crate::operations::OperationOutcome::new(output, structured);
+        return Err(crate::operations::OperationError::ImportFailed {
+            outcome: Box::new(outcome),
+            failures: write_failures.len() + rollback_failures.len(),
         });
     }
     Ok(crate::operations::OperationOutcome::new(output, structured))
-}
-
-/// Drives the export-based round-trip proof: runs the export of
-/// the imported change against a scratch path and diffs against
-/// the source tree modulo the typed normalizations.
-pub async fn run_round_trip(
-    client: &nb_api::NbClient,
-    change_id: &str,
-    source_path: &Path,
-    scratch: &Path,
-    notebook_name: &str,
-) -> Result<RoundTripProof, crate::operations::OperationError> {
-    if scratch.exists() {
-        std::fs::remove_dir_all(scratch).map_err(|source| {
-            crate::operations::OperationError::NoteRead {
-                path: scratch.to_path_buf(),
-                source,
-            }
-        })?;
-    }
-    std::fs::create_dir_all(scratch).map_err(|source| {
-        crate::operations::OperationError::NoteRead {
-            path: scratch.to_path_buf(),
-            source,
-        }
-    })?;
-    let plan = build_export_plan(
-        client,
-        change_id,
-        scratch,
-        notebook_name,
-        &crate::interchange::plan::ExportOptions {
-            dry_run: false,
-            overwrite: true,
-        },
-    )
-    .await?;
-    execute_export_plan(client, &plan).await?;
-    // R7''' / F7 second re-review 2026-07-25: pass the change
-    // root paths directly rather than deriving them. `source_path`
-    // may be a quarantine (renamed sibling, no `<change_id>/`
-    // subdirectory), so the proof must use the path as-is.
-    let source_change_root = source_path;
-    let scratch_change_root = scratch.join(change_id);
-    Ok(round_trip_proof(
-        change_id,
-        source_change_root,
-        &scratch_change_root,
-    ))
 }

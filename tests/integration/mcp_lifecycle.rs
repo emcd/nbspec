@@ -761,16 +761,11 @@ async fn mcp_import_structured_payload_carries_typed_entries() {
         .and_then(|v| v.as_array())
         .expect("structured.entries must be an array");
 
-    // ActiveWrite typed payload (bounded correction #2: live side).
+    // ActiveWrite typed payload — now via Transaction (no paused status).
     let active = entries
         .iter()
         .find(|entry| entry.get("kind").and_then(|v| v.as_str()) == Some("active-write"))
         .expect("an active-write entry must be present in the import structured payload");
-    assert_eq!(
-        active.get("status").and_then(|v| v.as_str()),
-        Some("paused"),
-        "active-write status must be paused: {active}"
-    );
     assert_eq!(
         active.get("change_id").and_then(|v| v.as_str()),
         Some("add-foo"),
@@ -784,13 +779,14 @@ async fn mcp_import_structured_payload_carries_typed_entries() {
             .unwrap_or(false),
         "active-write source_path must point at the active source: {active}"
     );
-    let prerequisite = active
-        .get("prerequisite")
-        .and_then(|v| v.as_str())
-        .expect("active-write prerequisite must be present");
+    // After resume, active-write is no longer paused (no status/prerequisite).
     assert!(
-        prerequisite.contains("NbApi 0.3"),
-        "active-write prerequisite must name NbApi 0.3: {prerequisite}"
+        active.get("status").is_none(),
+        "active-write should not carry paused status after resume: {active}"
+    );
+    assert!(
+        active.get("prerequisite").is_none(),
+        "active-write should not carry prerequisite after resume: {active}"
     );
 
     // ArchiveWrite typed payload.
@@ -883,33 +879,27 @@ async fn mcp_import_dry_run_delete_original_exercises_real_pending_deletions_fil
         "dry_run must be true in structured payload: {structured}"
     );
 
-    // The real filter output: pending_deletions must contain the
-    // archive source and must NOT contain the paused active source.
+    // After resume, pending_deletions includes both archive and active sources.
     let pending = structured
         .get("pending_deletions")
         .and_then(|v| v.as_array())
         .expect("pending_deletions must be an array");
     assert_eq!(
         pending.len(),
-        1,
-        "exactly the archive source must be pending deletion (paused active excluded): {pending:?}"
-    );
-    let pending_path = pending[0]
-        .as_str()
-        .expect("pending entry must be a string path");
-    assert!(
-        pending_path.contains("legacy"),
-        "pending deletion must be the archive source: {pending_path}"
+        2,
+        "both archive and active sources must be pending deletion: {pending:?}"
     );
     assert!(
-        !pending_path.contains("add-foo"),
-        "paused active source must NOT appear in pending_deletions: {pending_path}"
+        pending
+            .iter()
+            .any(|v| v.as_str().map(|s| s.contains("legacy")).unwrap_or(false)),
+        "pending deletion must include the archive source: {pending:?}"
     );
     assert!(
-        !pending
+        pending
             .iter()
             .any(|v| v.as_str().map(|s| s.contains("add-foo")).unwrap_or(false)),
-        "no pending deletion entry may reference the active source: {pending:?}"
+        "pending deletion must include the active source after resume: {pending:?}"
     );
 
     // delete_original flag is reflected for downstream consumers.

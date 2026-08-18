@@ -16,6 +16,7 @@
 //! (materialization), and `grammar` (validator) modules are
 //! consumed by these verbs but not modified.
 
+pub mod active;
 pub mod archive;
 pub mod detect;
 pub mod export;
@@ -26,6 +27,7 @@ pub mod staging;
 
 // Re-export the public surface so `crate::interchange::PlanEntry` etc
 // continue to work.
+pub use active::run_round_trip;
 pub use archive::{ArchiveStaging, archive_fidelity_proof};
 pub use archive::{collect_archive_entries, import_archive_tree, walk_archive_tree};
 pub use detect::{
@@ -36,7 +38,7 @@ pub use detect::{ActiveTree, ArchiveTree, DetectedTree, detect_trees};
 pub use detect::{create_dir_exclusive, quarantine_path_for, rename_no_replace};
 pub use export::{build_export_plan, execute_export_plan, export, render_export_plan_text};
 pub use export::{read_notebook_note, strip_title_h1};
-pub use import::{build_import_plan, execute_import_plan, import, run_round_trip};
+pub use import::{build_import_plan, execute_import_plan, import};
 pub use plan::{
     DeltaWarning, DeltaWarningKind, ExportEntry, ExportOptions, ExportPlan, ImportOptions,
     InterchangeError, InterchangePlan, InterchangePlanStructured, NoteWrite, PlanEntry,

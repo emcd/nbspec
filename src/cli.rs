@@ -19,6 +19,12 @@ use crate::reviews::VerdictValue;
 pub fn failure_report(error: &OperationError) -> String {
     match error {
         OperationError::Invalid(failure) => failure.to_string(),
+        OperationError::ImportFailed { outcome, .. } => {
+            // Even on import failure, surface the complete plan output so
+            // callers see the per-entry writes, refusals, and structured
+            // payload that the review contract promises.
+            format!("{}\nError: import failed", outcome.text)
+        }
         other => format!("Error: {other}"),
     }
 }

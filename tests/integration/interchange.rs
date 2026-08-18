@@ -132,23 +132,21 @@ fn import_defers_active_tree_and_writes_archive() {
         stderr_of(&imported)
     );
 
-    // v0.3.0-pause: no notebook namespace is created for the
-    // active change. The plan output names the pause state and
-    // the prerequisite.
+    // Active tree is now written via Transaction (one checkpoint per change).
     let notebook_path = fixture.notebook_path();
     let change_path = notebook_path.join("proposals").join(ACTIVE_CHANGE);
     assert!(
-        !change_path.exists(),
-        "active tree must NOT mutate the notebook in v0.3.0"
+        change_path.exists(),
+        "active tree must be written to the notebook via Transaction"
     );
     let stdout = stdout_of(&imported);
     assert!(
-        stdout.contains("paused") && stdout.contains(ACTIVE_CHANGE),
-        "stdout must surface the paused entry: {stdout}"
+        stdout.contains("active") && stdout.contains(ACTIVE_CHANGE),
+        "stdout must surface the active entry: {stdout}"
     );
     assert!(
-        stdout.contains("NbApi 0.3"),
-        "stdout must name the NbApi 0.3 prerequisite: {stdout}"
+        stdout.contains("wrote active") || stdout.contains("active-write"),
+        "stdout must mention the active write: {stdout}"
     );
 
     // The archive is converted to deterministic tar.zst (v0.3.0
@@ -165,6 +163,43 @@ fn import_defers_active_tree_and_writes_archive() {
     assert!(
         stdout.contains("wrote archive"),
         "stdout must mention the archive write: {stdout}"
+    );
+}
+
+#[test]
+fn import_preserves_checked_tasks() {
+    let fixture = Fixture::new();
+    let source = fixture.project_root().join("scratch-checked");
+    std::fs::create_dir_all(source.join("add-foo")).unwrap();
+    std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n\nbody\n").unwrap();
+    std::fs::write(
+        source.join("add-foo/tasks.md"),
+        "# [ ] Tasks\n- [x] done task\n- [ ] todo task\n",
+    )
+    .unwrap();
+
+    let imported = nbspec(&fixture, &["import", &source.display().to_string()]);
+    assert!(
+        imported.status.success(),
+        "import with checked tasks must succeed; stderr: {} stdout: {}",
+        stderr_of(&imported),
+        stdout_of(&imported)
+    );
+
+    let work_path = fixture
+        .notebook_path()
+        .join("proposals")
+        .join("add-foo")
+        .join("work.todo.md");
+    assert!(work_path.is_file(), "work.todo.md must exist after import");
+    let content = std::fs::read_to_string(&work_path).unwrap();
+    assert!(
+        content.contains("- [x] done task"),
+        "checked task must be preserved via mark_task_done: {content}"
+    );
+    assert!(
+        content.contains("- [ ] todo task"),
+        "unchecked task must remain unchecked: {content}"
     );
 }
 
@@ -199,11 +234,10 @@ fn dry_run_writes_nothing() {
 fn refusal_aborts_partial_writes() {
     let fixture = Fixture::new();
 
-    // v0.3.0-pause covers malformed `tasks.md`: the active tree
-    // is always paused regardless of body validity, so the
-    // surface is "paused" rather than a refusal. Build a scratch
-    // tree with a malformed tasks.md; assert the pause fires and
-    // no notebook mutation occurred.
+    // Malformed `tasks.md` is a write failure via Transaction (tasks
+    // parse error → WorkNoteError → InterchangeError::TasksParse →
+    // write failure). No notebook mutation occurs and the import
+    // surfaces the failure.
     let source = fixture.project_root().join("scratch-source");
     std::fs::create_dir_all(source.join("add-foo")).unwrap();
     std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n").unwrap();
@@ -215,21 +249,26 @@ fn refusal_aborts_partial_writes() {
 
     let imported = nbspec(&fixture, &["import", &source.display().to_string()]);
     assert!(
-        imported.status.success(),
-        "import must succeed (active tree is paused, not refused); stderr: {}",
-        stderr_of(&imported)
+        !imported.status.success(),
+        "import must fail on malformed tasks.md (write failure); stderr: {} stdout: {}",
+        stderr_of(&imported),
+        stdout_of(&imported)
     );
+    let stderr = stderr_of(&imported);
     let stdout = stdout_of(&imported);
     assert!(
-        stdout.contains("paused") && stdout.contains("add-foo"),
-        "stdout must surface the paused entry: {stdout}"
+        stderr.contains("failure")
+            || stdout.contains("failure")
+            || stderr.contains("TasksParse")
+            || stdout.contains("TasksParse"),
+        "failure marker missing: stderr={stderr} stdout={stdout}"
     );
 
     let notebook_path = fixture.notebook_path();
     let change_path = notebook_path.join("proposals").join(ACTIVE_CHANGE);
     assert!(
         !change_path.exists(),
-        "active tree must not mutate the notebook in v0.3.0: change_path = {change_path:?}"
+        "malformed tasks must not mutate the notebook: change_path = {change_path:?}"
     );
 }
 
@@ -499,12 +538,8 @@ fn export_overwrite_preserves_backup_of_old_tree() {
 /// though its own proof was clean — partial deletion violates
 /// the all-or-nothing gate.
 ///
-/// **v0.3.0-pause**: gated behind `#[cfg(any())]`. Active
-/// filesystem-tree import is paused pending the NbApi 0.3
-/// transaction primitive; this test exercises the post-import
-/// source deletion path which only exists in the 0.3.0-resume
-/// cycle.
-#[cfg(any())]
+/// Active filesystem-tree import via Transaction; exercises the post-import
+/// source deletion path (0.3.0-resume).
 #[test]
 fn delete_original_all_or_nothing_preserves_clean_change() {
     let fixture = Fixture::new();
@@ -561,7 +596,6 @@ fn delete_original_all_or_nothing_preserves_clean_change() {
     );
 }
 
-#[cfg(any())]
 #[test]
 fn delete_original_refuses_when_proof_is_dirty() {
     let fixture = Fixture::new();
@@ -602,7 +636,6 @@ fn delete_original_refuses_when_proof_is_dirty() {
     );
 }
 
-#[cfg(any())]
 #[test]
 fn delete_original_authorizes_clean_deletion() {
     let fixture = Fixture::new();
@@ -654,7 +687,6 @@ fn delete_original_authorizes_clean_deletion() {
 /// The proof runs against the quarantine; if the proof is dirty,
 /// the source is moved back to its original location. This makes
 /// quarantine the recovery contract rather than auto-deletion.
-#[cfg(any())]
 #[test]
 fn delete_original_restores_quarantine_on_dirty_proof() {
     let fixture = Fixture::new();
@@ -783,5 +815,115 @@ fn delete_original_archive_renames_source_to_quarantine_with_passing_proof() {
     assert!(
         quarantine.join("proposal.md").exists(),
         "archive quarantine must preserve the source contents"
+    );
+}
+
+/// P1: preflight must prevent partial writes when a batch contains a
+/// valid active tree, a malformed active tree, and an archive tree.
+/// No actives should be committed and no archive should be written.
+#[test]
+fn preflight_prevents_partial_writes_with_mixed_valid_malformed_and_archive() {
+    let fixture = Fixture::new();
+
+    // Pre-create an archive fixture for later verification that it was NOT written.
+    let source_root = fixture.project_root().join("scratch-mixed-preflight");
+    // Valid active: add-foo with correct proposal
+    std::fs::create_dir_all(source_root.join("add-foo")).unwrap();
+    std::fs::write(
+        source_root.join("add-foo/proposal.md"),
+        "# add-foo\n\nbody\n",
+    )
+    .unwrap();
+    // Malformed active: add-bar with bad tasks.md (will fail TasksParse preflight)
+    std::fs::create_dir_all(source_root.join("add-bar")).unwrap();
+    std::fs::write(
+        source_root.join("add-bar/proposal.md"),
+        "# add-bar\n\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        source_root.join("add-bar/tasks.md"),
+        "# [ ] Tasks\n- [?] malformed\n",
+    )
+    .unwrap();
+    // Archive: legacy
+    let archive_tree = source_root.join("openspec/changes/archive").join("legacy");
+    std::fs::create_dir_all(&archive_tree).unwrap();
+    std::fs::write(archive_tree.join("proposal.md"), "# legacy\n\nbody\n").unwrap();
+
+    let imported = nbspec(&fixture, &["import", &source_root.display().to_string()]);
+    assert!(
+        !imported.status.success(),
+        "mixed valid+malformed+archive must fail preflight; stderr: {} stdout: {}",
+        stderr_of(&imported),
+        stdout_of(&imported)
+    );
+    // No actives should be committed.
+    let notebook_path = fixture.notebook_path();
+    assert!(
+        !notebook_path.join("proposals/add-foo").exists(),
+        "valid active must NOT be committed when batch contains malformed"
+    );
+    assert!(
+        !notebook_path.join("proposals/add-bar").exists(),
+        "malformed active must not be committed"
+    );
+    // Archive must NOT be written (no partial writes).
+    let archive = fixture
+        .project_root()
+        .join("documentation/archives/legacy.tar.zst");
+    assert!(
+        !archive.exists(),
+        "archive must NOT be written when preflight fails"
+    );
+    // Output should contain the preflight failure and still show the plan.
+    let combined = format!("{}{}", stdout_of(&imported), stderr_of(&imported));
+    assert!(
+        combined.contains("preflight failure") || combined.contains("failure"),
+        "output must mention preflight failure: {combined}"
+    );
+}
+
+/// P1: colliding active (change_id already exists) plus archive must not
+/// leave partial writes.
+#[test]
+fn preflight_prevents_partial_writes_with_colliding_active_and_archive() {
+    let fixture = Fixture::new();
+
+    // Seed the notebook with an existing change `existing`.
+    let existing_path = fixture.notebook_path().join("proposals/existing");
+    std::fs::create_dir_all(&existing_path).unwrap();
+    std::fs::write(existing_path.join("proposal.md"), "# existing\n").unwrap();
+
+    let source_root = fixture.project_root().join("scratch-colliding-preflight");
+    // Colliding active: same change_id as existing
+    std::fs::create_dir_all(source_root.join("existing")).unwrap();
+    std::fs::write(
+        source_root.join("existing/proposal.md"),
+        "# existing\n\nnew body\n",
+    )
+    .unwrap();
+    // Archive: legacy2
+    let archive_tree = source_root.join("openspec/changes/archive").join("legacy2");
+    std::fs::create_dir_all(&archive_tree).unwrap();
+    std::fs::write(archive_tree.join("proposal.md"), "# legacy2\n\nbody\n").unwrap();
+
+    let imported = nbspec(&fixture, &["import", &source_root.display().to_string()]);
+    assert!(
+        !imported.status.success(),
+        "colliding active + archive must fail preflight; stderr: {} stdout: {}",
+        stderr_of(&imported),
+        stdout_of(&imported)
+    );
+    // Existing should remain untouched (no new commit for colliding)
+    let existing_content = std::fs::read_to_string(existing_path.join("proposal.md")).unwrap();
+    assert_eq!(existing_content, "# existing\n");
+    // Archive must NOT be written.
+    let archive = fixture
+        .project_root()
+        .join("documentation/archives/legacy2.tar.zst");
+    assert!(
+        !archive.exists(),
+        "archive must NOT be written when colliding active fails preflight"
     );
 }

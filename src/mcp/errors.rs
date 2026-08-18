@@ -30,6 +30,7 @@ pub fn operation_result(
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     match output {
         Ok(outcome) => Ok(outcome_to_result(outcome, false)),
+        Err(OperationError::ImportFailed { outcome, .. }) => Ok(outcome_to_result(*outcome, true)),
         Err(error) => Ok(tool_error(error.to_string())),
     }
 }

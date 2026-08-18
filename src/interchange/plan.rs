@@ -44,14 +44,11 @@ pub struct RoundTripProof {
 /// both ingestions and refusals.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PlanEntry {
-    /// Active change tree detected under `<root>/<change-id>/`. In
-    /// v0.3.0 the execute arm is a no-op: the source filesystem tree
-    /// is left untouched and no notebook mutation occurs. Active
-    /// filesystem-tree ingest is paused in v0.3.0 pending an NbApi
-    /// 0.3 notebook transaction/checkpoint primitive with Git/index
-    /// locking; the pre-pause `import_active_tree` body is preserved
-    /// in source under `#[cfg(any())]` and in git history, restored
-    /// by the 0.3.0-resume cycle once NbApi 0.3 ships.
+    /// Active change tree detected under `<root>/<change-id>/` — ingested
+    /// via a single `nb_api::Transaction` checkpoint (collect-then-commit
+    /// with explicit `proposals/<id>/…` paths, `DirtyBaseline` /
+    /// `IndeterminateCommit` handling, and ordered `mark_task_done` for
+    /// checked tasks). One checkpoint per `change_id`.
     ActiveWrite {
         change_id: String,
         source_path: PathBuf,
@@ -117,24 +114,11 @@ impl InterchangePlanStructured {
                     change_id,
                     source_path,
                 } => {
-                    // v0.3.0-pause: the active write is detected but
-                    // its notebook mutation is paused pending the
-                    // NbApi 0.3 notebook transaction/checkpoint
-                    // primitive. Surface the pause state and the
-                    // prerequisite in structured output so agents
-                    // can branch on the typed payload.
-                    let prerequisite = "NbApi 0.3 notebook transaction/checkpoint primitive with \
-                                         Git/index locking";
                     object.insert("kind".to_string(), Value::String("active-write".into()));
-                    object.insert("status".to_string(), Value::String("paused".into()));
                     object.insert("change_id".to_string(), Value::String(change_id.clone()));
                     object.insert(
                         "source_path".to_string(),
                         Value::String(source_path.display().to_string()),
-                    );
-                    object.insert(
-                        "prerequisite".to_string(),
-                        Value::String(prerequisite.into()),
                     );
                 }
                 PlanEntry::ArchiveWrite {
@@ -210,13 +194,8 @@ pub fn render_plan_text(plan: &InterchangePlan, root: &Path) -> String {
                 change_id,
                 source_path,
             } => {
-                // v0.3.0-pause: render the pause state in the human-
-                // readable plan output. The execute arm is a no-op;
-                // the source filesystem tree is left untouched.
                 output.push_str(&format!(
-                    "  paused: active {change_id} ({source}) — \
-                     v0.3.0 active ingest is no-op pending the NbApi 0.3 notebook \
-                     transaction/checkpoint primitive; source is not modified\n",
+                    "  active-write: {change_id} ({source})\n",
                     change_id = change_id,
                     source = source_path.display()
                 ));
