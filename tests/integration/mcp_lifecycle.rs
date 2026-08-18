@@ -5,28 +5,26 @@
 //!   pins.
 //!
 //! Like the CLI lifecycle test, this requires `nb` to be installed.
-//! The scratch notebook lives in a per-test isolated `NB_DIR` (see
-//! `super::harness`); the directory is removed on drop, so the
-//! operator's real notebook list never sees scratch notebooks from
-//! this test. The `nbspec serve mcp` subprocess inherits the same
-//! isolated `NB_DIR` so its internal `nb` invocations see the
-//! just-added scratch notebook.
+//! The scratch notebook lives in nb-api's isolated [`NbTestEnv`]
+//! `NB_DIR` (see `super::harness`); the fixture root is removed on
+//! drop, so the operator's real notebook list never sees scratch
+//! notebooks from this test. The `nbspec serve mcp` subprocess
+//! inherits the same isolated `NB_DIR` so its internal `nb`
+//! invocations see the scratch notebook.
 //!
-//! All spawned subprocesses — both the test-side `nb` invocations
-//! and the `nbspec serve mcp` tokio subprocess — have `GIT_*`
-//! environment variables scrubbed (see `super::harness::scrub_git_env`).
-//! Without this, a hook or CI environment that exports
-//! `GIT_DIR`/`GIT_INDEX_FILE` redirects every git call inside `nb`
-//! away from the notebook's repository, the `nb notebooks add` and
-//! the subsequent `nb notebooks` listing see different roots, and
-//! the subprocess exits before responding. Per `nbspec:issues/4`.
+//! All spawned subprocesses — the `nbspec serve mcp` tokio subprocess
+//! and its internal `nb` invocations — have `GIT_*` environment
+//! variables scrubbed and the fixture's environment applied via
+//! `configure_tokio`. Without this, a hook or CI environment that
+//! exports `GIT_DIR`/`GIT_INDEX_FILE` redirects every git call inside
+//! `nb` away from the notebook's repository and the subprocess exits
+//! before responding. Per `nbspec:issues/4`.
 
 use std::{
-    path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::atomic::{AtomicI64, Ordering},
     sync::{Arc, Mutex},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant},
 };
 
 use rmcp::model::{
@@ -41,9 +39,8 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::harness::{IsolatedNbDir, scrub_git_env, scrub_git_env_async};
+use super::harness::Fixture;
 
-const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
 const CHANGE_ID: &str = "add-mcp-demo";
 const READ_TIMEOUT: Duration = Duration::from_secs(30);
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -61,138 +58,6 @@ The system SHALL authenticate users before granting access.
 - **THEN** a session begins
 ";
 
-fn unique_suffix() -> String {
-    format!(
-        "{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    )
-}
-
-/// A scratch nb notebook, isolated to a per-test `NB_DIR` and
-/// removed on drop along with the directory.
-struct ScratchNotebook {
-    name: String,
-    nb_dir: IsolatedNbDir,
-}
-
-impl ScratchNotebook {
-    fn create() -> Self {
-        let nb_dir = IsolatedNbDir::new();
-        let name = format!("nbspec-mcp-itest-{}", unique_suffix());
-        let mut command = Command::new("nb");
-        scrub_git_env(&mut command);
-        let output = command
-            .env("NB_DIR", nb_dir.path())
-            .args(["notebooks", "add", &name])
-            .output()
-            .expect("nb must be installed for MCP integration tests");
-        assert!(output.status.success(), "cannot create scratch notebook");
-        ScratchNotebook { name, nb_dir }
-    }
-
-    /// Filesystem path of the notebook directory inside the
-    /// isolated `NB_DIR`.
-    fn path(&self) -> PathBuf {
-        let mut command = Command::new("nb");
-        scrub_git_env(&mut command);
-        let output = command
-            .env("NB_DIR", self.nb_dir.path())
-            .args(["notebooks", "--paths", "--no-color"])
-            .output()
-            .unwrap();
-        let listing = String::from_utf8_lossy(&output.stdout);
-        listing
-            .lines()
-            .map(str::trim)
-            .find(|line| line.ends_with(&self.name))
-            .map(PathBuf::from)
-            .expect("scratch notebook path must be listed")
-    }
-
-    /// The isolated `NB_DIR`; passed to the `nbspec serve mcp`
-    /// subprocess so its internal `nb` invocations see the
-    /// just-added scratch notebook.
-    fn nb_dir_path(&self) -> &Path {
-        self.nb_dir.path()
-    }
-}
-
-impl Drop for ScratchNotebook {
-    fn drop(&mut self) {
-        // Best-effort: retry the delete because transient
-        // contention can fail an `nb notebooks delete`.
-        for _ in 0..3 {
-            let mut command = Command::new("nb");
-            scrub_git_env(&mut command);
-            let deleted = command
-                .env("NB_DIR", self.nb_dir.path())
-                .args(["notebooks", "delete", &self.name, "--force"])
-                .output()
-                .map(|output| output.status.success())
-                .unwrap_or(false);
-            if deleted {
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(250));
-        }
-        // IsolatedNbDir::drop removes the directory itself.
-    }
-}
-
-/// A scratch project repository: an initialized git repository with a
-/// project configuration keeping render scratch inside the sandbox.
-struct ScratchProject {
-    root: PathBuf,
-}
-
-impl ScratchProject {
-    fn create() -> Self {
-        let root = PathBuf::from(TEMP_TEST_ROOT)
-            .join(format!("mcp-lifecycle-{}", unique_suffix()))
-            .canonicalize_base();
-        std::fs::create_dir_all(&root).unwrap();
-        let mut command = Command::new("git");
-        scrub_git_env(&mut command);
-        let output = command
-            .args(["init", "--quiet"])
-            .current_dir(&root)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "cannot initialize scratch repo");
-        let configuration_directory = root.join(".auxiliary/configuration/nbspec");
-        std::fs::create_dir_all(&configuration_directory).unwrap();
-        std::fs::write(
-            configuration_directory.join("general.toml"),
-            "schema = \"nbspec-default\"\n\
-             scratch_directory = \".auxiliary/temporary/renders\"\n\
-             archives = true\n\
-             archive_directory = \"documentation/archives\"\n",
-        )
-        .unwrap();
-        ScratchProject { root }
-    }
-}
-
-impl Drop for ScratchProject {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
-
-trait CanonicalizeBase {
-    fn canonicalize_base(self) -> PathBuf;
-}
-
-impl CanonicalizeBase for PathBuf {
-    fn canonicalize_base(self) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join(self)
-    }
-}
-
 /// Spawns the `nbspec serve mcp` subprocess and speaks JSON-RPC over
 /// its stdin/stdout. The harness owns the child for its lifetime and
 /// kills it on drop. Stderr is drained into a shared buffer so the
@@ -209,20 +74,15 @@ struct McpHarness {
 }
 
 impl McpHarness {
-    async fn spawn(project: &ScratchProject, notebook: &ScratchNotebook) -> Self {
+    async fn spawn(fixture: &Fixture) -> Self {
         let mut command = TokioCommand::new(env!("CARGO_BIN_EXE_nbspec"));
-        scrub_git_env_async(&mut command);
+        fixture.configure_tokio(&mut command);
         command
             .arg("serve")
             .arg("mcp")
             .arg("--notebook")
-            .arg(&notebook.name)
-            .current_dir(&project.root)
-            .env(
-                "NBSPEC_CONFIG_DIR",
-                project.root.join(".auxiliary/configuration/nbspec"),
-            )
-            .env("NB_DIR", notebook.nb_dir_path())
+            .arg(fixture.notebook())
+            .env("NBSPEC_CONFIG_DIR", fixture.configuration_directory())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -459,9 +319,8 @@ fn assert_tool_error(response: &Value) -> &Value {
 
 #[tokio::test]
 async fn mcp_server_drives_change_lifecycle() {
-    let notebook = ScratchNotebook::create();
-    let project = ScratchProject::create();
-    let mut harness = McpHarness::spawn(&project, &notebook).await;
+    let fixture = Fixture::new();
+    let mut harness = McpHarness::spawn(&fixture).await;
 
     // List tools: must include exactly the five verbs.
     let tools_response = harness.list_tools().await;
@@ -503,7 +362,7 @@ async fn mcp_server_drives_change_lifecycle() {
     assert_eq!(create_structured["change_id"], json!(CHANGE_ID));
     assert_eq!(create_structured["schema"], json!("nbspec-default"));
     assert_eq!(create_structured["folder"], json!("proposals/add-mcp-demo"));
-    assert_eq!(create_structured["notebook"], json!(&notebook.name));
+    assert_eq!(create_structured["notebook"], json!(fixture.notebook()));
 
     // display: short form reports status + authored/ready.
     let displayed = harness
@@ -529,7 +388,7 @@ async fn mcp_server_drives_change_lifecycle() {
     assert_eq!(display_structured["change_id"], json!(CHANGE_ID));
     assert_eq!(display_structured["status"], json!("draft"));
     assert_eq!(display_structured["schema"], json!("nbspec-default"));
-    assert_eq!(display_structured["notebook"], json!(&notebook.name));
+    assert_eq!(display_structured["notebook"], json!(fixture.notebook()));
     let artifacts = display_structured["artifacts"]
         .as_array()
         .expect("artifacts array");
@@ -580,7 +439,7 @@ async fn mcp_server_drives_change_lifecycle() {
 
     // Author the proposal and specification directly on the notebook
     // filesystem, as an agent's editor would.
-    let change_directory = notebook.path().join("proposals").join(CHANGE_ID);
+    let change_directory = fixture.notebook_path().join("proposals").join(CHANGE_ID);
     let mut proposal = std::fs::read_to_string(change_directory.join("proposal.md")).unwrap();
     proposal.push_str("\n## Why\n\nDrive the MCP lifecycle.\n");
     std::fs::write(change_directory.join("proposal.md"), proposal).unwrap();
@@ -636,17 +495,17 @@ async fn mcp_server_drives_change_lifecycle() {
     assert_eq!(render_structured["format"], json!("tree"));
     assert_eq!(render_structured["documents_count"], json!(2));
     assert!(render_structured["destination"].is_string());
-    let scratch_document = project
-        .root
+    let scratch_document = fixture
+        .project_root()
         .join(".auxiliary/temporary/renders")
-        .join(&notebook.name)
+        .join(fixture.notebook())
         .join(CHANGE_ID)
         .join("specifications/user-auth.md");
     assert_eq!(
         std::fs::read_to_string(&scratch_document).unwrap(),
         SPECIFICATION
     );
-    assert!(!project.root.join("documentation").exists());
+    assert!(!fixture.project_root().join("documentation").exists());
 
     // render with diff=true: emits unified diff suitable for difit.
     let diffed = harness
@@ -813,15 +672,15 @@ async fn mcp_server_drives_change_lifecycle() {
             .expect("archived path"),
         "documentation/archives/add-mcp-demo.tar.zst"
     );
-    let target = project
-        .root
+    let target = fixture
+        .project_root()
         .join("documentation/specifications/user-auth.md");
     let merged_content = std::fs::read_to_string(&target).unwrap();
     assert!(merged_content.starts_with("<!-- nbspec: change=add-mcp-demo notebook="));
     assert!(merged_content.ends_with(SPECIFICATION));
     assert!(
-        project
-            .root
+        fixture
+            .project_root()
             .join("documentation/archives/add-mcp-demo.tar.zst")
             .is_file()
     );
@@ -829,9 +688,8 @@ async fn mcp_server_drives_change_lifecycle() {
 
 #[tokio::test]
 async fn mcp_server_rejects_unknown_field() {
-    let notebook = ScratchNotebook::create();
-    let project = ScratchProject::create();
-    let mut harness = McpHarness::spawn(&project, &notebook).await;
+    let fixture = Fixture::new();
+    let mut harness = McpHarness::spawn(&fixture).await;
 
     // `notebook` is a per-tool override; deny_unknown_fields rejects
     // it before the tool handler runs. rmcp converts the resulting

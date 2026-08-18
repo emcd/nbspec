@@ -3,18 +3,17 @@
 //! a scratch project repository.
 //!
 //! The binary runs with its working directory inside a scratch git
-//! repository, so the resolved project root — and therefore every
-//! merge write — stays inside the test sandbox. The scratch notebook
-//! lives in a per-test isolated `NB_DIR` (see `super::harness`); the
-//! directory is removed on drop, so the operator's real notebook
-//! list never sees scratch notebooks from this test.
+//! repository (the fixture's `working_dir`), so the resolved project
+//! root — and therefore every merge write — stays inside the test
+//! sandbox. The scratch notebook lives in nb-api's isolated
+//! [`NbTestEnv`] `NB_DIR` (see `super::harness`); the fixture root is
+//! removed on drop, so the operator's real notebook list and repo are
+//! never touched.
 
-use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use super::harness::{IsolatedNbDir, scrub_git_env};
+use super::harness::Fixture;
 
-const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
 const CHANGE_ID: &str = "add-demo";
 
 const SPECIFICATION: &str = "\
@@ -30,162 +29,16 @@ The system SHALL authenticate users before granting access.
 - **THEN** a session begins
 ";
 
-fn unique_suffix() -> String {
-    format!(
-        "{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    )
-}
-
-/// A scratch nb notebook, isolated to a per-test `NB_DIR` and
-/// removed on drop along with the directory.
-struct ScratchNotebook {
-    name: String,
-    nb_dir: IsolatedNbDir,
-}
-
-impl ScratchNotebook {
-    fn create() -> Self {
-        let nb_dir = IsolatedNbDir::new();
-        let name = format!("nbspec-itest-{}", unique_suffix());
-        let mut command = Command::new("nb");
-        scrub_git_env(&mut command);
-        let output = command
-            .env("NB_DIR", nb_dir.path())
-            .args(["notebooks", "add", &name])
-            .output()
-            .expect("nb must be installed for integration tests");
-        assert!(output.status.success(), "cannot create scratch notebook");
-        ScratchNotebook { name, nb_dir }
-    }
-
-    /// Filesystem path of the notebook directory inside the
-    /// isolated `NB_DIR`.
-    fn path(&self) -> PathBuf {
-        let mut command = Command::new("nb");
-        scrub_git_env(&mut command);
-        let output = command
-            .env("NB_DIR", self.nb_dir.path())
-            .args(["notebooks", "--paths", "--no-color"])
-            .output()
-            .unwrap();
-        let listing = String::from_utf8_lossy(&output.stdout);
-        listing
-            .lines()
-            .map(str::trim)
-            .find(|line| line.ends_with(&self.name))
-            .map(PathBuf::from)
-            .expect("scratch notebook path must be listed")
-    }
-
-    /// The isolated `NB_DIR`; passed to the subprocess harness so
-    /// the `nbspec serve mcp` (and any other spawned nbspec
-    /// process) targets the same isolated root.
-    fn nb_dir_path(&self) -> &Path {
-        self.nb_dir.path()
-    }
-}
-
-impl Drop for ScratchNotebook {
-    fn drop(&mut self) {
-        // Best-effort: retry the delete because transient
-        // contention can fail an `nb notebooks delete`.
-        for _ in 0..3 {
-            let mut command = Command::new("nb");
-            scrub_git_env(&mut command);
-            let deleted = command
-                .env("NB_DIR", self.nb_dir.path())
-                .args(["notebooks", "delete", &self.name, "--force"])
-                .output()
-                .map(|output| output.status.success())
-                .unwrap_or(false);
-            if deleted {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(250));
-        }
-        // IsolatedNbDir::drop removes the directory itself.
-    }
-}
-
-/// A scratch project repository: an initialized git repository with a
-/// project configuration keeping render scratch inside the sandbox.
-struct ScratchProject {
-    root: PathBuf,
-}
-
-impl ScratchProject {
-    fn create() -> Self {
-        let root = PathBuf::from(TEMP_TEST_ROOT)
-            .join(format!("lifecycle-{}", unique_suffix()))
-            .canonicalize_base();
-        std::fs::create_dir_all(&root).unwrap();
-        let mut command = Command::new("git");
-        scrub_git_env(&mut command);
-        let output = command
-            .args(["init", "--quiet"])
-            .current_dir(&root)
-            .output()
-            .unwrap();
-        assert!(output.status.success(), "cannot initialize scratch repo");
-        let configuration_directory = root.join(".auxiliary/configuration/nbspec");
-        std::fs::create_dir_all(&configuration_directory).unwrap();
-        // Pins every setting the test depends on at the
-        // highest-precedence layer, so an operator's user-global
-        // configuration cannot change test behavior.
-        std::fs::write(
-            configuration_directory.join("general.toml"),
-            "schema = \"nbspec-default\"\n\
-             scratch_directory = \".auxiliary/temporary/renders\"\n\
-             archives = true\n\
-             archive_directory = \"documentation/archives\"\n",
-        )
-        .unwrap();
-        ScratchProject { root }
-    }
-
-    /// The sandbox configuration directory, pinned through
-    /// `NBSPEC_CONFIG_DIR` so a user-global
-    /// `project_configuration_directory` cannot redirect it.
-    fn configuration_directory(&self) -> PathBuf {
-        self.root.join(".auxiliary/configuration/nbspec")
-    }
-}
-
-impl Drop for ScratchProject {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
-    }
-}
-
-/// Anchors a relative path under the crate directory so that scratch
-/// state survives the binary's differing working directory.
-trait CanonicalizeBase {
-    fn canonicalize_base(self) -> PathBuf;
-}
-
-impl CanonicalizeBase for PathBuf {
-    fn canonicalize_base(self) -> PathBuf {
-        Path::new(env!("CARGO_MANIFEST_DIR")).join(self)
-    }
-}
-
 /// Runs the nbspec binary inside the scratch project against the
-/// scratch notebook. Scrubs `GIT_*` so the subprocess targets the
-/// expected repository even when the test runner leaked ambient git
-/// state into the parent environment.
-fn nbspec(project: &ScratchProject, notebook: &ScratchNotebook, arguments: &[&str]) -> Output {
+/// scratch notebook, with the fixture's environment applied (scrubs
+/// `GIT_*`, sets `NB_DIR`/`HOME`/`PATH`/git identity, and `cwd` to the
+/// project root).
+fn nbspec(fixture: &Fixture, arguments: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nbspec"));
-    scrub_git_env(&mut command);
+    fixture.configure_std(&mut command);
     command
-        .current_dir(&project.root)
-        .env("NBSPEC_CONFIG_DIR", project.configuration_directory())
-        .env("NB_DIR", notebook.nb_dir_path())
-        .args(["--notebook", &notebook.name])
+        .env("NBSPEC_CONFIG_DIR", fixture.configuration_directory())
+        .args(["--notebook", fixture.notebook()])
         .args(arguments)
         .output()
         .unwrap()
@@ -193,23 +46,16 @@ fn nbspec(project: &ScratchProject, notebook: &ScratchNotebook, arguments: &[&st
 
 /// Like [`nbspec`], but pipes `stdin_content` to the subprocess's
 /// standard input — the transport for `--comment-file -`. Same
-/// hygiene as [`nbspec`]: `GIT_*` scrubbed, `NB_DIR` pinned to the
-/// isolated root.
-fn nbspec_with_stdin(
-    project: &ScratchProject,
-    notebook: &ScratchNotebook,
-    arguments: &[&str],
-    stdin_content: &str,
-) -> Output {
+/// hygiene as [`nbspec`]: fixture environment applied, `NB_DIR`
+/// pinned to the isolated root.
+fn nbspec_with_stdin(fixture: &Fixture, arguments: &[&str], stdin_content: &str) -> Output {
     use std::io::Write as _;
     use std::process::Stdio;
     let mut command = Command::new(env!("CARGO_BIN_EXE_nbspec"));
-    scrub_git_env(&mut command);
+    fixture.configure_std(&mut command);
     let mut child = command
-        .current_dir(&project.root)
-        .env("NBSPEC_CONFIG_DIR", project.configuration_directory())
-        .env("NB_DIR", notebook.nb_dir_path())
-        .args(["--notebook", &notebook.name])
+        .env("NBSPEC_CONFIG_DIR", fixture.configuration_directory())
+        .args(["--notebook", fixture.notebook()])
         .args(arguments)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -235,21 +81,16 @@ fn stderr_of(output: &Output) -> String {
 
 #[test]
 fn change_lifecycle_end_to_end() {
-    let notebook = ScratchNotebook::create();
-    let project = ScratchProject::create();
+    let fixture = Fixture::new();
 
     // Create scaffolds the namespace without touching the repository.
-    let created = nbspec(
-        &project,
-        &notebook,
-        &["create", CHANGE_ID, "--title", "Demo"],
-    );
+    let created = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
     assert!(created.status.success(), "{}", stderr_of(&created));
     assert!(stdout_of(&created).contains("Created change add-demo"));
 
     // A fresh change is invalid: both required artifacts unauthored.
     // Contract: exit 1, empty stdout, banner-free report on stderr.
-    let invalid = nbspec(&project, &notebook, &["validate", CHANGE_ID]);
+    let invalid = nbspec(&fixture, &["validate", CHANGE_ID]);
     assert_eq!(invalid.status.code(), Some(1));
     assert_eq!(stdout_of(&invalid), "");
     let report = stderr_of(&invalid);
@@ -261,7 +102,7 @@ fn change_lifecycle_end_to_end() {
 
     // Author the proposal and one delta specification directly on the
     // notebook filesystem, as an agent's editor would.
-    let change_directory = notebook.path().join("proposals").join(CHANGE_ID);
+    let change_directory = fixture.notebook_path().join("proposals").join(CHANGE_ID);
     let mut proposal = std::fs::read_to_string(change_directory.join("proposal.md")).unwrap();
     proposal.push_str("\n## Why\n\nProve the lifecycle.\n");
     std::fs::write(change_directory.join("proposal.md"), proposal).unwrap();
@@ -269,7 +110,7 @@ fn change_lifecycle_end_to_end() {
     std::fs::write(&specification_note, SPECIFICATION).unwrap();
 
     // The authored change validates: exit 0 and a one-line summary.
-    let valid = nbspec(&project, &notebook, &["validate", CHANGE_ID]);
+    let valid = nbspec(&fixture, &["validate", CHANGE_ID]);
     assert!(valid.status.success(), "{}", stderr_of(&valid));
     assert!(
         stdout_of(&valid).contains(
@@ -279,22 +120,22 @@ fn change_lifecycle_end_to_end() {
 
     // Render writes the scratch tree byte-for-byte and leaves the
     // repository untouched.
-    let rendered = nbspec(&project, &notebook, &["render", CHANGE_ID]);
+    let rendered = nbspec(&fixture, &["render", CHANGE_ID]);
     assert!(rendered.status.success(), "{}", stderr_of(&rendered));
-    let scratch_document = project
-        .root
+    let scratch_document = fixture
+        .project_root()
         .join(".auxiliary/temporary/renders")
-        .join(&notebook.name)
+        .join(fixture.notebook())
         .join(CHANGE_ID)
         .join("specifications/user-auth.md");
     assert_eq!(
         std::fs::read_to_string(&scratch_document).unwrap(),
         SPECIFICATION
     );
-    assert!(!project.root.join("documentation").exists());
+    assert!(!fixture.project_root().join("documentation").exists());
 
     // The review diff is pure git-format output for piping.
-    let diffed = nbspec(&project, &notebook, &["render", CHANGE_ID, "--diff"]);
+    let diffed = nbspec(&fixture, &["render", CHANGE_ID, "--diff"]);
     assert!(diffed.status.success());
     let diff = stdout_of(&diffed);
     assert!(diff.starts_with(
@@ -305,21 +146,20 @@ fn change_lifecycle_end_to_end() {
 
     // An unreviewed merge refuses at the review gate: an approving
     // verdict is the merge license, and none exists yet.
-    let refused = nbspec(&project, &notebook, &["merge", CHANGE_ID]);
+    let refused = nbspec(&fixture, &["merge", CHANGE_ID]);
     assert!(!refused.status.success(), "unreviewed merge must refuse");
     assert!(
         stderr_of(&refused).contains("review gate unsatisfied: no verdict"),
         "{}",
         stderr_of(&refused)
     );
-    assert!(!project.root.join("documentation").exists());
+    assert!(!fixture.project_root().join("documentation").exists());
 
     // A revise verdict without findings refuses; so does a comment
     // file that cannot be read. Findings supplied via --comment-file
     // record — and then block the merge as revise-outstanding.
     let moodless = nbspec(
-        &project,
-        &notebook,
+        &fixture,
         &[
             "review",
             CHANGE_ID,
@@ -335,8 +175,7 @@ fn change_lifecycle_end_to_end() {
     );
     assert!(stderr_of(&moodless).contains("requires a comment"));
     let unreadable = nbspec(
-        &project,
-        &notebook,
+        &fixture,
         &[
             "review",
             CHANGE_ID,
@@ -353,11 +192,10 @@ fn change_lifecycle_end_to_end() {
         "unreadable comment file must refuse"
     );
     assert!(stderr_of(&unreadable).contains("cannot read the review comment file"));
-    let findings_file = project.root.join("itest-findings.md");
+    let findings_file = fixture.project_root().join("itest-findings.md");
     std::fs::write(&findings_file, "tighten the scenario wording").unwrap();
     let revised = nbspec(
-        &project,
-        &notebook,
+        &fixture,
         &[
             "review",
             CHANGE_ID,
@@ -371,7 +209,7 @@ fn change_lifecycle_end_to_end() {
     );
     assert!(revised.status.success(), "{}", stderr_of(&revised));
     std::fs::remove_file(&findings_file).unwrap();
-    let blocked = nbspec(&project, &notebook, &["merge", CHANGE_ID]);
+    let blocked = nbspec(&fixture, &["merge", CHANGE_ID]);
     assert!(!blocked.status.success(), "revise-outstanding must refuse");
     assert!(
         stderr_of(&blocked).contains("latest verdict is revise by itest"),
@@ -382,8 +220,7 @@ fn change_lifecycle_end_to_end() {
     // A newer approving verdict supersedes the revise and satisfies
     // the gate; its optional comment arrives inline and literally.
     let approved = nbspec(
-        &project,
-        &notebook,
+        &fixture,
         &[
             "review",
             CHANGE_ID,
@@ -421,7 +258,7 @@ fn change_lifecycle_end_to_end() {
         .file_name()
         .and_then(|name| name.to_str())
         .expect("verdict note path must have a UTF-8 basename");
-    let absolute_verdict_note = notebook.path().join(&verdict_note_path);
+    let absolute_verdict_note = fixture.notebook_path().join(&verdict_note_path);
     assert!(
         absolute_verdict_note.is_file(),
         "recorded verdict note path must exist on disk: {verdict_note_path} \
@@ -485,8 +322,7 @@ fn change_lifecycle_end_to_end() {
     // arrive on standard input via `--comment-file -`; the display
     // assertion below proves the piped content landed in the verdict.
     let dissent = nbspec_with_stdin(
-        &project,
-        &notebook,
+        &fixture,
         &[
             "review",
             CHANGE_ID,
@@ -500,7 +336,7 @@ fn change_lifecycle_end_to_end() {
         "prefer stronger scenario names",
     );
     assert!(dissent.status.success(), "{}", stderr_of(&dissent));
-    let displayed = nbspec(&project, &notebook, &["display", CHANGE_ID]);
+    let displayed = nbspec(&fixture, &["display", CHANGE_ID]);
     assert!(displayed.status.success(), "{}", stderr_of(&displayed));
     let display_output = stdout_of(&displayed);
     assert!(display_output.contains("## review"), "{display_output}");
@@ -516,21 +352,21 @@ fn change_lifecycle_end_to_end() {
 
     // Merge transfers the durable document with provenance and writes
     // the change archive; the missing LFS rule draws a warning.
-    let merged = nbspec(&project, &notebook, &["merge", CHANGE_ID]);
+    let merged = nbspec(&fixture, &["merge", CHANGE_ID]);
     assert!(merged.status.success(), "{}", stderr_of(&merged));
     let merge_output = stdout_of(&merged);
     assert!(merge_output.contains("wrote documentation/specifications/user-auth.md"));
     assert!(merge_output.contains("archived documentation/archives/add-demo.tar.zst"));
     assert!(merge_output.contains("warning: no .gitattributes rule"));
-    let target = project
-        .root
+    let target = fixture
+        .project_root()
         .join("documentation/specifications/user-auth.md");
     let merged_content = std::fs::read_to_string(&target).unwrap();
     assert!(merged_content.starts_with("<!-- nbspec: change=add-demo notebook="));
     assert!(merged_content.ends_with(SPECIFICATION));
     assert!(
-        project
-            .root
+        fixture
+            .project_root()
             .join("documentation/archives/add-demo.tar.zst")
             .is_file()
     );
@@ -538,8 +374,12 @@ fn change_lifecycle_end_to_end() {
     // The archive preserves the review trail: every verdict note
     // rides alongside meta and work (three verdicts stand: itest's
     // superseded revise, itest's approve, qa's outstanding revise).
-    let archive_bytes =
-        std::fs::read(project.root.join("documentation/archives/add-demo.tar.zst")).unwrap();
+    let archive_bytes = std::fs::read(
+        fixture
+            .project_root()
+            .join("documentation/archives/add-demo.tar.zst"),
+    )
+    .unwrap();
     let decompressed = zstd::decode_all(archive_bytes.as_slice()).unwrap();
     let mut archive = tar::Archive::new(decompressed.as_slice());
     let entry_paths: Vec<String> = archive
@@ -558,23 +398,26 @@ fn change_lifecycle_end_to_end() {
         "all three verdict notes must be archived: {entry_paths:?}"
     );
     assert!(
-        !project.root.join("documentation/verdicts").exists()
-            && !project
-                .root
+        !fixture
+            .project_root()
+            .join("documentation/verdicts")
+            .exists()
+            && !fixture
+                .project_root()
                 .join("documentation/specifications/verdicts")
                 .exists(),
         "verdicts never materialize to the repository tree"
     );
 
     // Re-merge is idempotent.
-    let remerged = nbspec(&project, &notebook, &["merge", CHANGE_ID]);
+    let remerged = nbspec(&fixture, &["merge", CHANGE_ID]);
     assert!(remerged.status.success());
     assert!(stdout_of(&remerged).contains("unchanged documentation/specifications/user-auth.md"));
 
     // A hand-edited target refuses without force and nothing changes.
     let drifted_content = format!("{merged_content}\nEdited by hand.\n");
     std::fs::write(&target, &drifted_content).unwrap();
-    let refused = nbspec(&project, &notebook, &["merge", CHANGE_ID]);
+    let refused = nbspec(&fixture, &["merge", CHANGE_ID]);
     assert_eq!(refused.status.code(), Some(1));
     let refusal = stderr_of(&refused);
     assert!(refusal.contains("merge refused; no files were written"));
@@ -582,7 +425,7 @@ fn change_lifecycle_end_to_end() {
     assert_eq!(std::fs::read_to_string(&target).unwrap(), drifted_content);
 
     // Force restores the notebook's version.
-    let forced = nbspec(&project, &notebook, &["merge", CHANGE_ID, "--force"]);
+    let forced = nbspec(&fixture, &["merge", CHANGE_ID, "--force"]);
     assert!(forced.status.success(), "{}", stderr_of(&forced));
     assert_eq!(std::fs::read_to_string(&target).unwrap(), merged_content);
 
@@ -593,7 +436,7 @@ fn change_lifecycle_end_to_end() {
         .unwrap()
         .to_string();
     std::fs::write(&specification_note, broken).unwrap();
-    let rebroken = nbspec(&project, &notebook, &["validate", CHANGE_ID]);
+    let rebroken = nbspec(&fixture, &["validate", CHANGE_ID]);
     assert_eq!(rebroken.status.code(), Some(1));
     assert!(stderr_of(&rebroken).contains(
         "proposals/add-demo/specifications/user-auth.md:5: [specifications] \
@@ -609,27 +452,22 @@ fn change_lifecycle_end_to_end() {
 /// reporting an authored proposal as "ready to author".
 #[test]
 fn display_reports_authored_when_h1_diverges_from_selector_stem() {
-    let notebook = ScratchNotebook::create();
-    let project = ScratchProject::create();
+    let fixture = Fixture::new();
 
-    let created = nbspec(
-        &project,
-        &notebook,
-        &["create", CHANGE_ID, "--title", "Demo"],
-    );
+    let created = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
     assert!(created.status.success(), "{}", stderr_of(&created));
 
     // Author the proposal with an H1 that does NOT match the note
     // filename stem ("proposal"). Before the fix, this caused nb to
     // fail selector resolution, and display reported "ready to author".
-    let change_directory = notebook.path().join("proposals").join(CHANGE_ID);
+    let change_directory = fixture.notebook_path().join("proposals").join(CHANGE_ID);
     std::fs::write(
         change_directory.join("proposal.md"),
         "# A Human-Readable Title\n\n## Why\n\nBody text that counts as authored.\n",
     )
     .unwrap();
 
-    let displayed = nbspec(&project, &notebook, &["display", CHANGE_ID]);
+    let displayed = nbspec(&fixture, &["display", CHANGE_ID]);
     assert!(displayed.status.success(), "{}", stderr_of(&displayed));
     let output = stdout_of(&displayed);
     assert!(
@@ -638,7 +476,7 @@ fn display_reports_authored_when_h1_diverges_from_selector_stem() {
     );
 
     // display --full must also succeed (reads the note via show_note).
-    let full_displayed = nbspec(&project, &notebook, &["display", "--full", CHANGE_ID]);
+    let full_displayed = nbspec(&fixture, &["display", "--full", CHANGE_ID]);
     assert!(
         full_displayed.status.success(),
         "{}",
@@ -662,21 +500,16 @@ fn display_reports_authored_when_h1_diverges_from_selector_stem() {
 /// unreadable directories.
 #[test]
 fn display_classifies_missing_note_and_folder_as_absence() {
-    let notebook = ScratchNotebook::create();
-    let project = ScratchProject::create();
+    let fixture = Fixture::new();
 
-    let created = nbspec(
-        &project,
-        &notebook,
-        &["create", CHANGE_ID, "--title", "Demo"],
-    );
+    let created = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
     assert!(created.status.success(), "{}", stderr_of(&created));
 
-    let change_directory = notebook.path().join("proposals").join(CHANGE_ID);
+    let change_directory = fixture.notebook_path().join("proposals").join(CHANGE_ID);
 
     // --- missing note: delete proposal.md ---
     std::fs::remove_file(change_directory.join("proposal.md")).unwrap();
-    let displayed = nbspec(&project, &notebook, &["display", CHANGE_ID]);
+    let displayed = nbspec(&fixture, &["display", CHANGE_ID]);
     assert!(displayed.status.success(), "{}", stderr_of(&displayed));
     let output = stdout_of(&displayed);
     assert!(
@@ -693,7 +526,7 @@ fn display_classifies_missing_note_and_folder_as_absence() {
     if specs.exists() {
         std::fs::remove_dir_all(&specs).unwrap();
     }
-    let full_missing = nbspec(&project, &notebook, &["display", "--full", CHANGE_ID]);
+    let full_missing = nbspec(&fixture, &["display", "--full", CHANGE_ID]);
     assert!(
         full_missing.status.success(),
         "{}",
@@ -723,21 +556,15 @@ fn display_classifies_missing_note_and_folder_as_absence() {
 /// unqualified `verdicts/<name>.md`.
 #[test]
 fn first_review_reports_qualified_note_path() {
-    let notebook = ScratchNotebook::create();
-    let project = ScratchProject::create();
+    let fixture = Fixture::new();
 
-    let created = nbspec(
-        &project,
-        &notebook,
-        &["create", CHANGE_ID, "--title", "Demo"],
-    );
+    let created = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
     assert!(created.status.success(), "{}", stderr_of(&created));
 
     // First review on the change: the `verdicts/` folder does not
     // exist yet, so it is created inside the same transaction.
     let reviewed = nbspec(
-        &project,
-        &notebook,
+        &fixture,
         &[
             "review",
             CHANGE_ID,
@@ -758,7 +585,7 @@ fn first_review_reports_qualified_note_path() {
         .lines()
         .find_map(|line| line.strip_prefix("note=").map(str::to_string))
         .expect("review output must contain `note=...` line");
-    let qualified_prefix = format!("{}:proposals/{CHANGE_ID}/verdicts/", notebook.name);
+    let qualified_prefix = format!("{}:proposals/{CHANGE_ID}/verdicts/", fixture.notebook());
     assert!(
         note_line.starts_with(&qualified_prefix),
         "first-review note= must be qualified as \
@@ -771,7 +598,7 @@ fn first_review_reports_qualified_note_path() {
         .map(|(_, rest)| rest)
         .unwrap_or(&note_line);
     assert!(
-        notebook.path().join(relative_path).is_file(),
+        fixture.notebook_path().join(relative_path).is_file(),
         "recorded verdict note must exist on disk: {relative_path}"
     );
 }

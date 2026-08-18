@@ -1,5 +1,13 @@
 //! Shared test harness for integration tests.
 //!
+//! The harness is built on nb-api's shipped [`NbTestEnv`] fixture
+//! (`NB_DIR`, notebook, `HOME`, deterministic git identity, signing and
+//! line-ending config) instead of hand-rolled isolation. On top of it,
+//! each test gets a scratch project repository in the fixture's
+//! `working_dir` — the cwd every spawned nbspec binary runs from — so
+//! the resolved project root, and therefore every merge write, stays
+//! inside the sandbox.
+//!
 //! Concerns handled here, both about ambient state leaking into
 //! spawned subprocesses and breaking the test contract in ways that
 //! depend on the test runner:
@@ -10,130 +18,111 @@
 //!    `GIT_WORK_TREE` / `GIT_OBJECT_DIRECTORY` /
 //!    `GIT_ALTERNATE_OBJECT_DIRECTORIES` into the environment of every
 //!    subprocess it spawns. `nb` is a bash script layered over git;
-//!    any of these variables redirect every git call inside `nb`
-//!    away from the notebook's repository and into the project
-//!    repository (or a bare-repo error). The shared `scrub_git_env`
-//!    helper (in `crate::git_env`) strips them from every spawned
-//!    command's environment. Production code uses the same helper;
-//!    see `src/git_env.rs` for the rationale.
-//!
-//! 2. **NB directory isolation.** Without per-test `NB_DIR`, scratch
-//!    notebooks accumulate in the operator's real notebook list
-//!    (filed as `nbspec:issues/5`). Each test creates a fresh temp
-//!    `NB_DIR`; the scratch notebook lives there; the temp dir is
-//!    removed on Drop. Tests never touch the real notebook root.
-//!    Each `NB_DIR` is primed against nb's first-run interactive
-//!    banner before any real subcommand runs.
-//!
-//! Per the diagnostic in `nbspec:issues/4` and Eric's directive on
-//! `nbspec:issues/5`. See also: the hook-environment repro that
-//! Advisor surfaced (pre-commit `cargo test` invocations fail
-//! identically because hooks inherit the parent repo's `GIT_*`).
+//!    any of these variables redirect every git call inside `nb` (and
+//!    inside the nbspec binary, which resolves the project root via
+//!    git) away from the intended repository. [`NbTestEnv`]'s
+//!    `configure_std` / `configure_tokio` scrub them from every spawned
+//!    command's environment; the same scrub is applied to the scratch
+//!    repo's `git init`. See `src/git_env.rs` for the rationale.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use nb_api::testing::NbTestEnv;
+
 pub use nbspec::git_env::scrub_git_env;
 
-/// Removes every environment variable whose name starts with `GIT_`
-/// from a tokio command's environment. See `scrub_git_env` (the
-/// std-process counterpart in `crate::git_env`) for the rationale.
-/// When nbspec grows a tokio-spawned git pathway in production,
-/// move this function to `crate::git_env` and re-export from here.
-pub fn scrub_git_env_async(command: &mut tokio::process::Command) {
-    for name in nbspec::git_env::leaked_git_names() {
-        command.env_remove(name);
-    }
-}
-
-/// Returns a fresh per-test `NB_DIR` path. The directory is created;
-/// the caller is responsible for cleanup (or wrap with
-/// `IsolatedNbDir` to drop-clean). Lives under `std::env::temp_dir()`
-/// (deliberate: see `prime_nb_dir` for the rationale on temp vs
-/// `.auxiliary/temporary`).
+/// Combines nb-api's hermetic [`NbTestEnv`] notebook fixture with a
+/// scratch project repository rooted at the fixture's working
+/// directory. Spawned nbspec binaries (and their internal `nb`
+/// subprocesses) run with the fixture environment applied and
+/// `working_dir` as cwd, so the project root resolves inside the
+/// sandbox and merge writes never touch the operator's repository.
 ///
-/// Concurrency-safe: the path includes a per-process atomic sequence
-/// so two calls within the same nanosecond from the same process
-/// still get distinct paths. Without the sequence, the only entropy
-/// was pid + nanoseconds, which can collide when two threads call
-/// `IsolatedNbDir::new()` back-to-back. Mirrors the pattern in
-/// `reviews::verdict_note_name`.
-pub fn isolated_nb_dir_path() -> PathBuf {
-    static SEQUENCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-    let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let path = std::env::temp_dir().join(format!(
-        "nbspec-itest-nbdir-{}-{}-{sequence:x}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos(),
-    ));
-    std::fs::create_dir_all(&path).expect("create isolated nb dir");
-    path
+/// Drop removes the fixture's root tempdir (data store, notebook, and
+/// working directory), so the operator's real notebook list and repo
+/// are never touched.
+pub struct Fixture {
+    env: NbTestEnv,
+    project_root: PathBuf,
 }
 
-/// Primes `nb` against a fresh `NB_DIR` by running one non-interactive
-/// list command. Without this priming, the first interactive-aware
-/// subcommand (`notebooks add`) is silently eaten by nb's first-run
-/// banner — `nb` writes the welcome banner + REPL prompt to stdout
-/// and exits 0 without executing the subcommand. Discovered via the
-/// diagnostic in `nbspec:issues/4`; reproducible with any fresh
-/// `NB_DIR` on `nb 7.24.0`.
-///
-/// **Ambient-state caveat.** On first invocation against any NB_DIR,
-/// `nb` 7.24.0 also touches `${HOME}/.nbrc` — sourcing it if present,
-/// or creating it via `_init_create_nb_dir` if absent. The prime
-/// therefore mutates the operator's home directory exactly once per
-/// test process that runs first against a fresh NB_DIR. CI's HOME
-/// is ephemeral so this is a non-issue there; on a developer's
-/// workstation, `.nbrc` will appear after the first test run. The
-/// alternative — leaving `.nbrc` uncreated — leaves the notebook's
-/// git config in a half-initialized state that breaks subsequent
-/// commands, so this is the lesser evil. Long-term the right fix
-/// is in nb: a `--no-rc-init` flag, or a `NB_RC_PATH=/dev/null`
-/// escape hatch.
-fn prime_nb_dir(path: &Path) {
-    let mut command = Command::new("nb");
-    scrub_git_env(&mut command);
-    // The prime is best-effort: any exit code is acceptable, the
-    // important thing is that nb touches the directory and lays
-    // down its first-run config files.
-    let _ = command
-        .env("NB_DIR", path)
-        .args(["notebooks", "--no-color"])
-        .output();
-}
-
-/// RAII wrapper around an isolated `NB_DIR`. Drop best-effort removes
-/// the directory; the per-test scratch notebook inside it is also
-/// removed (the spawn sites do this explicitly so they can retry on
-/// transient nb failures).
-#[derive(Debug)]
-pub struct IsolatedNbDir {
-    path: PathBuf,
-}
-
-impl IsolatedNbDir {
+impl Fixture {
+    /// Builds the fixture: constructs the [`NbTestEnv`], then
+    /// initializes a scratch git repository with a pinned project
+    /// configuration at the fixture's working directory.
     pub fn new() -> Self {
-        let path = isolated_nb_dir_path();
-        prime_nb_dir(&path);
-        Self { path }
+        let env = NbTestEnv::new().expect("NbTestEnv");
+        let project_root = env.working_dir().to_path_buf();
+        init_scratch_project(&project_root);
+        Self { env, project_root }
     }
 
-    pub fn path(&self) -> &Path {
-        &self.path
+    /// Applies the fixture's environment to a `std::process::Command`
+    /// (scrubs `GIT_*`, sets `NB_DIR`/`HOME`/`PATH`, git identity,
+    /// signing + line-ending config, and `current_dir` to the scratch
+    /// project root).
+    pub fn configure_std(&self, cmd: &mut Command) {
+        self.env.configure_std(cmd);
+    }
+
+    /// Async counterpart to [`configure_std`](Self::configure_std).
+    pub fn configure_tokio(&self, cmd: &mut tokio::process::Command) {
+        self.env.configure_tokio(cmd);
+    }
+
+    /// The scratch notebook's name.
+    pub fn notebook(&self) -> &str {
+        self.env.notebook()
+    }
+
+    /// Filesystem path of the scratch notebook directory inside the
+    /// fixture's isolated `NB_DIR`.
+    pub fn notebook_path(&self) -> PathBuf {
+        self.env.nb_dir().join(self.env.notebook())
+    }
+
+    /// Root of the scratch project repository (the fixture's
+    /// `working_dir`).
+    pub fn project_root(&self) -> &Path {
+        &self.project_root
+    }
+
+    /// The sandbox configuration directory, pinned through
+    /// `NBSPEC_CONFIG_DIR` so a user-global
+    /// `project_configuration_directory` cannot redirect it.
+    pub fn configuration_directory(&self) -> PathBuf {
+        self.project_root.join(".auxiliary/configuration/nbspec")
     }
 }
 
-impl Default for IsolatedNbDir {
+impl Default for Fixture {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl Drop for IsolatedNbDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
+/// Initializes the scratch project: a git repository at the fixture's
+/// working directory with a `general.toml` pinning every setting the
+/// test depends on at the highest-precedence layer, so an operator's
+/// user-global configuration cannot change test behavior.
+fn init_scratch_project(root: &Path) {
+    let mut command = Command::new("git");
+    scrub_git_env(&mut command);
+    let output = command
+        .args(["init", "--quiet"])
+        .current_dir(root)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "cannot initialize scratch repo");
+    let configuration_directory = root.join(".auxiliary/configuration/nbspec");
+    std::fs::create_dir_all(&configuration_directory).unwrap();
+    std::fs::write(
+        configuration_directory.join("general.toml"),
+        "schema = \"nbspec-default\"\n\
+         scratch_directory = \".auxiliary/temporary/renders\"\n\
+         archives = true\n\
+         archive_directory = \"documentation/archives\"\n",
+    )
+    .unwrap();
 }
