@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/tupe12334/linecheck/main/schema/linecheck.schema.json
+
+rules:
+  - pattern: "src/**/*.rs"
+    warn: 800
+    warn_message: "Approaching the 1000-line module limit; consider splitting by feature."
+    error: 1000
+    error_message: "Exceeds the 1000-line module limit; split by feature before merging."
+  - pattern: "tests/**/*.rs"
+    warn: 800
+    warn_message: "Approaching the 1000-line module limit; consider splitting by feature."
+    error: 1000
+    error_message: "Exceeds the 1000-line module limit; split by feature before merging."

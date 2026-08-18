@@ -61,6 +61,15 @@ repos:
       stages: [ 'pre-commit' ]
       fail_fast: true
 
+    - id: linecheck
+      name: 'Check: Line Counts'
+      language: system
+      entry: 'linecheck --config .auxiliary/configuration/linecheck.yaml'
+      types: [ rust ]
+      require_serial: true
+      stages: [ 'pre-commit' ]
+      fail_fast: true
+
     - id: cargo-build
       name: 'Compile (Rust: Release)'
       language: system
