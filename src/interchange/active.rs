@@ -297,9 +297,11 @@ fn strip_leading_h1(content: &str) -> String {
         }
     }
     if let Some(first) = first_non_blank
-        && first.trim_start().starts_with("# ")
+        && first.starts_with("# ")
     {
-        // Skip leading blanks + H1 line
+        // Only strip an actual unindented H1 (column 0). Indented
+        // "#!/bin/sh" or "    # indented" is not an H1 per
+        // first_h1_title_ignores_indented_heading and must be preserved.
         return content
             .lines()
             .skip(leading_blank_count + 1)

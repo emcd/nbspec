@@ -223,3 +223,48 @@ fn import_strips_leading_blank_lines_before_h1() {
     );
     assert!(content.contains("body content"));
 }
+
+/// P2: indented `#` (e.g. `    #!/bin/sh`) must be preserved — only an
+/// unindented H1 (`# ` at column 0) is stripped. This matches
+/// `first_h1_title_ignores_indented_heading` and prevents silent data loss.
+#[test]
+fn import_preserves_indented_hash_content() {
+    let fixture = Fixture::new();
+
+    let source_root = fixture.project_root().join("scratch-indented-hash");
+    std::fs::create_dir_all(source_root.join("add-foo/specs/cap")).unwrap();
+    std::fs::write(
+        source_root.join("add-foo/proposal.md"),
+        "# add-foo\n\nbody\n",
+    )
+    .unwrap();
+    // Spec body starts with an indented shebang — not an H1, must be preserved verbatim.
+    std::fs::write(
+        source_root.join("add-foo/specs/cap/spec.md"),
+        "    #!/bin/sh\n\necho hi\n",
+    )
+    .unwrap();
+
+    let imported = nbspec(&fixture, &["import", &source_root.display().to_string()]);
+    assert!(
+        imported.status.success(),
+        "indented hash content should succeed; stderr: {} stdout: {}",
+        stderr_of(&imported),
+        stdout_of(&imported)
+    );
+    let spec_path = fixture
+        .notebook_path()
+        .join("proposals/add-foo/specifications/cap.md");
+    assert!(spec_path.is_file(), "spec should be imported");
+    let content = std::fs::read_to_string(&spec_path).unwrap();
+    assert!(
+        content.contains("    #!/bin/sh"),
+        "indented #!/bin/sh must be preserved, not stripped as H1: {content}"
+    );
+    assert!(content.contains("echo hi"));
+    // The file should still have its title H1 plus the preserved indented line
+    assert!(
+        content.contains("# cap"),
+        "title H1 must still be present: {content}"
+    );
+}
