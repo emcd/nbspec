@@ -127,11 +127,7 @@ async fn build_active_transaction(
                     },
                 )
             })?;
-            let stripped = if content.trim_start().starts_with("# ") {
-                content.lines().skip(1).collect::<Vec<_>>().join("\n")
-            } else {
-                content.clone()
-            };
+            let stripped = strip_leading_h1(&content);
             tx.add_note(
                 &format!("proposals/{change_id}/specifications/{cap}.md"),
                 Some(&cap),
@@ -153,11 +149,7 @@ async fn build_active_transaction(
                 },
             )
         })?;
-        let stripped = if design_raw.trim_start().starts_with("# ") {
-            design_raw.lines().skip(1).collect::<Vec<_>>().join("\n")
-        } else {
-            design_raw.clone()
-        };
+        let stripped = strip_leading_h1(&design_raw);
         tx.add_folder(&format!("proposals/{change_id}/designs"))
             .map_err(crate::operations::OperationError::from)?;
         tx.add_note(
@@ -211,11 +203,7 @@ async fn build_active_transaction(
                     },
                 )
             })?;
-            let stripped = if content.trim_start().starts_with("# ") {
-                content.lines().skip(1).collect::<Vec<_>>().join("\n")
-            } else {
-                content.clone()
-            };
+            let stripped = strip_leading_h1(&content);
             tx.add_note(
                 &format!("proposals/{change_id}/decisions/{name}.md"),
                 Some(&name),
@@ -290,6 +278,35 @@ async fn build_active_transaction(
     .map_err(crate::operations::OperationError::from)?;
 
     Ok(tx)
+}
+
+fn strip_leading_h1(content: &str) -> String {
+    // Normalize leading blank lines before checking for H1, so a file
+    // starting with "\n\n# title" correctly strips the H1. Prior code
+    // checked trim_start() but removed only lines().skip(1), leaving the
+    // H1 and triggering DuplicateTitleHeading.
+    let lines = content.lines();
+    let mut first_non_blank: Option<String> = None;
+    let mut leading_blank_count = 0;
+    for line in lines.clone() {
+        if line.trim().is_empty() {
+            leading_blank_count += 1;
+        } else {
+            first_non_blank = Some(line.to_string());
+            break;
+        }
+    }
+    if let Some(first) = first_non_blank
+        && first.trim_start().starts_with("# ")
+    {
+        // Skip leading blanks + H1 line
+        return content
+            .lines()
+            .skip(leading_blank_count + 1)
+            .collect::<Vec<_>>()
+            .join("\n");
+    }
+    content.to_string()
 }
 
 pub async fn preflight_active_source(
