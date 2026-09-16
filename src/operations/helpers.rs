@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use nb_api::{NbError, ShowNote};
 
 use crate::changes::{ArtifactLayout, artifact_layout, note_has_authored_content};
@@ -14,10 +16,17 @@ pub(crate) async fn folder_exists(
     folder: &str,
     notebook: Option<&str>,
 ) -> bool {
-    client
-        .list_notes(Some(folder), &[], Some(1), notebook)
-        .await
-        .is_ok()
+    // Filesystem-grounded (decisions/4): `nb list <folder>/` exits 1
+    // with empty output on empty subfolders once nb-api 0.4.0
+    // maintains `.index` files, so scraping its success for existence
+    // misreports every empty folder as missing (which then collides
+    // at commit when re-created). Probe the resolved notebook path
+    // on disk instead; resolution failure reads as absent and the
+    // caller's transaction surfaces the real error.
+    match client.show_notebook_path(notebook).await {
+        Ok(root) => root.join(folder).is_dir(),
+        Err(_) => false,
+    }
 }
 
 pub(crate) async fn folder_listing(
@@ -25,10 +34,45 @@ pub(crate) async fn folder_listing(
     folder: &str,
     notebook: Option<&str>,
 ) -> Result<String, String> {
+    // Fast path on disk before paying for `nb list`: a missing
+    // directory is `(empty)`, and so is an existing directory with
+    // no note-like entries — `nb list` fails silently on exactly
+    // those folders under `.index` trees, which display must report
+    // as empty rather than unreadable. Non-empty directories go
+    // through `nb list` passthrough as before.
+    if let Ok(root) = client.show_notebook_path(notebook).await {
+        let directory = root.join(folder);
+        if !directory.is_dir() || !dir_has_notes(&directory) {
+            return Ok("(empty)".to_string());
+        }
+    }
     classify_folder_listing(
         client.list_notes(Some(folder), &[], None, notebook).await,
         folder,
     )
+}
+
+/// Reports whether a notebook directory holds note-like entries:
+/// subdirectories (surfaced as folder entries by `nb list`) or
+/// visible files other than Git/notebook bookkeeping (`.gitkeep`,
+/// `.index`, dotfiles), which `nb list` itself does not count.
+fn dir_has_notes(directory: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            return false;
+        };
+        if name.starts_with('.') || name == ".gitkeep" || name == ".index" {
+            return false;
+        }
+        let Ok(kind) = entry.file_type() else {
+            return false;
+        };
+        kind.is_dir() || kind.is_file()
+    })
 }
 
 /// Maps a `list_notes` result to display text: real listings pass
