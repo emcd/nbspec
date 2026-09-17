@@ -160,16 +160,21 @@ pub async fn review(
     // Find the verdict-note operation by its explicit final path, not
     // by `ops.first()`: when the `verdicts/` folder was created in the
     // same transaction (first review), the folder op is op zero and
-    // carries no selector, so the first op is not the note. The note
-    // op's `selector` is the authoritative qualified
-    // `<notebook>:<folder>/<file>` path; fall back to the explicit
+    // carries no selector, so the first op is not the note. The match
+    // confirms the write happened; the reported path is the qualified
+    // explicit path, not `op.selector` — under nb-api 0.4.0 selectors
+    // are numeric (`<notebook>:<folder>/<id>`, decisions/4), which
+    // resolve but do not name the file. Fall back to the explicit
     // unqualified path only if the op is absent.
-    let created_note_path = outcome
+    let committed = outcome
         .ops
         .iter()
-        .find(|op| op.path.as_deref() == Some(note_path.as_str()))
-        .and_then(|op| op.selector.clone())
-        .unwrap_or_else(|| note_path.clone());
+        .any(|op| op.path.as_deref() == Some(note_path.as_str()));
+    let created_note_path = if committed {
+        format!("{}:{note_path}", context.notebook_name)
+    } else {
+        note_path.clone()
+    };
     let text = format!(
         "Recorded {verdict} verdict by {reviewer} for change {change_id} at gate {gate}.\n\
          aggregate=sha256:{aggregate_hash}\n\

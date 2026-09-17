@@ -115,21 +115,20 @@ pub fn classify_note_content(
     }
 }
 
-/// Extracts the body bytes of a structured `show_note` result as a
-/// lossy UTF-8 string. nb-api 0.3.0 `show_note` returns [`ShowNote`]
-/// with the body as a base64 [`nb_api::ByteString`]; the display and
-/// metadata paths operate on the decoded body text.
+/// Extracts the body text of a structured `show_note` result.
+/// nb-api 0.4.0 `show_note` returns [`ShowNote`] with the body as a
+/// plain `String` (text-first surface, decisions/4); the display and
+/// metadata paths operate on the body text directly.
 pub(crate) fn show_note_body(show: &ShowNote) -> Result<String, NbError> {
-    Ok(String::from_utf8_lossy(&show.body.as_bytes()?).into_owned())
+    Ok(show.body.clone())
 }
 
-/// Extracts the raw source bytes of a structured `show_note` result
-/// as a lossy UTF-8 string. Unlike the parsed `body` (which excludes
-/// the title heading and tags prefix), `source` is the complete note
-/// file, matching what `nb show` printed before nb-api returned
-/// structured results.
+/// Extracts the raw source text of a structured `show_note` result.
+/// Unlike the parsed `body` (which excludes the title heading and
+/// tags prefix), `source` is the complete note file, matching what
+/// `nb show` printed before nb-api returned structured results.
 pub(crate) fn show_note_source(show: &ShowNote) -> Result<String, NbError> {
-    Ok(String::from_utf8_lossy(&show.source.as_bytes()?).into_owned())
+    Ok(show.source.clone())
 }
 
 /// Recognizes the pinned `nb` 7.24.0 missing-item diagnostic for a
