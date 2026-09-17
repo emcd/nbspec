@@ -547,6 +547,46 @@ fn display_classifies_missing_note_and_folder_as_absence() {
     );
 }
 
+/// Inspection faults other than absence must surface as `unreadable`,
+/// never as `(empty)`: when a folder target is occupied by a regular
+/// file, directory inspection fails with a non-`NotFound` I/O error
+/// and display must report it instead of masking it as empty.
+/// (P2 follow-up: the first `dir_has_notes` cut collapsed every
+/// inspection fault into `false`.)
+#[test]
+fn display_reports_unreadable_when_folder_target_is_not_a_directory() {
+    let fixture = Fixture::new();
+
+    let created = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
+    assert!(created.status.success(), "{}", stderr_of(&created));
+
+    // Occupy the specifications/ target with a regular file.
+    let specs = fixture
+        .notebook_path()
+        .join("proposals")
+        .join(CHANGE_ID)
+        .join("specifications");
+    std::fs::remove_dir_all(&specs).unwrap();
+    std::fs::write(&specs, "not a directory\n").unwrap();
+
+    let displayed = nbspec(&fixture, &["display", "--full", CHANGE_ID]);
+    assert!(displayed.status.success(), "{}", stderr_of(&displayed));
+    let output = stdout_of(&displayed);
+    let section = output.split("## specifications/").nth(1).unwrap_or("");
+    assert!(
+        section.contains("(unreadable:"),
+        "non-directory folder target must be unreadable: {output}"
+    );
+    assert!(
+        !section
+            .split("## ")
+            .next()
+            .unwrap_or("")
+            .contains("(empty)"),
+        "non-directory folder target must not be reported empty: {output}"
+    );
+}
+
 /// Regression for reviews/8: the FIRST review on a change must report
 /// the authoritative QUALIFIED note path (`<notebook>:<folder>/<file>`)
 /// in both text and structured output. Before the fix, `review` found

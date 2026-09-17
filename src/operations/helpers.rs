@@ -35,15 +35,26 @@ pub(crate) async fn folder_listing(
     notebook: Option<&str>,
 ) -> Result<String, String> {
     // Fast path on disk before paying for `nb list`: a missing
-    // directory is `(empty)`, and so is an existing directory with
-    // no note-like entries — `nb list` fails silently on exactly
-    // those folders under `.index` trees, which display must report
-    // as empty rather than unreadable. Non-empty directories go
-    // through `nb list` passthrough as before.
+    // directory is `(empty)`, and so is a directory whose full
+    // inspection finds no note-like entries — `nb list` fails
+    // silently on exactly those folders under `.index` trees, which
+    // display must report as empty rather than unreadable.
+    // Inspection faults other than absence (permissions, a
+    // non-directory occupant, mid-scan I/O) propagate as errors so
+    // display reports the established `unreadable` state instead of
+    // masking them as empty. Non-empty directories go through `nb
+    // list` passthrough as before.
     if let Ok(root) = client.show_notebook_path(notebook).await {
         let directory = root.join(folder);
-        if !directory.is_dir() || !dir_has_notes(&directory) {
-            return Ok("(empty)".to_string());
+        match dir_has_notes(&directory) {
+            Ok(false) => return Ok("(empty)".to_string()),
+            Ok(true) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok("(empty)".to_string());
+            }
+            Err(error) => {
+                return Err(format!("cannot inspect {}: {error}", directory.display()));
+            }
         }
     }
     classify_folder_listing(
@@ -56,23 +67,31 @@ pub(crate) async fn folder_listing(
 /// subdirectories (surfaced as folder entries by `nb list`) or
 /// visible files other than Git/notebook bookkeeping (`.gitkeep`,
 /// `.index`, dotfiles), which `nb list` itself does not count.
-fn dir_has_notes(directory: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
+///
+/// Fallible by design: only absence (`NotFound`) and a fully,
+/// successfully inspected note-less directory read as empty. Any
+/// other inspection fault propagates so callers report `unreadable`
+/// rather than masking it. An unrepresentable (non-UTF-8) entry name
+/// conservatively counts as a note, routing to `nb list`
+/// passthrough instead of claiming an inspected-empty directory.
+fn dir_has_notes(directory: &Path) -> Result<bool, std::io::Error> {
+    let mut has_notes = false;
+    for entry in std::fs::read_dir(directory)? {
+        let entry = entry?;
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
-            return false;
+            return Ok(true);
         };
         if name.starts_with('.') || name == ".gitkeep" || name == ".index" {
-            return false;
+            continue;
         }
-        let Ok(kind) = entry.file_type() else {
-            return false;
-        };
-        kind.is_dir() || kind.is_file()
-    })
+        let kind = entry.file_type()?;
+        if kind.is_dir() || kind.is_file() {
+            has_notes = true;
+            break;
+        }
+    }
+    Ok(has_notes)
 }
 
 /// Maps a `list_notes` result to display text: real listings pass
