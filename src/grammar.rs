@@ -42,6 +42,184 @@ pub struct Rename {
     pub to: String,
 }
 
+/// One requirement block located in a merge-target document, with
+/// its 1-indexed line span for surgical delta application.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TargetBlock {
+    /// Requirement name from the header line.
+    pub name: String,
+    /// Full block including the header line, trailing whitespace trimmed.
+    pub raw: String,
+    /// Scenario names nested under the requirement, in source order.
+    pub scenarios: Vec<String>,
+    /// 1-indexed line number of the requirement header.
+    pub start_line: usize,
+    /// 1-indexed line number of the block's last non-blank line, inclusive.
+    pub end_line: usize,
+}
+
+/// Collects the addressable requirement blocks of a merge-target
+/// document: blocks under `## ADDED` / `## MODIFIED Requirements`
+/// sections. Headers under other sections (removal records,
+/// `## Purpose` prose) are not merge state. Spans run from the
+/// requirement header through the last non-blank line before the
+/// next requirement header, section header, or end of file.
+pub fn parse_target_blocks(content: &str) -> Vec<TargetBlock> {
+    let normalized = normalize_line_endings(content);
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let sections = split_top_level_sections(&lines);
+    let mut blocks = Vec::new();
+    for section_name in ["added requirements", "modified requirements"] {
+        let Some(section) = find_section(&sections, section_name) else {
+            continue;
+        };
+        let mut cursor = section.body_start;
+        while cursor < section.body_end {
+            let Some(name) = requirement_header_name(lines[cursor]) else {
+                cursor += 1;
+                continue;
+            };
+            let header_index = cursor;
+            cursor += 1;
+            while cursor < section.body_end
+                && requirement_header_name(lines[cursor]).is_none()
+                && section_title(lines[cursor]).is_none()
+            {
+                cursor += 1;
+            }
+            let mut end_index = cursor;
+            while end_index > header_index + 1 && lines[end_index - 1].trim().is_empty() {
+                end_index -= 1;
+            }
+            let body = &lines[header_index + 1..cursor];
+            let raw = std::iter::once(lines[header_index])
+                .chain(body.iter().copied())
+                .collect::<Vec<_>>()
+                .join("\n")
+                .trim_end()
+                .to_string();
+            blocks.push(TargetBlock {
+                name,
+                raw,
+                scenarios: parse_scenarios(body, header_index + 1)
+                    .into_iter()
+                    .map(|scenario| scenario.name)
+                    .collect(),
+                start_line: header_index + 1,
+                end_line: end_index,
+            });
+        }
+    }
+    blocks
+}
+
+/// A `FROM:`/`TO:` line in a `## RENAMED Requirements` section that
+/// never formed a pair.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UnpairedRename {
+    /// 1-indexed line number of the lone label line.
+    pub line: usize,
+    /// Which side is present without its counterpart.
+    pub side: UnpairedSide,
+    /// Requirement name carried by the lone line.
+    pub name: String,
+}
+
+/// Which side of a rename pair stands alone.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnpairedSide {
+    From,
+    To,
+}
+
+/// Finds lone `FROM:`/`TO:` lines in the note's `## RENAMED
+/// Requirements` section: a `TO:` with no pending `FROM:`, or a
+/// trailing `FROM:` the section never answers. A well-formed delta
+/// writes each rename as a `FROM:` line followed immediately by its
+/// `TO:` line.
+pub fn find_unpaired_renames(content: &str) -> Vec<UnpairedRename> {
+    let normalized = normalize_line_endings(content);
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let sections = split_top_level_sections(&lines);
+    let Some(section) = find_section(&sections, "renamed requirements") else {
+        return Vec::new();
+    };
+    let mut unpaired = Vec::new();
+    let mut pending_from: Option<(usize, String)> = None;
+    for (offset, line) in lines[section.body_start..section.body_end]
+        .iter()
+        .enumerate()
+    {
+        let line_number = section.body_start + offset + 1;
+        if let Some(name) = labeled_requirement_name(line, "FROM:") {
+            if let Some((pending_line, pending_name)) = pending_from.take() {
+                unpaired.push(UnpairedRename {
+                    line: pending_line,
+                    side: UnpairedSide::From,
+                    name: pending_name,
+                });
+            }
+            pending_from = Some((line_number, name));
+        } else if let Some(name) = labeled_requirement_name(line, "TO:")
+            && pending_from.take().is_none()
+        {
+            unpaired.push(UnpairedRename {
+                line: line_number,
+                side: UnpairedSide::To,
+                name,
+            });
+        }
+    }
+    if let Some((pending_line, pending_name)) = pending_from.take() {
+        unpaired.push(UnpairedRename {
+            line: pending_line,
+            side: UnpairedSide::From,
+            name: pending_name,
+        });
+    }
+    unpaired
+}
+
+/// Extracts a `## Purpose` section body (trimmed) from note or target
+/// content, or `None` when absent or blank. Matched case-insensitively
+/// like every other section title.
+pub fn extract_purpose_section(content: &str) -> Option<String> {
+    let normalized = normalize_line_endings(content);
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let sections = split_top_level_sections(&lines);
+    let section = find_section(&sections, "purpose")?;
+    let body = lines[section.body_start..section.body_end].join("\n");
+    let trimmed = body.trim().to_string();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed)
+    }
+}
+
+/// Canonical fold for requirement-name comparison: lowercase with
+/// interior whitespace collapsed. Exact matches apply; folded-only
+/// matches diagnose typos (a header that differs only in case or
+/// spacing is a real problem to report, mirroring upstream).
+pub fn fold_requirement_name(name: &str) -> String {
+    name.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// Reports whether content carries any `## ... Requirements` section
+/// header: the requirement structure surgical application needs as
+/// a base. Matched case-insensitively over the full section title.
+pub fn has_requirements_section(content: &str) -> bool {
+    let normalized = normalize_line_endings(content);
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    split_top_level_sections(&lines).iter().any(|section| {
+        section.title_lowercase == "requirements"
+            || section.title_lowercase.ends_with(" requirements")
+    })
+}
+
 /// Presence of each delta section, independent of section content.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct SectionPresence {
@@ -126,7 +304,7 @@ fn section_title(line: &str) -> Option<&str> {
 
 /// Returns the name of a requirement header (`### Requirement: <name>`),
 /// matched case-insensitively; whitespace after the marker is optional.
-fn requirement_header_name(line: &str) -> Option<String> {
+pub(crate) fn requirement_header_name(line: &str) -> Option<String> {
     header_name(line, "###", "requirement:")
 }
 

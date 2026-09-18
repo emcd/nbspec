@@ -1,4 +1,7 @@
-use nbspec::grammar::{Rename, parse_delta_specification};
+use nbspec::grammar::{
+    Rename, UnpairedSide, extract_purpose_section, find_unpaired_renames, fold_requirement_name,
+    has_requirements_section, parse_delta_specification, parse_target_blocks,
+};
 
 const ADDED_DELTA: &str = "\
 ## ADDED Requirements
@@ -265,4 +268,97 @@ fn raw_block_preserves_header_and_body() {
     assert!(raw.starts_with("### Requirement: Session expiry"));
     assert!(raw.contains("#### Scenario: Idle session closed"));
     assert!(raw.ends_with("the session is invalidated"));
+}
+
+const TARGET_DOC: &str = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Alpha
+The system SHALL alpha.
+
+#### Scenario: Alphas
+- **WHEN** alpha
+- **THEN** alpha
+
+### Requirement: Beta
+The system SHALL beta.
+
+## REMOVED Requirements
+
+### Requirement: Ghost
+";
+
+#[test]
+fn target_blocks_span_added_and_modified_only() {
+    let blocks = parse_target_blocks(TARGET_DOC);
+    assert_eq!(
+        blocks
+            .iter()
+            .map(|block| block.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Alpha", "Beta"],
+        "REMOVED-section headers are not merge state"
+    );
+    let alpha = &blocks[0];
+    assert_eq!((alpha.start_line, alpha.end_line), (5, 10));
+    assert_eq!(alpha.scenarios, vec!["Alphas"]);
+    assert!(alpha.raw.starts_with("### Requirement: Alpha"));
+    assert!(alpha.raw.ends_with("- **THEN** alpha"));
+    assert_eq!((blocks[1].start_line, blocks[1].end_line), (12, 13));
+}
+
+#[test]
+fn unpaired_renames_report_side_and_line() {
+    let paired = "\
+## RENAMED Requirements
+
+- FROM: `### Requirement: A`
+- TO: `### Requirement: B`
+";
+    assert!(find_unpaired_renames(paired).is_empty());
+    let trailing_from = format!("{paired}- FROM: `### Requirement: C`\n");
+    let unpaired = find_unpaired_renames(&trailing_from);
+    assert_eq!(unpaired.len(), 1);
+    assert_eq!(unpaired[0].side, UnpairedSide::From);
+    assert_eq!(unpaired[0].name, "C");
+    let lone_to = "\
+## RENAMED Requirements
+
+- TO: `### Requirement: B`
+";
+    let unpaired = find_unpaired_renames(lone_to);
+    assert_eq!(unpaired.len(), 1);
+    assert_eq!(unpaired[0].side, UnpairedSide::To);
+}
+
+#[test]
+fn purpose_section_extracts_trimmed_body() {
+    assert_eq!(
+        extract_purpose_section("# T\n\n## Purpose\n\nWhy.\n"),
+        Some("Why.".to_string())
+    );
+    assert_eq!(
+        extract_purpose_section("# T\n\n## ADDED Requirements\n"),
+        None
+    );
+    assert_eq!(extract_purpose_section("# T\n\n## Purpose\n\n   \n"), None);
+}
+
+#[test]
+fn requirements_section_presence() {
+    assert!(has_requirements_section(TARGET_DOC));
+    assert!(has_requirements_section("# T\n\n## Requirements\n"));
+    assert!(!has_requirements_section("# T\n\n## Purpose\n\nWhy.\n"));
+    assert!(!has_requirements_section("Just prose.\n"));
+}
+
+#[test]
+fn name_fold_collapses_case_and_spacing() {
+    assert_eq!(fold_requirement_name("  Foo   Bar "), "foo bar");
+    assert_eq!(
+        fold_requirement_name("Foo Bar"),
+        fold_requirement_name("FOO  bar")
+    );
 }
