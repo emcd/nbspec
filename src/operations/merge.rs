@@ -19,10 +19,12 @@ use super::{OperationError, OperationOutcome, OperationResult};
 ///
 /// Renders the change from its notes and writes the target-bearing
 /// documents to their configured repository destinations with
-/// provenance headers. Planning collects every violation before any
-/// write, so a refused merge modifies nothing; `force` overrides
-/// target-state refusals (drift, unmanaged files, foreign ownership)
-/// but never unsupported delta operations or non-file occupants.
+/// provenance headers. `ADDED`-only notes write whole; notes carrying
+/// delta operations apply surgically (see `merging`). Planning
+/// collects every violation before any write, so a refused merge
+/// modifies nothing; `force` overrides target-state refusals (drift,
+/// unmanaged files, foreign ownership) but never delta incoherence,
+/// dangling names, or non-file occupants.
 /// This is the only nbspec operation that writes to the repository,
 /// and it creates no git commits. Archive writing happens after the
 /// documents transfer: an archive IO failure therefore leaves
@@ -88,6 +90,9 @@ pub async fn merge(
             previous = succession.previous_owner,
         ));
     }
+    for warning in &report.warnings {
+        output.push_str(&format!("warning: {warning}\n"));
+    }
     for path in &report.written {
         output.push_str(&format!("wrote {path}\n"));
     }
@@ -148,6 +153,7 @@ pub async fn merge(
         "successions": successions,
         "drift_overrides": drift_overrides,
         "stale_target_overrides": report.stale_target_overrides,
+        "warnings": report.warnings,
     });
     Ok(OperationOutcome::new(output, structured))
 }

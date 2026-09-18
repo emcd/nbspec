@@ -414,20 +414,20 @@ fn succession_does_not_bypass_review_gate() {
 }
 
 #[test]
-fn modified_delta_refuses_even_with_force() {
-    let root = unique_temp_root("merging-modified");
+fn incoherent_delta_refuses_even_with_force() {
+    let root = unique_temp_root("merging-incoherent");
     fs::create_dir_all(&root).unwrap();
     let delta = "\
 # alpha
 
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Alpha
-Changed text.
+The system SHALL alpha.
 
-#### Scenario: Alphas
-- **WHEN** alpha
-- **THEN** alpha
+## REMOVED Requirements
+
+### Requirement: Alpha
 ";
     let error = merge_documents(
         &[document("alpha", delta)],
@@ -442,12 +442,12 @@ Changed text.
     let MergeError::Refused { refusals } = error else {
         panic!("expected refusal");
     };
-    assert_eq!(
-        refusals[0].reason,
-        RefusalReason::UnsupportedDelta(vec!["MODIFIED".to_string()])
+    assert!(
+        matches!(refusals[0].reason, RefusalReason::IncoherentDelta(_)),
+        "remove-and-define must refuse as incoherent: {message}"
     );
+    assert!(message.contains("--force does not override"));
     assert!(!root.join("documentation/specifications/alpha.md").exists());
-    assert!(message.contains("documentation/specifications/alpha.md"));
     fs::remove_dir_all(&root).unwrap();
 }
 

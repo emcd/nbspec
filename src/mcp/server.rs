@@ -265,12 +265,15 @@ impl McpServer {
         description = "Transfers a change's durable artifacts into the \
                        repository. Maps to the `nbspec merge` CLI verb. \
                        This is the only nbspec operation that writes to \
-                       the repository working tree. Planning collects \
-                       every violation before any write; force=true \
-                       overrides target-state refusals (drift, unmanaged, \
-                       foreign ownership) but never unsupported-delta \
-                       refusals (MODIFIED / REMOVED / RENAMED) or \
-                       non-file occupants."
+                       the repository working tree. Documents carrying \
+                       delta operations apply surgically against their \
+                       targets (RENAMED, then REMOVED, then MODIFIED, \
+                       then ADDED, exact-name matching); ADDED-only notes \
+                       write whole. Planning collects every violation \
+                       before any write; force=true overrides \
+                       target-state refusals (drift, unmanaged, foreign \
+                       ownership) but never delta incoherence, dangling \
+                       names, or non-file occupants."
     )]
     async fn merge(
         &self,

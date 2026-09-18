@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+use crate::delta_apply::plan_delta_merge;
 use crate::grammar::parse_delta_specification;
 use crate::provenance;
 use crate::rendering::RenderedDocument;
@@ -53,9 +54,15 @@ pub struct Refusal {
 /// Classification of a merge refusal.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RefusalReason {
-    /// The document carries delta operations merge does not support
-    /// yet; merging into existing documents is a deferred capability.
-    UnsupportedDelta(Vec<String>),
+    /// The document's delta operations are incoherent (duplicates,
+    /// cross-section conflicts, unpaired renames): an authoring
+    /// error `--force` never overrides.
+    IncoherentDelta(String),
+    /// A delta operation cannot apply to the target (dangling name,
+    /// typo, collision, unparseable base, operation against an
+    /// absent target): a validation failure `--force` never
+    /// overrides. Only drift refusals below yield to `--force`.
+    DanglingDelta(String),
     /// The target body no longer matches its provenance hash: hand
     /// edits since the last merge.
     Drifted,
@@ -90,11 +97,13 @@ pub enum RefusalReason {
 impl std::fmt::Display for RefusalReason {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RefusalReason::UnsupportedDelta(operations) => write!(
+            RefusalReason::IncoherentDelta(message) => write!(
                 formatter,
-                "{} delta operations are not supported yet \
-                 (merging into existing documents is deferred)",
-                operations.join(", ")
+                "incoherent delta operations: {message} (--force does not override)"
+            ),
+            RefusalReason::DanglingDelta(message) => write!(
+                formatter,
+                "delta operation cannot apply: {message} (--force does not override)"
             ),
             RefusalReason::Drifted => write!(
                 formatter,
@@ -166,6 +175,11 @@ pub enum TargetStatus {
     ForeignDrifted(String),
     /// A directory (or other non-file) occupies the target.
     NonFile,
+    /// The document's delta operations cannot apply to the target
+    /// (incoherence, dangling names, unparseable base): merge would
+    /// refuse rather than write. Display-only; merge planning turns
+    /// the same failure into a refusal.
+    Unmergeable(String),
 }
 
 impl std::fmt::Display for TargetStatus {
@@ -199,6 +213,9 @@ impl std::fmt::Display for TargetStatus {
             }
             TargetStatus::NonFile => {
                 write!(formatter, "blocked: a non-file occupies the target")
+            }
+            TargetStatus::Unmergeable(reason) => {
+                write!(formatter, "unmergeable delta: {reason}")
             }
         }
     }
@@ -240,9 +257,129 @@ pub struct MergeReport {
     /// repository and must be removed manually. Never silent: merge
     /// output announces each stale path.
     pub stale_target_overrides: Vec<String>,
+    /// Non-blocking merge warnings (already-removed names, ignored
+    /// delta Purpose, skipped vacuous documents). Never silent: merge
+    /// output prints each, and the structured report carries them.
+    pub warnings: Vec<String>,
+}
+
+/// One confined inspection of a merge target: absent, a non-file
+/// occupant, or a real file with its body already read.
+enum TargetRead {
+    Absent,
+    NonFile,
+    Body(String),
+}
+
+/// Reads one merge target under confinement: absent targets,
+/// non-file occupants, and real-file bodies without parsing.
+fn read_target_body(project_root: &Path, target_path: &str) -> Result<TargetRead, MergeError> {
+    let absolute = match inspect_confined_target(project_root, target_path)? {
+        ConfinedTarget::Absent { .. } => return Ok(TargetRead::Absent),
+        ConfinedTarget::NonFile { .. } => return Ok(TargetRead::NonFile),
+        ConfinedTarget::RealFile { absolute } => absolute,
+    };
+    let content =
+        std::fs::read_to_string(&absolute).map_err(|error| MergeError::io(&absolute, error))?;
+    Ok(TargetRead::Body(content))
+}
+
+/// Planned durable body for one rendered document: whole-write for
+/// `ADDED`-only notes (status quo, untouched), surgical application
+/// for notes carrying delta operations.
+struct PlannedDoc {
+    /// Durable body to compare, stamp, and write.
+    new_body: String,
+    /// Non-blocking diagnostics for merge reporting.
+    warnings: Vec<String>,
+    /// True when no effective operation remains: warn, write nothing.
+    skipped: bool,
+    /// True when the note carries delta operations (surgical path).
+    surgical: bool,
+}
+
+/// Plans one document's durable body against an already-read target.
+/// `MODIFIED` / `REMOVED` / `RENAMED` presence switches from
+/// whole-write to surgical application; planning failures map to
+/// the never-force-overridable refusal kinds.
+fn plan_document_body(
+    document: &RenderedDocument,
+    target_path: &str,
+    target: &TargetRead,
+) -> Result<PlannedDoc, RefusalReason> {
+    let presence = parse_delta_specification(&document.content).presence;
+    let surgical = presence.modified || presence.removed || presence.renamed;
+    if !surgical {
+        return Ok(PlannedDoc {
+            new_body: document.content.clone(),
+            warnings: Vec::new(),
+            skipped: false,
+            surgical: false,
+        });
+    }
+    let target_body = match target {
+        // Surgical application works on the split body part, never
+        // the provenance header: the rebuilt body is re-stamped on
+        // write, so planning over the header would double-stamp and
+        // misalign every span. Unmanaged content splits to itself.
+        TargetRead::Body(content) => Some(provenance::split_document(content).1),
+        TargetRead::Absent | TargetRead::NonFile => None,
+    };
+    let fallback = target_path
+        .rsplit('/')
+        .next()
+        .and_then(|file| file.strip_suffix(".md"))
+        .unwrap_or(target_path);
+    match plan_delta_merge(&document.content, target_body, fallback) {
+        Ok(applied) => Ok(PlannedDoc {
+            new_body: applied.body,
+            warnings: applied.warnings,
+            skipped: applied.skipped,
+            surgical: true,
+        }),
+        Err(failure) => Err(if failure.incoherent {
+            RefusalReason::IncoherentDelta(failure.message)
+        } else {
+            RefusalReason::DanglingDelta(failure.message)
+        }),
+    }
+}
+
+/// Classifies an already-read target body against a planned durable
+/// body: ownership, drift, and rebuilt comparison. The succession
+/// test compares the target's CURRENT content against the hash in
+/// its OWN provenance header — never the proposed new content
+/// against the old header.
+fn classify_target_body(content: &str, new_body: &str, change_id: &str) -> TargetStatus {
+    let (header, body) = provenance::split_document(content);
+    let Some(header) = header else {
+        return TargetStatus::Unmanaged;
+    };
+    if header.change_id != change_id {
+        if provenance::body_matches(&header, body) {
+            return TargetStatus::OwnedByOtherChange(header.change_id);
+        }
+        return TargetStatus::ForeignDrifted(header.change_id);
+    }
+    if !provenance::body_matches(&header, body) {
+        return TargetStatus::Drifted;
+    }
+    // Compare against the PLANNED body (rebuilt for surgical
+    // documents), never the raw delta note: idempotent no-op merges
+    // report Current instead of perpetual UpdatePending rewrites.
+    if body == new_body {
+        TargetStatus::Current
+    } else {
+        TargetStatus::UpdatePending
+    }
 }
 
 /// Classifies the merge target of one rendered document.
+///
+/// Surgical documents plan against the target and compare the
+/// REBUILT body; planning failures report `Unmergeable` (display
+/// stays total — merge planning turns the same failure into a
+/// refusal).
 ///
 /// # Errors
 ///
@@ -258,33 +395,26 @@ pub fn target_status(
     let Some(target_path) = &document.target_path else {
         return Ok(TargetStatus::NotMerged);
     };
-    let absolute = match inspect_confined_target(project_root, target_path)? {
-        ConfinedTarget::Absent { .. } => return Ok(TargetStatus::NotMerged),
-        ConfinedTarget::NonFile { .. } => return Ok(TargetStatus::NonFile),
-        ConfinedTarget::RealFile { absolute } => absolute,
-    };
-    let content =
-        std::fs::read_to_string(&absolute).map_err(|error| MergeError::io(&absolute, error))?;
-    let (header, body) = provenance::split_document(&content);
-    let Some(header) = header else {
-        return Ok(TargetStatus::Unmanaged);
-    };
-    if header.change_id != change_id {
-        // The succession test compares the target's CURRENT content
-        // against the hash in its OWN provenance header — never the
-        // proposed new content against the old header.
-        if provenance::body_matches(&header, body) {
-            return Ok(TargetStatus::OwnedByOtherChange(header.change_id));
+    let target = read_target_body(project_root, target_path)?;
+    let planned = match plan_document_body(document, target_path, &target) {
+        Ok(planned) => planned,
+        Err(RefusalReason::IncoherentDelta(message))
+        | Err(RefusalReason::DanglingDelta(message)) => {
+            return Ok(TargetStatus::Unmergeable(message));
         }
-        return Ok(TargetStatus::ForeignDrifted(header.change_id));
+        Err(_) => {
+            return Ok(TargetStatus::Unmergeable(
+                "delta planning failed".to_string(),
+            ));
+        }
+    };
+    if planned.skipped {
+        return Ok(TargetStatus::NotMerged);
     }
-    if !provenance::body_matches(&header, body) {
-        return Ok(TargetStatus::Drifted);
-    }
-    if body == document.content {
-        Ok(TargetStatus::Current)
-    } else {
-        Ok(TargetStatus::UpdatePending)
+    match target {
+        TargetRead::Absent => Ok(TargetStatus::NotMerged),
+        TargetRead::NonFile => Ok(TargetStatus::NonFile),
+        TargetRead::Body(body) => Ok(classify_target_body(&body, &planned.new_body, change_id)),
     }
 }
 
@@ -330,20 +460,65 @@ pub fn merge_documents(
         let Some(target_path) = &document.target_path else {
             continue;
         };
-        if let Some(operations) = unsupported_operations(&document.content) {
+        let target = read_target_body(project_root, target_path)?;
+        if matches!(target, TargetRead::NonFile) {
             refusals.push(Refusal {
                 target: target_path.clone(),
-                reason: RefusalReason::UnsupportedDelta(operations),
+                reason: RefusalReason::NonFileTarget,
             });
             continue;
         }
-        let status = target_status(document, project_root, change_id)?;
+        // Validation before state: incoherent or dangling deltas
+        // refuse before drift, succession, or force are consulted.
+        let planned = match plan_document_body(document, target_path, &target) {
+            Ok(planned) => planned,
+            Err(reason) => {
+                refusals.push(Refusal {
+                    target: target_path.clone(),
+                    reason,
+                });
+                continue;
+            }
+        };
+        if planned.skipped {
+            report.warnings.extend(planned.warnings);
+            continue;
+        }
+        let status = match &target {
+            TargetRead::Absent => TargetStatus::NotMerged,
+            TargetRead::Body(body) => classify_target_body(body, &planned.new_body, change_id),
+            TargetRead::NonFile => TargetStatus::NonFile,
+        };
         if status == TargetStatus::NonFile {
             refusals.push(Refusal {
                 target: target_path.clone(),
                 reason: RefusalReason::NonFileTarget,
             });
             continue;
+        }
+        // Surgical application onto an unmanaged base needs
+        // requirement structure to work with: adopt parseable
+        // targets under `--force`, refuse unparseable ones even
+        // then (whole-writing a sparse delta note would corrupt).
+        if planned.surgical && matches!(status, TargetStatus::Unmanaged) {
+            let parseable = match &target {
+                TargetRead::Body(body) => crate::delta_apply::has_requirements_section(body),
+                _ => false,
+            };
+            if !force || !parseable {
+                refusals.push(Refusal {
+                    target: target_path.clone(),
+                    reason: if force {
+                        RefusalReason::DanglingDelta(
+                            "unmanaged target has no requirement sections to apply onto"
+                                .to_string(),
+                        )
+                    } else {
+                        RefusalReason::Unmanaged
+                    },
+                });
+                continue;
+            }
         }
         let refusal = match &status {
             TargetStatus::Drifted => Some(RefusalReason::Drifted),
@@ -355,7 +530,8 @@ pub fn merge_documents(
             | TargetStatus::Current
             | TargetStatus::UpdatePending
             | TargetStatus::OwnedByOtherChange(_)
-            | TargetStatus::NonFile => None,
+            | TargetStatus::NonFile
+            | TargetStatus::Unmergeable(_) => None,
         };
         if let Some(reason) = refusal {
             if !force {
@@ -382,8 +558,11 @@ pub fn merge_documents(
             report.unchanged.push(target_path.clone());
             continue;
         }
+        report.warnings.extend(planned.warnings);
+        // Stamp the PLANNED body (rebuilt for surgical documents),
+        // never the raw delta note.
         let stamped = provenance::stamp(
-            &document.content,
+            &planned.new_body,
             change_id,
             notebook,
             &document.source_note,
@@ -415,27 +594,6 @@ pub fn merge_documents(
         report.written.push(target_path);
     }
     Ok(report)
-}
-
-/// Names the delta operations a document uses that merge does not
-/// support yet, or `None` when the document is mergeable.
-fn unsupported_operations(content: &str) -> Option<Vec<String>> {
-    let presence = parse_delta_specification(content).presence;
-    let mut operations = Vec::new();
-    if presence.modified {
-        operations.push("MODIFIED".to_string());
-    }
-    if presence.removed {
-        operations.push("REMOVED".to_string());
-    }
-    if presence.renamed {
-        operations.push("RENAMED".to_string());
-    }
-    if operations.is_empty() {
-        None
-    } else {
-        Some(operations)
-    }
 }
 
 /// Scans merge-target directories for files whose provenance names a
