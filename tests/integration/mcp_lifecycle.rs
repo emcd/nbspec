@@ -689,6 +689,64 @@ async fn mcp_server_drives_change_lifecycle() {
     );
 }
 
+/// Merge warnings reach text and structured payloads together: a
+/// REMOVED name with no target match warns (already-removed) while
+/// the effective ADDED block still merges.
+#[tokio::test]
+async fn mcp_merge_warnings_reach_text_and_structured() {
+    let fixture = Fixture::new();
+    let mut harness = McpHarness::spawn(&fixture).await;
+    harness
+        .call_tool(
+            "create",
+            json!({"change_id": CHANGE_ID, "title": "Demo"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let dir = fixture.notebook_path().join("proposals").join(CHANGE_ID);
+    let mut proposal = std::fs::read_to_string(dir.join("proposal.md")).unwrap();
+    proposal.push_str("\n## Why\n\nProve warning parity.\n");
+    std::fs::write(dir.join("proposal.md"), proposal).unwrap();
+    std::fs::write(
+        dir.join("specifications/user-auth.md"),
+        "# user-auth\n\n## ADDED Requirements\n\n### Requirement: New\nText.\n\n#### Scenario: S\n- **WHEN** x\n- **THEN** y\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n",
+    )
+    .unwrap();
+    harness
+        .call_tool(
+            "review",
+            json!({"change_id": CHANGE_ID, "verdict": "approve", "reviewer": "itest"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let merged = harness
+        .call_tool(
+            "merge",
+            json!({"change_id": CHANGE_ID})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let result = assert_success(&merged);
+    let text = first_text(result);
+    assert!(text.contains("warning:"), "text carries warnings: {text}");
+    assert!(text.contains("Ghost"), "text names the requirement: {text}");
+    let structured = result.get("structuredContent").expect("structuredContent");
+    let warnings = structured["warnings"].as_array().expect("warnings array");
+    assert_eq!(warnings.len(), 1, "structured carries one warning");
+    assert!(
+        warnings[0]
+            .as_str()
+            .expect("warning text")
+            .contains("Ghost")
+    );
+}
+
 #[tokio::test]
 async fn mcp_server_rejects_unknown_field() {
     let fixture = Fixture::new();

@@ -1,0 +1,572 @@
+//! Surgical delta planning: pre-validation, per-operation application,
+//! and recomposition through `delta_apply::plan_delta_merge`.
+
+use nbspec::delta_apply::plan_delta_merge;
+
+const TARGET: &str = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Alpha
+The system SHALL alpha.
+
+#### Scenario: Alphas
+- **WHEN** alpha
+- **THEN** alpha
+
+### Requirement: Beta
+The system SHALL beta.
+";
+
+fn plan(delta: &str, target: Option<&str>) -> Result<String, String> {
+    plan_delta_merge(delta, target, "alpha")
+        .map(|applied| applied.body)
+        .map_err(|failure| failure.message)
+}
+
+#[test]
+fn removed_deletes_block_preserving_order() {
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Gamma
+The system SHALL gamma.
+
+## REMOVED Requirements
+
+### Requirement: Beta
+";
+    let body = plan(delta, Some(TARGET)).unwrap();
+    assert!(
+        !body.contains("### Requirement: Beta"),
+        "removed block gone: {body}"
+    );
+    assert!(
+        body.contains("### Requirement: Alpha"),
+        "kept block stays: {body}"
+    );
+    assert!(
+        body.contains("### Requirement: Gamma"),
+        "added block appended: {body}"
+    );
+    assert!(
+        body.find("### Requirement: Alpha").unwrap() < body.find("### Requirement: Gamma").unwrap(),
+        "original order kept, additions appended: {body}"
+    );
+}
+
+#[test]
+fn removed_missing_warns_and_leaves_body_untouched() {
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Alpha
+The system SHALL alpha.
+
+#### Scenario: Alphas
+- **WHEN** alpha
+- **THEN** alpha
+
+### Requirement: Beta
+The system SHALL beta.
+
+## REMOVED Requirements
+
+### Requirement: Ghost
+";
+    let applied = plan_delta_merge(delta, Some(TARGET), "alpha").unwrap();
+    assert_eq!(applied.body, TARGET, "already-removed is a no-op");
+    assert_eq!(applied.warnings.len(), 1, "one already-removed warning");
+    assert!(
+        applied.warnings[0].contains("Ghost"),
+        "warning names the requirement"
+    );
+    assert!(!applied.skipped);
+}
+
+#[test]
+fn removed_near_miss_is_a_typo_error() {
+    let delta = "\
+# alpha
+
+## REMOVED Requirements
+
+### Requirement: alpha
+";
+    let message = plan(delta, Some(TARGET)).unwrap_err();
+    assert!(
+        message.contains("not found"),
+        "missing reports not-found: {message}"
+    );
+    assert!(
+        message.contains("Alpha"),
+        "typo guard names the near miss: {message}"
+    );
+}
+
+#[test]
+fn modified_replaces_block_with_scenarios() {
+    let delta = "\
+# alpha
+
+## MODIFIED Requirements
+
+### Requirement: Alpha
+The system SHALL alpha loudly.
+
+#### Scenario: Alphas
+- **WHEN** alpha
+- **THEN** alpha loudly
+";
+    let body = plan(delta, Some(TARGET)).unwrap();
+    assert!(
+        body.contains("alpha loudly"),
+        "modified text applied: {body}"
+    );
+    assert!(!body.contains("SHALL alpha.\n"), "old text gone: {body}");
+    assert!(
+        body.contains("### Requirement: Beta"),
+        "untouched block kept: {body}"
+    );
+}
+
+#[test]
+fn modified_missing_refuses() {
+    let delta = "\
+# alpha
+
+## MODIFIED Requirements
+
+### Requirement: Ghost
+New text.
+";
+    let message = plan(delta, Some(TARGET)).unwrap_err();
+    assert!(
+        message.contains("MODIFIED"),
+        "names the operation: {message}"
+    );
+    assert!(
+        message.contains("not found"),
+        "dangling diagnosis: {message}"
+    );
+}
+
+#[test]
+fn modified_dropping_scenario_refuses() {
+    let delta = "\
+# alpha
+
+## MODIFIED Requirements
+
+### Requirement: Alpha
+The system SHALL alpha loudly.
+";
+    let message = plan(delta, Some(TARGET)).unwrap_err();
+    assert!(
+        message.contains("Alphas"),
+        "names the dropped scenario: {message}"
+    );
+}
+
+#[test]
+fn modified_against_absent_target_refuses() {
+    let delta = "\
+# alpha
+
+## MODIFIED Requirements
+
+### Requirement: Alpha
+Changed text.
+";
+    let message = plan(delta, None).unwrap_err();
+    assert!(
+        message.contains("only ADDED"),
+        "new documents take ADDED only: {message}"
+    );
+}
+
+#[test]
+fn renamed_reheaders_in_place() {
+    let delta = "\
+# alpha
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Alpha`
+- TO: `### Requirement: Alpha2`
+";
+    let body = plan(delta, Some(TARGET)).unwrap();
+    assert!(
+        body.contains("### Requirement: Alpha2"),
+        "renamed header: {body}"
+    );
+    assert!(
+        !body.contains("Requirement: Alpha\n"),
+        "old header gone: {body}"
+    );
+    assert!(
+        body.find("Alpha2").unwrap() < body.find("### Requirement: Beta").unwrap(),
+        "renamed block keeps its slot: {body}"
+    );
+    assert!(
+        body.contains("SHALL alpha."),
+        "block body untouched: {body}"
+    );
+}
+
+#[test]
+fn renamed_both_missing_refuses() {
+    let delta = "\
+# alpha
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Ghost`
+- TO: `### Requirement: Spectre`
+";
+    let message = plan(delta, Some(TARGET)).unwrap_err();
+    assert!(
+        message.contains("source not found"),
+        "dangling rename: {message}"
+    );
+}
+
+#[test]
+fn renamed_already_synced_is_a_noop() {
+    let target = TARGET.replace("### Requirement: Alpha", "### Requirement: Alpha2");
+    let delta = "\
+# alpha
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Alpha`
+- TO: `### Requirement: Alpha2`
+";
+    let applied = plan_delta_merge(delta, Some(&target), "alpha").unwrap();
+    assert_eq!(applied.body, target, "synced rename changes nothing");
+    assert!(applied.warnings.is_empty());
+}
+
+#[test]
+fn renamed_to_existing_refuses() {
+    let delta = "\
+# alpha
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Alpha`
+- TO: `### Requirement: Beta`
+";
+    let message = plan(delta, Some(TARGET)).unwrap_err();
+    assert!(
+        message.contains("already exists"),
+        "collision refused: {message}"
+    );
+}
+
+#[test]
+fn added_appends_new_blocks() {
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Gamma
+The system SHALL gamma.
+";
+    let body = plan(delta, Some(TARGET)).unwrap();
+    let beta = body.find("### Requirement: Beta").unwrap();
+    let gamma = body.find("### Requirement: Gamma").unwrap();
+    assert!(
+        beta < gamma,
+        "additions append after existing blocks: {body}"
+    );
+}
+
+#[test]
+fn added_identical_is_a_noop() {
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Beta
+The system SHALL beta.
+";
+    let applied = plan_delta_merge(delta, Some(TARGET), "alpha").unwrap();
+    assert_eq!(applied.body, TARGET, "identical re-add changes nothing");
+}
+
+#[test]
+fn added_differing_refuses() {
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Beta
+The system SHALL beta differently.
+";
+    let message = plan(delta, Some(TARGET)).unwrap_err();
+    assert!(
+        message.contains("different content"),
+        "collision refused: {message}"
+    );
+}
+
+#[test]
+fn incoherent_deltas_refuse() {
+    let duplicate = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Same
+Text one.
+
+### Requirement: Same
+Text two.
+";
+    assert!(
+        plan(duplicate, None).unwrap_err().contains("duplicate"),
+        "duplicates within a section refuse"
+    );
+    let cross = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Same
+Text.
+
+## REMOVED Requirements
+
+### Requirement: Same
+";
+    assert!(
+        plan(cross, Some(TARGET))
+            .unwrap_err()
+            .contains("multiple sections"),
+        "cross-section conflicts refuse"
+    );
+    let rename_remove = "\
+# alpha
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Alpha`
+- TO: `### Requirement: Alpha2`
+
+## REMOVED Requirements
+
+### Requirement: Alpha
+";
+    assert!(
+        plan(rename_remove, Some(TARGET))
+            .unwrap_err()
+            .contains("RENAMED"),
+        "rename-source removal refuses"
+    );
+    let unpaired = "\
+# alpha
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Alpha`
+";
+    assert!(
+        plan(unpaired, Some(TARGET))
+            .unwrap_err()
+            .contains("no matching TO"),
+        "unpaired FROM refuses"
+    );
+    let lone_to = "\
+# alpha
+
+## RENAMED Requirements
+
+- TO: `### Requirement: Alpha2`
+";
+    assert!(
+        plan(lone_to, Some(TARGET))
+            .unwrap_err()
+            .contains("no matching FROM"),
+        "lone TO refuses"
+    );
+}
+
+#[test]
+fn new_document_builds_title_purpose_and_added() {
+    let delta = "\
+# Fresh capability
+
+## Purpose
+
+Why this exists.
+
+## ADDED Requirements
+
+### Requirement: First
+The system SHALL first.
+
+## REMOVED Requirements
+
+### Requirement: Ghost
+";
+    let applied = plan_delta_merge(delta, None, "fresh").unwrap();
+    assert!(
+        applied.body.starts_with("# Fresh capability\n"),
+        "title kept"
+    );
+    assert!(
+        applied.body.contains("## Purpose\n\nWhy this exists."),
+        "purpose seeded"
+    );
+    assert!(
+        applied.body.contains("### Requirement: First"),
+        "added carried"
+    );
+    assert!(
+        !applied.body.contains("Ghost"),
+        "ignored removals leave no trace"
+    );
+    assert_eq!(applied.warnings.len(), 1, "ignored removal warns");
+    assert!(!applied.skipped);
+}
+
+#[test]
+fn removed_only_against_absent_target_skips() {
+    let delta = "\
+# alpha
+
+## REMOVED Requirements
+
+### Requirement: Ghost
+";
+    let applied = plan_delta_merge(delta, None, "alpha").unwrap();
+    assert!(applied.skipped, "nothing effective means skip");
+    assert!(applied.body.is_empty(), "no skeleton materializes");
+    assert_eq!(applied.warnings.len(), 1, "skip warns");
+}
+
+#[test]
+fn purpose_difference_warns() {
+    let target = "# alpha\n\n## Purpose\n\nOld why.\n\n## ADDED Requirements\n";
+    let delta = "\
+# alpha
+
+## Purpose
+
+New why.
+
+## ADDED Requirements
+
+### Requirement: First
+The system SHALL first.
+";
+    let applied = plan_delta_merge(delta, Some(target), "alpha").unwrap();
+    assert!(
+        applied
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Purpose")),
+        "differing delta Purpose warns"
+    );
+    assert!(applied.body.contains("Old why."), "target Purpose stands");
+}
+
+#[test]
+fn rename_then_remove_by_new_name() {
+    let delta = "\
+# alpha
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Alpha`
+- TO: `### Requirement: Alpha2`
+
+## REMOVED Requirements
+
+### Requirement: Alpha2
+";
+    let body = plan(delta, Some(TARGET)).unwrap();
+    assert!(
+        !body.contains("Alpha2"),
+        "renamed-then-removed is gone: {body}"
+    );
+    assert!(
+        !body.contains("Requirement: Alpha\n"),
+        "old header gone: {body}"
+    );
+    assert!(
+        body.contains("### Requirement: Beta"),
+        "others kept: {body}"
+    );
+}
+
+#[test]
+fn all_four_operations_compose_in_order() {
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Gamma
+The system SHALL gamma.
+
+## MODIFIED Requirements
+
+### Requirement: Beta2
+The system SHALL beta, revised.
+
+## REMOVED Requirements
+
+### Requirement: Alpha
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Beta`
+- TO: `### Requirement: Beta2`
+";
+    let body = plan(delta, Some(TARGET)).unwrap();
+    assert!(!body.contains("Requirement: Alpha\n"), "removed: {body}");
+    assert!(
+        !body.contains("### Requirement: Beta\n"),
+        "old name gone: {body}"
+    );
+    assert!(body.contains("### Requirement: Beta2"), "renamed: {body}");
+    assert!(body.contains("beta, revised"), "modified: {body}");
+    assert!(body.contains("### Requirement: Gamma"), "added: {body}");
+    assert!(
+        body.find("Beta2").unwrap() < body.find("Gamma").unwrap(),
+        "renamed block keeps its slot, additions append: {body}"
+    );
+}
+
+#[test]
+fn modified_naming_rename_source_refuses() {
+    let delta = "\
+# alpha
+
+## MODIFIED Requirements
+
+### Requirement: Beta
+The system SHALL beta, revised.
+
+## RENAMED Requirements
+
+- FROM: `### Requirement: Beta`
+- TO: `### Requirement: Beta2`
+";
+    // MODIFIED must reference the NEW header once a rename exists.
+    let message = plan(delta, Some(TARGET)).unwrap_err();
+    assert!(
+        message.contains("NEW header"),
+        "rename/modified interplay: {message}"
+    );
+}

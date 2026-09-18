@@ -1,6 +1,8 @@
 mod archives;
 mod changes;
 mod cli;
+mod delta_apply;
+mod delta_merge;
 mod grammar;
 mod interchange;
 mod interchange_archive;

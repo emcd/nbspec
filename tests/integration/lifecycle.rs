@@ -642,3 +642,118 @@ fn first_review_reports_qualified_note_path() {
         "recorded verdict note must exist on disk: {relative_path}"
     );
 }
+
+/// Surgical delta merge across two changes: the first merges a
+/// full ADDED spec, the second applies REMOVED + ADDED against the
+/// existing target, warns on the already-absent name, and remerges
+/// idempotently.
+#[test]
+fn surgical_delta_merge_end_to_end() {
+    const SECOND_ID: &str = "add-demo2";
+    const LEGACY_SPEC: &str = "\
+# user-auth
+
+## ADDED Requirements
+
+### Requirement: User authentication
+The system SHALL authenticate users.
+
+#### Scenario: Valid login
+- **WHEN** valid credentials arrive
+- **THEN** a session begins
+
+### Requirement: Legacy login
+The system SHALL keep legacy login.
+
+#### Scenario: Legacy path
+- **WHEN** legacy credentials arrive
+- **THEN** a session begins
+";
+    const DELTA_SPEC: &str = "\
+# user-auth
+
+## ADDED Requirements
+
+### Requirement: Session refresh
+The system SHALL refresh sessions.
+
+#### Scenario: Refresh
+- **WHEN** expiry nears
+- **THEN** the session refreshes
+
+## REMOVED Requirements
+
+### Requirement: Legacy login
+
+### Requirement: Ghost
+";
+    let fixture = Fixture::new();
+    for (id, spec) in [(CHANGE_ID, LEGACY_SPEC), (SECOND_ID, DELTA_SPEC)] {
+        let created = nbspec(&fixture, &["create", id, "--title", "Demo"]);
+        assert!(created.status.success(), "{}", stderr_of(&created));
+        let dir = fixture.notebook_path().join("proposals").join(id);
+        let mut proposal = std::fs::read_to_string(dir.join("proposal.md")).unwrap();
+        proposal.push_str("\n## Why\n\nProve surgical merge.\n");
+        std::fs::write(dir.join("proposal.md"), proposal).unwrap();
+        std::fs::write(dir.join("specifications/user-auth.md"), spec).unwrap();
+        let valid = nbspec(&fixture, &["validate", id]);
+        assert!(valid.status.success(), "{}", stderr_of(&valid));
+        let approved = nbspec(
+            &fixture,
+            &[
+                "review",
+                id,
+                "--verdict",
+                "approve",
+                "--reviewer",
+                "itest",
+                "--comment",
+                "ok",
+            ],
+        );
+        assert!(approved.status.success(), "{}", stderr_of(&approved));
+    }
+    let first = nbspec(&fixture, &["merge", CHANGE_ID]);
+    assert!(first.status.success(), "{}", stderr_of(&first));
+    let second = nbspec(&fixture, &["merge", SECOND_ID]);
+    assert!(second.status.success(), "{}", stderr_of(&second));
+    let output = stdout_of(&second);
+    assert!(
+        output.contains("wrote documentation/specifications/user-auth.md"),
+        "surgical merge writes: {output}"
+    );
+    assert!(
+        output.contains("warning:"),
+        "already-absent removal warns: {output}"
+    );
+    assert!(
+        output.contains("Ghost"),
+        "warning names the requirement: {output}"
+    );
+    let target = fixture
+        .project_root()
+        .join("documentation/specifications/user-auth.md");
+    let merged = std::fs::read_to_string(&target).unwrap();
+    let (_, body) = merged.split_once('\n').expect("provenance header");
+    assert!(
+        body.contains("### Requirement: User authentication"),
+        "kept: {body}"
+    );
+    assert!(
+        body.contains("### Requirement: Session refresh"),
+        "added: {body}"
+    );
+    assert!(!body.contains("Legacy login"), "removed: {body}");
+    // Idempotent remerge: rebuilt comparison reports unchanged.
+    let again = nbspec(&fixture, &["merge", SECOND_ID]);
+    assert!(again.status.success(), "{}", stderr_of(&again));
+    let again_output = stdout_of(&again);
+    assert!(
+        again_output.contains("unchanged"),
+        "remerge writes nothing: {again_output}"
+    );
+    assert!(
+        !again_output.contains("Ghost"),
+        "idempotent remerge repeats no delta warning: {again_output}"
+    );
+}
