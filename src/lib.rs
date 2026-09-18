@@ -8,6 +8,7 @@ pub mod archives;
 pub mod changes;
 pub mod cli;
 pub mod configuration;
+pub mod delta_apply;
 pub mod git_env;
 pub mod grammar;
 pub mod interchange;
