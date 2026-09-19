@@ -759,6 +759,61 @@ fn repeated_target_modified_sections_all_apply() {
 }
 
 #[test]
+fn intermediate_only_chain_converges() {
+    // Only the middle link exists: B→C applies, then A→B resolves
+    // against the arrived C instead of erroring source-missing.
+    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: B\nTwo.\n";
+    let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n";
+    let body = plan(delta, Some(target)).unwrap();
+    assert!(
+        body.contains("### Requirement: C\nTwo."),
+        "converges to C: {body}"
+    );
+    assert!(
+        !body.contains("Requirement: A\n"),
+        "no stale source: {body}"
+    );
+    assert!(
+        !body.contains("Requirement: B\n"),
+        "no stranded link: {body}"
+    );
+}
+
+#[test]
+fn true_chain_declaration_order_is_irrelevant() {
+    // The same A→B→C chain listed both ways converges identically.
+    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n\n### Requirement: B\nTwo.\n";
+    let forward = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n";
+    let reverse = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n";
+    let forward_body = plan(forward, Some(target)).unwrap();
+    let reverse_body = plan(reverse, Some(target)).unwrap();
+    assert_eq!(forward_body, reverse_body, "order is irrelevant");
+    assert!(
+        forward_body.contains("### Requirement: B\nOne."),
+        "A became B: {forward_body}"
+    );
+    assert!(
+        forward_body.contains("### Requirement: C\nTwo."),
+        "B became C: {forward_body}"
+    );
+}
+
+#[test]
+fn cr_only_targets_refuse_instead_of_panicking() {
+    let target = "# a\r\r## ADDED Requirements\r\r### Requirement: A\rText.\r";
+    let rename = "# a\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n";
+    let remove = "# a\n\n## REMOVED Requirements\n\n### Requirement: A\n";
+    let add = "# a\n\n## ADDED Requirements\n\n### Requirement: B\nText.\n";
+    for (operation, delta) in [("rename", rename), ("remove", remove), ("append", add)] {
+        let message = plan(delta, Some(target)).unwrap_err();
+        assert!(
+            message.contains("bare carriage returns"),
+            "{operation} refuses structurally: {message}"
+        );
+    }
+}
+
+#[test]
 fn reverse_declared_chain_converges() {
     // Same chain, opposite declaration order: identical outcome.
     let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n\n### Requirement: B\nTwo.\n";

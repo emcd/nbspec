@@ -3,13 +3,17 @@
 //! Merge is the only nbspec operation that writes to the repository
 //! working tree, and it never creates git commits. It runs in two
 //! phases: planning inspects every merge target and collects every
-//! refusal — unsupported delta operations, hand-edited targets,
+//! refusal — incoherent deltas, dangling names, hand-edited targets,
 //! unmanaged files, foreign-owned documents that drifted — and only a
 //! violation-free plan executes, so a refused merge writes nothing.
-//! `--force` overrides target-state refusals (drift, unmanaged,
-//! foreign ownership) but never unsupported delta operations, which
-//! no overwrite can make correct, and never non-file occupants,
-//! which nbspec will not remove.
+//! Documents carrying delta operations apply surgically against
+//! their targets (see `delta_apply`); notes without delta sections
+//! write whole. `--force` overrides target-state refusals (drift,
+//! unmanaged, foreign ownership) but never delta incoherence,
+//! dangling names, or non-file occupants. `--force` adopts an
+//! unmanaged surgical base only when it holds addressable
+//! requirement blocks, and resolves `ADDED` collisions against
+//! drifted text delta-wins; hash-valid collisions refuse regardless.
 
 use std::path::{Path, PathBuf};
 

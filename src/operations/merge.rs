@@ -25,9 +25,10 @@ use super::{OperationError, OperationOutcome, OperationResult};
 /// before any write, so a refused merge modifies nothing; `force`
 /// overrides target-state refusals (drift, unmanaged files, foreign
 /// ownership) but never delta incoherence, dangling names, or
-/// non-file occupants. `ADDED` collisions against drifted text
-/// resolve delta-wins under `--force`; hash-valid collisions refuse
-/// regardless of `--force`.
+/// non-file occupants. `force` adopts an unmanaged surgical base
+/// only when it holds addressable requirement blocks. `ADDED`
+/// collisions against drifted text resolve delta-wins under
+/// `--force`; hash-valid collisions refuse regardless of `--force`.
 /// This is the only nbspec operation that writes to the repository,
 /// and it creates no git commits. Archive writing happens after the
 /// documents transfer: an archive IO failure therefore leaves

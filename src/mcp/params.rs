@@ -101,9 +101,12 @@ pub struct MergeArgs {
     pub change_id: String,
 
     /// Overwrites merge targets that drifted since the last merge.
-    /// Does NOT override unsupported-delta refusals (MODIFIED /
-    /// REMOVED / RENAMED) or non-file occupants; those remain
-    /// unimplemented and require explicit operator intervention.
+    /// Overrides target-state refusals (drift, unmanaged, foreign
+    /// ownership) but never delta incoherence, dangling names, or
+    /// non-file occupants. Force adopts an unmanaged surgical base
+    /// only with addressable blocks. ADDED collisions against
+    /// drifted text resolve delta-wins under force; hash-valid
+    /// collisions refuse regardless.
     #[serde(default)]
     pub force: bool,
 }

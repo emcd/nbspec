@@ -274,9 +274,11 @@ impl McpServer {
                        before any write; force=true overrides \
                        target-state refusals (drift, unmanaged, foreign \
                        ownership) but never delta incoherence, dangling \
-                       names, or non-file occupants. ADDED collisions \
-                       against drifted text resolve delta-wins under \
-                       force; hash-valid collisions refuse regardless."
+                       names, or non-file occupants. Force adopts an \
+                       unmanaged surgical base only with addressable \
+                       blocks. ADDED collisions against drifted text \
+                       resolve delta-wins under force; hash-valid \
+                       collisions refuse regardless."
     )]
     async fn merge(
         &self,
