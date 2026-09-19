@@ -306,7 +306,7 @@ fn plan_document_body(
     document: &RenderedDocument,
     target_path: &str,
     target: &TargetRead,
-    force: bool,
+    overwrite_collisions: bool,
 ) -> Result<PlannedDoc, RefusalReason> {
     let surgical = is_surgical_document(document);
     if !surgical {
@@ -329,7 +329,12 @@ fn plan_document_body(
         .next()
         .and_then(|file| file.strip_suffix(".md"))
         .unwrap_or(target_path);
-    match plan_delta_merge(&document.content, target_body, fallback, force) {
+    match plan_delta_merge(
+        &document.content,
+        target_body,
+        fallback,
+        overwrite_collisions,
+    ) {
         Ok(applied) => Ok(PlannedDoc {
             new_body: applied.body,
             warnings: applied.warnings,
@@ -600,10 +605,18 @@ pub fn merge_documents(
             }
         }
         // Application planning only runs on state-clean (or
-        // force-overridden) targets. Force rides in so
-        // drift-induced ADDED collisions resolve delta-wins;
-        // absences never resolve under force.
-        let planned = match plan_document_body(document, target_path, &target, force) {
+        // force-overridden) targets. The collision overwrite derives
+        // from actually overridden drift — never the raw command
+        // flag — so force used for the review gate, a clean
+        // succession, or unmanaged adoption still refuses clean
+        // collisions; absences never resolve under any flag.
+        let overwrite_collisions = force
+            && matches!(
+                state,
+                TargetStatus::Drifted | TargetStatus::ForeignDrifted(_)
+            );
+        let planned = match plan_document_body(document, target_path, &target, overwrite_collisions)
+        {
             Ok(planned) => planned,
             Err(reason) => {
                 refusals.push(Refusal {

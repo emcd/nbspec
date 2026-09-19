@@ -3,17 +3,19 @@
 //! Upstream-shaped (`specs-apply.ts:buildUpdatedSpec`): the delta note
 //! is pre-validated for coherence, then its operations apply in order
 //! `RENAMED → REMOVED → MODIFIED → ADDED` against the target's
-//! requirement-block map with exact-name matching. Only `ADDED`-only
-//! notes keep the legacy whole-write path (merging.rs branches before
-//! calling here), so full-content practice is untouched and every
-//! surgical behavior below governs notes that actually carry delta
-//! operations.
+//! requirement-block map with exact-name matching. Every document
+//! carrying delta sections applies surgically — including
+//! `ADDED`-only notes, whose blocks append, no-op when identical, or
+//! refuse when differing. Notes without delta sections keep the
+//! legacy whole-write path (merging.rs branches before calling
+//! here). Collision overwrite applies only when the caller observed
+//! actually overridden drift; hash-valid collisions always refuse.
 
 use std::collections::HashMap;
 
 use crate::grammar::{
     UnpairedSide, duplicate_section_kinds, extract_purpose_section, find_unpaired_renames,
-    fold_requirement_name, parse_delta_specification, parse_target_blocks,
+    fold_requirement_name, mask_fenced_lines, parse_delta_specification, parse_target_blocks,
 };
 
 pub use crate::grammar::has_requirements_section;
@@ -57,16 +59,17 @@ impl ApplyFailure {
 /// Plans one surgical document: pre-validates coherence, then applies
 /// against `target_body` (`None` for an absent target).
 /// `title_fallback` names the rebuilt document when the delta note
-/// carries no `# ` title line. `force` resolves `ADDED` collisions
-/// (existing block with differing content) by delta-wins replacement:
-/// against drifted text the difference may itself be the drift, and
-/// force means the delta wins; without force every collision refuses.
-/// Absences never resolve under force (nothing to act on).
+/// carries no `# ` title line. `overwrite_collisions` resolves
+/// `ADDED` collisions (existing block with differing content) by
+/// delta-wins replacement: callers set it only when merging with
+/// `--force` against an actually drifted target, where the
+/// difference may itself be the drift. Hash-valid collisions always
+/// refuse, and absences never resolve under any flag.
 pub fn plan_delta_merge(
     delta_content: &str,
     target_body: Option<&str>,
     title_fallback: &str,
-    force: bool,
+    overwrite_collisions: bool,
 ) -> Result<AppliedDoc, ApplyFailure> {
     check_delta_coherence(delta_content)?;
     let delta = parse_delta_specification(delta_content);
@@ -109,7 +112,13 @@ pub fn plan_delta_merge(
         });
     }
     let target = target_body.expect("existing target");
-    apply_onto_existing(delta_content, &delta, target, &mut warnings, force)
+    apply_onto_existing(
+        delta_content,
+        &delta,
+        target,
+        &mut warnings,
+        overwrite_collisions,
+    )
 }
 
 /// Rejects incoherent deltas before any write: duplicate sections,
@@ -140,11 +149,6 @@ fn prevalidate(
     if let Some(kind) = duplicate_section_kinds(delta_content).into_iter().next() {
         return Err(ApplyFailure::incoherent(format!(
             "duplicate \"## {kind}\" section: repeated delta sections leave operations silently ignored"
-        )));
-    }
-    if let Some(cycle) = find_rename_cycle(&delta.renamed) {
-        return Err(ApplyFailure::incoherent(format!(
-            "rename cycle through \"### Requirement: {cycle}\": write the direct rename instead"
         )));
     }
     let in_section = |names: Vec<(String, String)>, section: &'static str| {
@@ -205,6 +209,14 @@ fn prevalidate(
             "duplicate TO in RENAMED: each rename destination may appear once".to_string(),
         ));
     }
+    // Cycles on the folded graph (duplicate sides already rejected
+    // above, so the graph is well-formed here): no application order
+    // can satisfy one.
+    if let Some(cycle) = find_rename_cycle(&delta.renamed) {
+        return Err(ApplyFailure::incoherent(format!(
+            "rename cycle through \"### Requirement: {cycle}\": write the direct rename instead"
+        )));
+    }
     let conflict = |name: &str, first: &str, second: &str| {
         ApplyFailure::incoherent(format!(
             "requirement present in multiple sections ({first} and {second}) for header \"### Requirement: {name}\""
@@ -255,23 +267,29 @@ fn fold_map(names: &Vec<String>) -> HashMap<String, &str> {
     map
 }
 
-/// Finds a rename cycle (`A→B→…→A`) by following rename destinations.
-/// Chains (`A→B→C`) stay legal; only true cycles refuse, since no
-/// application order can satisfy them.
+/// Finds a rename cycle by following rename destinations.
+/// The graph is built on folded names — the same discipline as
+/// coherence and typo checks — so `A→b, B→A` cycles refuse exactly
+/// like exact-string ones. Chains (`A→B→C`) stay legal; only true
+/// cycles refuse, since no application order can satisfy them.
 fn find_rename_cycle(renamed: &[crate::grammar::Rename]) -> Option<String> {
-    let mut edges: HashMap<&str, &str> = HashMap::new();
+    let mut edges: HashMap<String, String> = HashMap::new();
     for rename in renamed {
-        edges.insert(rename.from.as_str(), rename.to.as_str());
+        edges.insert(
+            fold_requirement_name(&rename.from),
+            fold_requirement_name(&rename.to),
+        );
     }
     for rename in renamed {
-        let mut visited: Vec<&str> = vec![rename.from.as_str()];
-        let mut current = rename.to.as_str();
-        while let Some(next) = edges.get(current) {
+        let start = fold_requirement_name(&rename.from);
+        let mut visited: Vec<String> = vec![start.clone()];
+        let mut current = fold_requirement_name(&rename.to);
+        while let Some(next) = edges.get(&current) {
             if visited.contains(next) {
-                return Some(current.to_string());
+                return Some(rename.to.clone());
             }
             visited.push(current);
-            current = next;
+            current = next.clone();
         }
     }
     None
@@ -323,7 +341,7 @@ fn apply_onto_existing(
     delta: &crate::grammar::DeltaSpecification,
     target: &str,
     warnings: &mut Vec<String>,
-    force: bool,
+    overwrite_collisions: bool,
 ) -> Result<AppliedDoc, ApplyFailure> {
     let blocks = parse_target_blocks(target);
     // Structural refusal before application: duplicate target names
@@ -359,14 +377,37 @@ fn apply_onto_existing(
     let mut span_edits: Vec<(usize, SpanEdit)> = Vec::new();
     // Applied renames as (from, to) for removal resolution.
     let mut renamed: Vec<(String, String)> = Vec::new();
-
-    for rename in &delta.renamed {
-        if by_name.contains_key(&rename.from) {
+    // Fixpoint over declaration order: each pass applies every
+    // rename whose source is present and whose destination is
+    // vacant, and consumes renames whose chain already resolved.
+    // This makes initial, reverse-declared, partial, and final
+    // states converge identically instead of depending on listing
+    // order; leftovers diagnose after the fixpoint settles.
+    // No-op eligibility is decided on the ORIGINAL map before any
+    // application: a rename whose source never existed and whose
+    // chain final already exists was consumed by an earlier run.
+    // (Evaluating it on the evolving map would misread names this
+    // very run created as already-synced destinations.)
+    let original: std::collections::HashSet<&str> = by_name.keys().map(String::as_str).collect();
+    let mut pending: Vec<bool> = vec![true; delta.renamed.len()];
+    for (index, rename) in delta.renamed.iter().enumerate() {
+        if !original.contains(rename.from.as_str())
+            && chain_final_in(&chain, &|name| original.contains(name), rename.to.as_str())
+        {
+            pending[index] = false;
+        }
+    }
+    loop {
+        let mut progressed = false;
+        for (index, rename) in delta.renamed.iter().enumerate() {
+            if !pending[index] {
+                continue;
+            }
+            if !by_name.contains_key(&rename.from) {
+                continue;
+            }
             if by_name.contains_key(&rename.to) {
-                return Err(ApplyFailure::dangling(format!(
-                    "RENAMED failed for \"### Requirement: {}\": target already exists",
-                    rename.to
-                )));
+                continue;
             }
             if let Some(near) = near_miss(&by_name, &order, &rename.to, Some(&rename.from)) {
                 return Err(typo_error("RENAMED", &rename.to, &near));
@@ -381,30 +422,30 @@ fn apply_onto_existing(
                 SpanEdit::Reheader(format!("### Requirement: {}", rename.to)),
             ));
             renamed.push((rename.from.clone(), rename.to.clone()));
-        } else {
-            // Follow rename chains to their final name: a chain whose
-            // final destination is present already applied fully, so
-            // reapplying is a no-op rather than a dangling rename.
-            let mut destination = rename.to.as_str();
-            let mut guard = 0;
-            while let Some(next) = chain.get(destination) {
-                guard += 1;
-                if guard > delta.renamed.len() {
-                    break;
-                }
-                destination = next;
-            }
-            if by_name.contains_key(destination) {
-                continue;
-            }
-            if let Some(near) = near_miss(&by_name, &order, &rename.from, None) {
-                return Err(typo_error("RENAMED", &rename.from, &near));
-            }
+            pending[index] = false;
+            progressed = true;
+        }
+        if !progressed {
+            break;
+        }
+    }
+    for (index, rename) in delta.renamed.iter().enumerate() {
+        if !pending[index] {
+            continue;
+        }
+        if by_name.contains_key(&rename.to) {
             return Err(ApplyFailure::dangling(format!(
-                "RENAMED failed for \"### Requirement: {}\": source not found",
-                rename.from
+                "RENAMED failed for \"### Requirement: {}\": target already exists",
+                rename.to
             )));
         }
+        if let Some(near) = near_miss(&by_name, &order, &rename.from, None) {
+            return Err(typo_error("RENAMED", &rename.from, &near));
+        }
+        return Err(ApplyFailure::dangling(format!(
+            "RENAMED failed for \"### Requirement: {}\": source not found",
+            rename.from
+        )));
     }
 
     for name in &delta.removed {
@@ -479,7 +520,7 @@ fn apply_onto_existing(
             if blocks[slot].raw.trim_end() == added.raw.trim_end() {
                 continue;
             }
-            if force {
+            if overwrite_collisions {
                 let block = &blocks[slot];
                 warnings.push(format!(
                     "ADDED collision for \"### Requirement: {}\" resolved by overwrite under --force",
@@ -579,6 +620,27 @@ fn rename_to_from(renamed: &[(String, String)], name: &str) -> Option<String> {
         .map(|(from, _)| from.clone())
 }
 
+/// Follows rename links from `to` to the chain's final name and
+/// reports whether that name is present: a fully applied chain
+/// (or single rename) re-applies as a no-op. Cycles cannot reach
+/// here (pre-validation rejects them); the bound is defensive.
+fn chain_final_in(
+    chain: &HashMap<&str, &str>,
+    is_present: &dyn Fn(&str) -> bool,
+    to: &str,
+) -> bool {
+    let mut destination = to;
+    let mut guard = 0;
+    while let Some(next) = chain.get(destination) {
+        guard += 1;
+        if guard > chain.len() {
+            return false;
+        }
+        destination = next;
+    }
+    is_present(destination)
+}
+
 /// Recomposes the durable body from the target's lines with
 /// byte-preservation discipline: the target is split on `\n` only
 /// (untouched lines round-trip byte-identical, including `\r` and
@@ -629,7 +691,9 @@ fn recompose(
         }
     }
     if !appended.is_empty() {
-        append_blocks(&mut lines, eol_lines_many(appended, eol), eol);
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let mask = mask_fenced_lines(&refs);
+        append_blocks(&mut lines, eol_lines_many(appended, eol), eol, &mask);
     }
     lines.join("\n")
 }
@@ -674,12 +738,16 @@ fn eol_terminated(line: String, eol: &str) -> String {
 /// `## ADDED Requirements` section body (trailing blanks trimmed so
 /// exactly one blank line separates the last existing block), or
 /// creates the section at the end of the document when absent.
+/// Section scans skip fenced lines through `mask`, so an example
+/// `## ADDED Requirements` never captures insertion.
 /// Separators adopt the target EOL style.
-fn append_blocks(lines: &mut Vec<String>, appended: Vec<Vec<String>>, eol: &str) {
-    let section_at = lines.iter().position(|line| {
-        line.strip_prefix("##")
-            .filter(|rest| !rest.starts_with('#'))
-            .is_some_and(|rest| rest.trim().eq_ignore_ascii_case("ADDED Requirements"))
+fn append_blocks(lines: &mut Vec<String>, appended: Vec<Vec<String>>, eol: &str, mask: &[bool]) {
+    let section_at = lines.iter().enumerate().position(|(index, line)| {
+        !mask[index]
+            && line
+                .strip_prefix("##")
+                .filter(|rest| !rest.starts_with('#'))
+                .is_some_and(|rest| rest.trim().eq_ignore_ascii_case("ADDED Requirements"))
     });
     let blank = blank_line(eol);
     let mut addition: Vec<String> = Vec::new();
@@ -690,27 +758,33 @@ fn append_blocks(lines: &mut Vec<String>, appended: Vec<Vec<String>>, eol: &str)
     match section_at {
         Some(header) => {
             let mut end = header + 1;
-            while end < lines.len() && !is_section_header(&lines[end]) {
+            while end < lines.len() && !(is_section_header(&lines[end]) && !mask[end]) {
                 end += 1;
             }
-            while end > header + 1 && lines[end - 1].trim().is_empty() {
-                lines.remove(end - 1);
-                end -= 1;
+            // Insert before the existing separator/trailing entries
+            // so deliberate spacing and terminal shape survive.
+            let mut at = end;
+            while at > header + 1 && lines[at - 1].trim().is_empty() {
+                at -= 1;
             }
-            lines.splice(end..end, addition);
-            if end < lines.len() && !lines[end].trim().is_empty() {
-                lines.insert(end, blank);
+            let inserted = addition.len();
+            lines.splice(at..at, addition);
+            if at + inserted < lines.len() && !lines[at + inserted].trim().is_empty() {
+                lines.insert(at + inserted, blank);
             }
         }
         None => {
-            while lines.last().is_some_and(|line| line.trim().is_empty()) {
-                lines.pop();
+            let mut at = lines.len();
+            while at > 0 && lines[at - 1].trim().is_empty() {
+                at -= 1;
             }
-            if !lines.is_empty() {
-                lines.push(blank);
+            let mut insertion: Vec<String> = Vec::new();
+            if at > 0 {
+                insertion.push(blank);
             }
-            lines.push(format!("## ADDED Requirements{}", crlf_suffix(eol)));
-            lines.extend(addition);
+            insertion.push(format!("## ADDED Requirements{}", crlf_suffix(eol)));
+            insertion.extend(addition);
+            lines.splice(at..at, insertion);
         }
     }
 }

@@ -445,6 +445,42 @@ fn unmanaged_unparseable_target_refuses_even_with_force() {
 }
 
 #[test]
+fn unmanaged_blockless_heading_refuses_even_with_force() {
+    // A Requirements heading with zero addressable blocks is no
+    // base to apply onto, even under force.
+    let root = unique_temp_root("delta-blockless");
+    fs::create_dir_all(&root).unwrap();
+    let path = target_of(&root, "alpha");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, "# alpha\n\n## ADDED Requirements\n").unwrap();
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Beta
+The system SHALL beta.
+";
+    let error = merge_documents(
+        &[document("alpha", delta)],
+        &root,
+        "add-demo",
+        "home",
+        None,
+        true,
+    )
+    .unwrap_err();
+    let MergeError::Refused { refusals } = error else {
+        panic!("expected refusal");
+    };
+    assert!(
+        matches!(refusals[0].reason, RefusalReason::DanglingDelta(_)),
+        "block-less base refuses under force"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn incoherent_document_reports_unmergeable_status() {
     let root = unique_temp_root("delta-status");
     fs::create_dir_all(&root).unwrap();
@@ -540,6 +576,119 @@ Text.
     assert!(
         matches!(refusals[0].reason, RefusalReason::IncoherentDelta(_)),
         "note fault beats target fault"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn clean_collision_refuses_even_with_force() {
+    // Force used for anything but overridden drift (here: nothing
+    // to override) still refuses a hash-valid collision.
+    let root = unique_temp_root("delta-clean-force");
+    fs::create_dir_all(&root).unwrap();
+    seed_target(&root, "alpha", "add-demo", BASE_SPEC);
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Beta
+The system SHALL beta, restated.
+";
+    let error = merge_documents(
+        &[document("alpha", delta)],
+        &root,
+        "add-demo",
+        "home",
+        None,
+        true,
+    )
+    .unwrap_err();
+    let MergeError::Refused { refusals } = error else {
+        panic!("expected refusal");
+    };
+    assert!(
+        matches!(refusals[0].reason, RefusalReason::DanglingDelta(_)),
+        "clean collision is force-proof"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn unmanaged_adoption_collision_refuses_even_with_force() {
+    // Adoption takes over structure, not content conflicts.
+    let root = unique_temp_root("delta-adopt-collide");
+    fs::create_dir_all(&root).unwrap();
+    let path = target_of(&root, "alpha");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, BASE_SPEC).unwrap();
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Beta
+The system SHALL beta, restated.
+";
+    let error = merge_documents(
+        &[document("alpha", delta)],
+        &root,
+        "add-demo",
+        "home",
+        None,
+        true,
+    )
+    .unwrap_err();
+    let MergeError::Refused { refusals } = error else {
+        panic!("expected refusal");
+    };
+    assert!(
+        matches!(refusals[0].reason, RefusalReason::DanglingDelta(_)),
+        "adoption collision is force-proof"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn drifted_collision_resolves_delta_wins_under_force() {
+    let root = unique_temp_root("delta-drift-collide");
+    fs::create_dir_all(&root).unwrap();
+    seed_target(&root, "alpha", "add-demo", BASE_SPEC);
+    let path = target_of(&root, "alpha");
+    let drifted = fs::read_to_string(&path)
+        .unwrap()
+        .replace("SHALL beta.", "SHALL beta, hand-tuned.");
+    fs::write(&path, drifted).unwrap();
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Beta
+The system SHALL beta, from the delta.
+";
+    let report = merge_documents(
+        &[document("alpha", delta)],
+        &root,
+        "add-demo",
+        "home",
+        None,
+        true,
+    )
+    .unwrap();
+    assert_eq!(
+        report.written.len(),
+        1,
+        "drifted collision resolves delta-wins"
+    );
+    let body = fs::read_to_string(&path).unwrap();
+    assert!(body.contains("from the delta"), "delta text wins");
+    assert!(
+        report
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Beta")),
+        "overwrite announces itself"
     );
     fs::remove_dir_all(&root).unwrap();
 }

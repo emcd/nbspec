@@ -59,21 +59,25 @@ pub struct TargetBlock {
 }
 
 /// Collects the addressable requirement blocks of a merge-target
-/// document: blocks under `## ADDED` / `## MODIFIED Requirements`
-/// sections. Headers under other sections (removal records,
-/// `## Purpose` prose) are not merge state. Spans run from the
-/// requirement header through the last non-blank line before the
-/// next requirement header, section header, or end of file.
+/// document: blocks under every `## ADDED` / `## MODIFIED
+/// Requirements` section. Repeated target sections all contribute
+/// (unlike delta notes, where repeats are incoherent); headers under
+/// other sections (removal records, `## Purpose` prose) are not
+/// merge state. Spans run from the requirement header through the
+/// last non-blank line before the next requirement header, section
+/// header, or end of file.
 pub fn parse_target_blocks(content: &str) -> Vec<TargetBlock> {
     let normalized = normalize_line_endings(content);
     let lines: Vec<&str> = normalized.split('\n').collect();
     let mask = mask_fenced_lines(&lines);
     let sections = split_top_level_sections(&lines, &mask);
     let mut blocks = Vec::new();
-    for section_name in ["added requirements", "modified requirements"] {
-        let Some(section) = find_section(&sections, section_name) else {
+    for section in &sections {
+        if section.title_lowercase != "added requirements"
+            && section.title_lowercase != "modified requirements"
+        {
             continue;
-        };
+        }
         let mut cursor = section.body_start;
         while cursor < section.body_end {
             let Some(name) = (!mask[cursor])
@@ -357,7 +361,7 @@ struct SectionSpan {
 /// example content stays inert rather than becoming operations).
 /// Line indices are stable — masking never adds or removes lines,
 /// so diagnostics keep pointing at the right lines.
-fn mask_fenced_lines(lines: &[&str]) -> Vec<bool> {
+pub(crate) fn mask_fenced_lines(lines: &[&str]) -> Vec<bool> {
     let mut mask = vec![false; lines.len()];
     let mut open: Option<(char, usize)> = None;
     for (index, line) in lines.iter().enumerate() {

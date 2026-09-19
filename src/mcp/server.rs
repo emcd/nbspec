@@ -268,12 +268,15 @@ impl McpServer {
                        the repository working tree. Documents carrying \
                        delta operations apply surgically against their \
                        targets (RENAMED, then REMOVED, then MODIFIED, \
-                       then ADDED, exact-name matching); ADDED-only notes \
+                       then ADDED, exact-name matching), including \
+                       ADDED-only notes; notes without delta sections \
                        write whole. Planning collects every violation \
                        before any write; force=true overrides \
                        target-state refusals (drift, unmanaged, foreign \
                        ownership) but never delta incoherence, dangling \
-                       names, or non-file occupants."
+                       names, or non-file occupants. ADDED collisions \
+                       against drifted text resolve delta-wins under \
+                       force; hash-valid collisions refuse regardless."
     )]
     async fn merge(
         &self,

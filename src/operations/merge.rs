@@ -19,12 +19,15 @@ use super::{OperationError, OperationOutcome, OperationResult};
 ///
 /// Renders the change from its notes and writes the target-bearing
 /// documents to their configured repository destinations with
-/// provenance headers. `ADDED`-only notes write whole; notes carrying
-/// delta operations apply surgically (see `merging`). Planning
-/// collects every violation before any write, so a refused merge
-/// modifies nothing; `force` overrides target-state refusals (drift,
-/// unmanaged files, foreign ownership) but never delta incoherence,
-/// dangling names, or non-file occupants.
+/// provenance headers. Notes carrying delta operations apply
+/// surgically against their targets (see `merging`); notes without
+/// delta sections write whole. Planning collects every violation
+/// before any write, so a refused merge modifies nothing; `force`
+/// overrides target-state refusals (drift, unmanaged files, foreign
+/// ownership) but never delta incoherence, dangling names, or
+/// non-file occupants. `ADDED` collisions against drifted text
+/// resolve delta-wins under `--force`; hash-valid collisions refuse
+/// regardless of `--force`.
 /// This is the only nbspec operation that writes to the repository,
 /// and it creates no git commits. Archive writing happens after the
 /// documents transfer: an archive IO failure therefore leaves

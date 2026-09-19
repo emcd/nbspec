@@ -676,3 +676,155 @@ fn rename_targets_recorded_span_not_scan() {
         "prose untouched: {body}"
     );
 }
+
+#[test]
+fn fenced_added_heading_does_not_capture_insertion() {
+    // A fenced example ADDED section before the live structure must
+    // not capture the append; remerging the result is a silent no-op.
+    let target = "# alpha\n\n```md\n## ADDED Requirements\n\n### Requirement: Ghost\nText.\n```\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
+    let delta = "# alpha\n\n## ADDED Requirements\n\n### Requirement: Beta\nText.\n";
+    let first = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    assert!(
+        first.body.contains("```md\n## ADDED Requirements"),
+        "example preserved verbatim"
+    );
+    let live = first
+        .body
+        .find("```\n\n## ADDED Requirements")
+        .expect("live section");
+    assert!(
+        first.body[live..].contains("### Requirement: Beta"),
+        "append lands in the live section: {}",
+        first.body
+    );
+    let second = plan_delta_merge(delta, Some(&first.body), "alpha", false).unwrap();
+    assert_eq!(second.body, first.body, "remerge is byte-identical");
+    assert!(second.warnings.is_empty());
+}
+
+#[test]
+fn tilde_fenced_added_heading_does_not_capture() {
+    let target = "# alpha\n\n~~~\n## ADDED Requirements\n~~~\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
+    let delta = "# alpha\n\n## ADDED Requirements\n\n### Requirement: Beta\nText.\n";
+    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    assert_eq!(applied.body.matches("### Requirement: Beta").count(), 1);
+    assert!(applied.body.contains("~~~\n## ADDED Requirements\n~~~"));
+}
+
+#[test]
+fn repeated_target_sections_all_apply() {
+    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n\n## ADDED Requirements\n\n### Requirement: B\nTwo.\n";
+    let delta = "# alpha\n\n## REMOVED Requirements\n\n### Requirement: B\n";
+    let body = plan(delta, Some(target)).unwrap();
+    assert!(
+        !body.contains("### Requirement: B"),
+        "second-section block removed: {body}"
+    );
+    assert!(
+        body.contains("### Requirement: A"),
+        "first-section block kept: {body}"
+    );
+}
+
+#[test]
+fn initial_chain_applies_transitively() {
+    // A→B→C against a target holding only A ends as C: the created
+    // intermediate satisfies the second link in the same fixpoint.
+    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n";
+    let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n";
+    let body = plan(delta, Some(target)).unwrap();
+    assert!(
+        body.contains("### Requirement: C\nOne."),
+        "transitive rename: {body}"
+    );
+    assert!(
+        !body.contains("Requirement: A\n"),
+        "no stale source: {body}"
+    );
+    assert!(
+        !body.contains("Requirement: B\n"),
+        "no stranded intermediate: {body}"
+    );
+}
+
+#[test]
+fn repeated_target_modified_sections_all_apply() {
+    let target = "# alpha\n\n## MODIFIED Requirements\n\n### Requirement: A\nOne.\n\n## MODIFIED Requirements\n\n### Requirement: B\nTwo.\n";
+    let delta = "# alpha\n\n## MODIFIED Requirements\n\n### Requirement: B\nRevised.\n";
+    let body = plan(delta, Some(target)).unwrap();
+    assert!(
+        body.contains("Revised."),
+        "second-section block replaced: {body}"
+    );
+}
+
+#[test]
+fn reverse_declared_chain_converges() {
+    // Same chain, opposite declaration order: identical outcome.
+    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n\n### Requirement: B\nTwo.\n";
+    let forward = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B2`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n";
+    let reverse = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B2`\n";
+    let forward_body = plan(forward, Some(target)).unwrap();
+    let reverse_body = plan(reverse, Some(target)).unwrap();
+    assert_eq!(
+        forward_body, reverse_body,
+        "declaration order is irrelevant"
+    );
+    assert!(forward_body.contains("### Requirement: B2"));
+    assert!(forward_body.contains("### Requirement: C"));
+}
+
+#[test]
+fn partially_applied_chain_completes() {
+    // B→C already applied earlier (A and C present): A→B completes
+    // the chain, B→C resolves already-synced.
+    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n\n### Requirement: C\nThree.\n";
+    let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n";
+    let body = plan(delta, Some(target)).unwrap();
+    assert!(
+        body.contains("### Requirement: B\nOne."),
+        "chain completes: {body}"
+    );
+    assert!(
+        body.contains("### Requirement: C\nThree."),
+        "synced link untouched: {body}"
+    );
+}
+
+#[test]
+fn folded_cycle_refuses() {
+    let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: b`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: A`\n";
+    let message = plan(delta, Some(TARGET)).unwrap_err();
+    assert!(message.contains("cycle"), "folded cycles refuse: {message}");
+}
+
+#[test]
+fn append_preserves_bytes_lf_and_crlf() {
+    // Exact byte assertions: deliberate blanks before a following
+    // H2 and at EOF survive on both LF and CRLF, existing-section
+    // and create-section paths.
+    let lf =
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n\n\n## Designs\n\nProse.\n";
+    let delta = "# alpha\n\n## ADDED Requirements\n\n### Requirement: B\nTwo.\n";
+    let lf_body = plan(delta, Some(lf)).unwrap();
+    assert!(
+        lf_body.contains("### Requirement: B\nTwo.\n\n\n## Designs"),
+        "append tucks before existing separators: {lf_body:?}"
+    );
+    let crlf = lf.replace('\n', "\r\n");
+    let crlf_body = plan(delta, Some(&crlf)).unwrap();
+    assert_eq!(
+        crlf_body,
+        crlf_body.replace("\r\n", "\n").replace('\n', "\r\n"),
+        "CRLF stays CRLF throughout"
+    );
+    assert!(crlf_body.contains("### Requirement: B\r\nTwo.\r\n\r\n\r\n## Designs"));
+    // Create-section path on a section-less target keeps EOF shape.
+    let plain = "# alpha\n\n## Purpose\n\nWhy.\n";
+    let created = plan(delta, Some(plain)).unwrap();
+    assert!(created.contains("## ADDED Requirements\n\n### Requirement: B\nTwo.\n"));
+    assert!(created.ends_with("Two.\n") && !created.ends_with("\n\n"));
+    let plain_crlf = plain.replace('\n', "\r\n");
+    let created_crlf = plan(delta, Some(&plain_crlf)).unwrap();
+    assert!(created_crlf.contains("## ADDED Requirements\r\n\r\n### Requirement: B\r\nTwo.\r\n"));
+}
