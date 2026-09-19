@@ -112,16 +112,6 @@ pub fn plan_delta_merge(
         });
     }
     let target = target_body.expect("existing target");
-    // Structural refusal, never a panic: grammar spans are computed
-    // over CR-normalized lines while recomposition indexes the raw
-    // `\n`-split lines. Pure LF and pure CRLF agree line-for-line,
-    // but a bare CR (CR-only or mixed endings) creates phantom lines
-    // the spans cannot index. Refuse instead of mis-splicing.
-    if has_bare_carriage_return(target) {
-        return Err(ApplyFailure::dangling(
-            "target uses bare carriage returns (CR-only or mixed line endings); surgical merge needs LF or CRLF".to_string(),
-        ));
-    }
     apply_onto_existing(
         delta_content,
         &delta,
@@ -129,17 +119,6 @@ pub fn plan_delta_merge(
         &mut warnings,
         overwrite_collisions,
     )
-}
-
-/// Reports `\r` bytes not immediately followed by `\n`: CR-only
-/// documents and mixed-ending documents, whose grammar line model
-/// and recomposition line model disagree.
-fn has_bare_carriage_return(content: &str) -> bool {
-    let bytes = content.as_bytes();
-    bytes
-        .iter()
-        .enumerate()
-        .any(|(index, byte)| *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n'))
 }
 
 /// Rejects incoherent deltas before any write: duplicate sections,

@@ -412,8 +412,13 @@ fn fence_run(line: &str) -> Option<(char, usize, &str)> {
     Some((ch, len, &indented[len..]))
 }
 
+/// Normalizes CRLF line endings to LF for parsing. A lone CR is
+/// content, never a line separator (nb-api line semantics: only LF
+/// and CRLF separate lines, and splitting below always uses `\n`).
+/// Parsing and recomposition therefore agree line-for-line on every
+/// input — no line model can silently gain or lose lines.
 fn normalize_line_endings(content: &str) -> String {
-    content.replace("\r\n", "\n").replace('\r', "\n")
+    content.replace("\r\n", "\n")
 }
 
 /// Returns the title of a level-2 section header (`## <title>`), requiring

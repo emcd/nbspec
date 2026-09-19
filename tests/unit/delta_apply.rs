@@ -799,18 +799,35 @@ fn true_chain_declaration_order_is_irrelevant() {
 }
 
 #[test]
-fn cr_only_targets_refuse_instead_of_panicking() {
+fn cr_only_targets_treat_cr_as_content() {
+    // Lone CR is content, never a separator (nb-api line
+    // semantics): a CR-only document is a single line, so no
+    // sections or blocks parse — and crucially, nothing panics on
+    // misindexed spans.
     let target = "# a\r\r## ADDED Requirements\r\r### Requirement: A\rText.\r";
     let rename = "# a\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n";
     let remove = "# a\n\n## REMOVED Requirements\n\n### Requirement: A\n";
     let add = "# a\n\n## ADDED Requirements\n\n### Requirement: B\nText.\n";
-    for (operation, delta) in [("rename", rename), ("remove", remove), ("append", add)] {
-        let message = plan(delta, Some(target)).unwrap_err();
-        assert!(
-            message.contains("bare carriage returns"),
-            "{operation} refuses structurally: {message}"
-        );
-    }
+    // Rename finds no addressable blocks: dangling, not panic.
+    // Removal warns already-removed: nothing addressable to delete.
+    let rename_message = plan(rename, Some(target)).unwrap_err();
+    assert!(rename_message.contains("not found"), "{rename_message}");
+    let removed = plan_delta_merge(remove, Some(target), "alpha", false).unwrap();
+    assert_eq!(removed.body, target, "nothing addressable, nothing changed");
+    assert!(
+        removed
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("already removed"))
+    );
+    // Append lands under a created section; the CR-only base is
+    // preserved byte-identical around it.
+    let applied = plan_delta_merge(add, Some(target), "alpha", false).unwrap();
+    assert!(applied.body.starts_with(target), "base preserved");
+    assert!(
+        applied.body.contains("### Requirement: B"),
+        "block appended"
+    );
 }
 
 #[test]
