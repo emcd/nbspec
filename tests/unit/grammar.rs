@@ -1,6 +1,7 @@
 use nbspec::grammar::{
-    Rename, UnpairedSide, extract_purpose_section, find_unpaired_renames, fold_requirement_name,
-    has_requirements_section, parse_delta_specification, parse_target_blocks,
+    Rename, UnpairedSide, duplicate_section_kinds, extract_purpose_section, find_unpaired_renames,
+    fold_requirement_name, has_requirements_section, parse_delta_specification,
+    parse_target_blocks,
 };
 
 const ADDED_DELTA: &str = "\
@@ -361,4 +362,43 @@ fn name_fold_collapses_case_and_spacing() {
         fold_requirement_name("Foo Bar"),
         fold_requirement_name("FOO  bar")
     );
+}
+
+#[test]
+fn fenced_headers_are_not_merge_state() {
+    let content = "# T\n\n## ADDED Requirements\n\n```md\n## REMOVED Requirements\n\n### Requirement: Ghost\n```\n\n### Requirement: Real\nText.\n";
+    let delta = parse_delta_specification(content);
+    assert_eq!(delta.added.len(), 1, "fenced headers add nothing");
+    assert!(delta.removed.is_empty(), "fenced REMOVED section is prose");
+    assert!(!delta.presence.removed);
+    let blocks = parse_target_blocks(content);
+    assert_eq!(blocks.len(), 1);
+    assert_eq!(blocks[0].name, "Real");
+    assert!(!has_requirements_section(
+        "# T\n\n```\n## ADDED Requirements\n```\n"
+    ));
+}
+
+#[test]
+fn tilde_and_long_fences_mask() {
+    let tilde = "# T\n\n~~~\n### Requirement: Ghost\n~~~\n\n## ADDED Requirements\n\n### Requirement: Real\nText.\n";
+    assert_eq!(parse_target_blocks(tilde).len(), 1);
+    let long = "# T\n\n````\n```\n### Requirement: Ghost\n```\n````\n\n## ADDED Requirements\n\n### Requirement: Real\nText.\n";
+    assert_eq!(parse_target_blocks(long).len(), 1);
+}
+
+#[test]
+fn unclosed_fence_masks_to_eof() {
+    let content = "# T\n\n## ADDED Requirements\n\n```\n### Requirement: Ghost\n";
+    assert!(
+        parse_target_blocks(content).is_empty(),
+        "unclosed fence stays inert"
+    );
+}
+
+#[test]
+fn duplicate_delta_sections_detected() {
+    let content = "# T\n\n## ADDED Requirements\n\n## ADDED Requirements\n";
+    assert_eq!(duplicate_section_kinds(content), vec!["added requirements"]);
+    assert!(duplicate_section_kinds("# T\n\n## ADDED Requirements\n").is_empty());
 }

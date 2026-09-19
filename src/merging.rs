@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 
 use crate::delta_apply::plan_delta_merge;
-use crate::grammar::parse_delta_specification;
+use crate::grammar::{parse_delta_specification, parse_target_blocks};
 use crate::provenance;
 use crate::rendering::RenderedDocument;
 
@@ -285,8 +285,10 @@ fn read_target_body(project_root: &Path, target_path: &str) -> Result<TargetRead
 }
 
 /// Planned durable body for one rendered document: whole-write for
-/// `ADDED`-only notes (status quo, untouched), surgical application
-/// for notes carrying delta operations.
+/// notes without delta sections (status quo), surgical application
+/// for every note carrying `ADDED` / `MODIFIED` / `REMOVED` /
+/// `RENAMED` sections — including `ADDED`-only notes, whose blocks
+/// append, no-op when identical, or refuse when differing.
 struct PlannedDoc {
     /// Durable body to compare, stamp, and write.
     new_body: String,
@@ -294,27 +296,24 @@ struct PlannedDoc {
     warnings: Vec<String>,
     /// True when no effective operation remains: warn, write nothing.
     skipped: bool,
-    /// True when the note carries delta operations (surgical path).
-    surgical: bool,
 }
 
 /// Plans one document's durable body against an already-read target.
-/// `MODIFIED` / `REMOVED` / `RENAMED` presence switches from
-/// whole-write to surgical application; planning failures map to
-/// the never-force-overridable refusal kinds.
+/// Any delta-section presence switches from whole-write to surgical
+/// application; planning failures map to the never-force-overridable
+/// refusal kinds.
 fn plan_document_body(
     document: &RenderedDocument,
     target_path: &str,
     target: &TargetRead,
+    force: bool,
 ) -> Result<PlannedDoc, RefusalReason> {
-    let presence = parse_delta_specification(&document.content).presence;
-    let surgical = presence.modified || presence.removed || presence.renamed;
+    let surgical = is_surgical_document(document);
     if !surgical {
         return Ok(PlannedDoc {
             new_body: document.content.clone(),
             warnings: Vec::new(),
             skipped: false,
-            surgical: false,
         });
     }
     let target_body = match target {
@@ -330,12 +329,11 @@ fn plan_document_body(
         .next()
         .and_then(|file| file.strip_suffix(".md"))
         .unwrap_or(target_path);
-    match plan_delta_merge(&document.content, target_body, fallback) {
+    match plan_delta_merge(&document.content, target_body, fallback, force) {
         Ok(applied) => Ok(PlannedDoc {
             new_body: applied.body,
             warnings: applied.warnings,
             skipped: applied.skipped,
-            surgical: true,
         }),
         Err(failure) => Err(if failure.incoherent {
             RefusalReason::IncoherentDelta(failure.message)
@@ -351,11 +349,38 @@ fn plan_document_body(
 /// its OWN provenance header — never the proposed new content
 /// against the old header.
 fn classify_target_body(content: &str, new_body: &str, change_id: &str) -> TargetStatus {
+    match ownership_state(content, change_id) {
+        // Refine the clean-proceed placeholder against the PLANNED
+        // body (rebuilt for surgical documents), never the raw delta
+        // note: idempotent no-op merges report Current instead of
+        // perpetual UpdatePending rewrites.
+        TargetStatus::UpdatePending => {
+            let (_, body) = provenance::split_document(content);
+            if body == new_body {
+                TargetStatus::Current
+            } else {
+                TargetStatus::UpdatePending
+            }
+        }
+        state => state,
+    }
+}
+
+/// Classifies target ownership and drift without comparing content:
+/// the state phase of planning, which precedes application so
+/// authors fix target state before hearing about dangling names.
+/// Returns `UpdatePending` as the clean-proceed placeholder for
+/// hash-valid own targets; callers refine it against the planned
+/// body via [`classify_target_body`].
+fn ownership_state(content: &str, change_id: &str) -> TargetStatus {
     let (header, body) = provenance::split_document(content);
     let Some(header) = header else {
         return TargetStatus::Unmanaged;
     };
     if header.change_id != change_id {
+        // The succession test compares the target's CURRENT content
+        // against the hash in its OWN provenance header — never the
+        // proposed new content against the old header.
         if provenance::body_matches(&header, body) {
             return TargetStatus::OwnedByOtherChange(header.change_id);
         }
@@ -364,14 +389,7 @@ fn classify_target_body(content: &str, new_body: &str, change_id: &str) -> Targe
     if !provenance::body_matches(&header, body) {
         return TargetStatus::Drifted;
     }
-    // Compare against the PLANNED body (rebuilt for surgical
-    // documents), never the raw delta note: idempotent no-op merges
-    // report Current instead of perpetual UpdatePending rewrites.
-    if body == new_body {
-        TargetStatus::Current
-    } else {
-        TargetStatus::UpdatePending
-    }
+    TargetStatus::UpdatePending
 }
 
 /// Classifies the merge target of one rendered document.
@@ -396,26 +414,59 @@ pub fn target_status(
         return Ok(TargetStatus::NotMerged);
     };
     let target = read_target_body(project_root, target_path)?;
-    let planned = match plan_document_body(document, target_path, &target) {
-        Ok(planned) => planned,
-        Err(RefusalReason::IncoherentDelta(message))
-        | Err(RefusalReason::DanglingDelta(message)) => {
-            return Ok(TargetStatus::Unmergeable(message));
-        }
-        Err(_) => {
-            return Ok(TargetStatus::Unmergeable(
-                "delta planning failed".to_string(),
-            ));
-        }
-    };
-    if planned.skipped {
-        return Ok(TargetStatus::NotMerged);
+    // Coherence before state: target-independent authoring errors
+    // surface even when the target itself would also refuse.
+    if is_surgical_document(document)
+        && let Err(failure) = crate::delta_apply::check_delta_coherence(&document.content)
+    {
+        return Ok(TargetStatus::Unmergeable(failure.message));
     }
+    // State before application: fix target state before hearing
+    // about dangling names. Only clean targets plan for comparison.
     match target {
-        TargetRead::Absent => Ok(TargetStatus::NotMerged),
+        TargetRead::Absent => {
+            // Display never forces: status reflects the unforced plan.
+            match plan_document_body(document, target_path, &target, false) {
+                Ok(_) => Ok(TargetStatus::NotMerged),
+                Err(RefusalReason::IncoherentDelta(message))
+                | Err(RefusalReason::DanglingDelta(message)) => {
+                    Ok(TargetStatus::Unmergeable(message))
+                }
+                Err(_) => Ok(TargetStatus::Unmergeable(
+                    "delta planning failed".to_string(),
+                )),
+            }
+        }
         TargetRead::NonFile => Ok(TargetStatus::NonFile),
-        TargetRead::Body(body) => Ok(classify_target_body(&body, &planned.new_body, change_id)),
+        TargetRead::Body(ref body) => {
+            let state = ownership_state(body, change_id);
+            if state != TargetStatus::UpdatePending {
+                return Ok(state);
+            }
+            match plan_document_body(document, target_path, &target, false) {
+                Ok(planned) => {
+                    if planned.skipped {
+                        return Ok(TargetStatus::NotMerged);
+                    }
+                    Ok(classify_target_body(body, &planned.new_body, change_id))
+                }
+                Err(RefusalReason::IncoherentDelta(message))
+                | Err(RefusalReason::DanglingDelta(message)) => {
+                    Ok(TargetStatus::Unmergeable(message))
+                }
+                Err(_) => Ok(TargetStatus::Unmergeable(
+                    "delta planning failed".to_string(),
+                )),
+            }
+        }
     }
+}
+
+/// Reports whether a document carries delta sections (surgical
+/// path) or plain content (whole-write path).
+fn is_surgical_document(document: &RenderedDocument) -> bool {
+    let presence = parse_delta_specification(&document.content).presence;
+    presence.added || presence.modified || presence.removed || presence.renamed
 }
 
 /// Transfers a change's durable documents to their merge targets,
@@ -468,49 +519,49 @@ pub fn merge_documents(
             });
             continue;
         }
-        // Validation before state: incoherent or dangling deltas
-        // refuse before drift, succession, or force are consulted.
-        let planned = match plan_document_body(document, target_path, &target) {
-            Ok(planned) => planned,
-            Err(reason) => {
-                refusals.push(Refusal {
-                    target: target_path.clone(),
-                    reason,
-                });
-                continue;
-            }
-        };
-        if planned.skipped {
-            report.warnings.extend(planned.warnings);
+        // Coherence before state: target-independent authoring
+        // errors refuse before drift, succession, or force are
+        // consulted, so authors fix the note first.
+        if is_surgical_document(document)
+            && let Err(failure) = crate::delta_apply::check_delta_coherence(&document.content)
+        {
+            refusals.push(Refusal {
+                target: target_path.clone(),
+                reason: RefusalReason::IncoherentDelta(failure.message),
+            });
             continue;
         }
-        let status = match &target {
+        // State before application: fix target state before hearing
+        // about dangling names. Only the clean-proceed placeholder
+        // (UpdatePending) falls through to application planning.
+        let state = match &target {
             TargetRead::Absent => TargetStatus::NotMerged,
-            TargetRead::Body(body) => classify_target_body(body, &planned.new_body, change_id),
+            TargetRead::Body(body) => ownership_state(body, change_id),
             TargetRead::NonFile => TargetStatus::NonFile,
         };
-        if status == TargetStatus::NonFile {
+        if state == TargetStatus::NonFile {
             refusals.push(Refusal {
                 target: target_path.clone(),
                 reason: RefusalReason::NonFileTarget,
             });
             continue;
         }
-        // Surgical application onto an unmanaged base needs
-        // requirement structure to work with: adopt parseable
-        // targets under `--force`, refuse unparseable ones even
-        // then (whole-writing a sparse delta note would corrupt).
-        if planned.surgical && matches!(status, TargetStatus::Unmanaged) {
-            let parseable = match &target {
-                TargetRead::Body(body) => crate::delta_apply::has_requirements_section(body),
+        // Surgical application onto an unmanaged base needs a
+        // valid addressable block map — not merely a Requirements
+        // heading: adopt populated targets under `--force`, refuse
+        // block-less ones even then (there is nothing to apply
+        // onto, and whole-writing a sparse delta note would corrupt).
+        if is_surgical_document(document) && matches!(state, TargetStatus::Unmanaged) {
+            let populated = match &target {
+                TargetRead::Body(body) => !parse_target_blocks(body).is_empty(),
                 _ => false,
             };
-            if !force || !parseable {
+            if !force || !populated {
                 refusals.push(Refusal {
                     target: target_path.clone(),
                     reason: if force {
                         RefusalReason::DanglingDelta(
-                            "unmanaged target has no requirement sections to apply onto"
+                            "unmanaged target has no addressable requirement blocks to apply onto"
                                 .to_string(),
                         )
                     } else {
@@ -520,7 +571,7 @@ pub fn merge_documents(
                 continue;
             }
         }
-        let refusal = match &status {
+        let refusal = match &state {
             TargetStatus::Drifted => Some(RefusalReason::Drifted),
             TargetStatus::Unmanaged => Some(RefusalReason::Unmanaged),
             TargetStatus::ForeignDrifted(other) => {
@@ -548,6 +599,31 @@ pub fn merge_documents(
                 });
             }
         }
+        // Application planning only runs on state-clean (or
+        // force-overridden) targets. Force rides in so
+        // drift-induced ADDED collisions resolve delta-wins;
+        // absences never resolve under force.
+        let planned = match plan_document_body(document, target_path, &target, force) {
+            Ok(planned) => planned,
+            Err(reason) => {
+                refusals.push(Refusal {
+                    target: target_path.clone(),
+                    reason,
+                });
+                continue;
+            }
+        };
+        if planned.skipped {
+            report.warnings.extend(planned.warnings);
+            continue;
+        }
+        // Refine the clean-proceed placeholder against the planned
+        // body for the write/unchanged decision.
+        let status = match &target {
+            TargetRead::Absent => TargetStatus::NotMerged,
+            TargetRead::Body(body) => classify_target_body(body, &planned.new_body, change_id),
+            TargetRead::NonFile => TargetStatus::NonFile,
+        };
         if let TargetStatus::OwnedByOtherChange(previous_owner) = &status {
             report.successions.push(Succession {
                 target: target_path.clone(),
@@ -555,6 +631,7 @@ pub fn merge_documents(
             });
         }
         if status == TargetStatus::Current {
+            report.warnings.extend(planned.warnings);
             report.unchanged.push(target_path.clone());
             continue;
         }

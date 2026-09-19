@@ -168,7 +168,10 @@ fn force_overwrites_drift_with_fresh_provenance() {
     )
     .unwrap();
     let target = root.join("documentation/specifications/alpha.md");
-    fs::write(&target, "hand edits\n").unwrap();
+    let drifted = fs::read_to_string(&target)
+        .unwrap()
+        .replace("SHALL alpha.", "SHALL omega.");
+    fs::write(&target, drifted).unwrap();
 
     let report = merge_documents(
         std::slice::from_ref(&alpha),
@@ -273,7 +276,10 @@ fn clean_succession_proceeds_without_force() {
     .unwrap();
     // The successor's content differs from the inherited body; what
     // must be intact is the PREVIOUS owner's materialization.
-    let successor = document("alpha", "# alpha\n\n## ADDED Requirements\n\nrevised\n");
+    let successor = document(
+        "alpha",
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: Alpha\nThe system SHALL alpha.\n\n#### Scenario: Alphas\n- **WHEN** alpha\n- **THEN** alpha\n\n### Requirement: Gamma\nThe system SHALL gamma.\n",
+    );
     let report = merge_documents(
         std::slice::from_ref(&successor),
         &root,
@@ -473,7 +479,10 @@ fn target_status_reflects_lifecycle() {
         target_status(&alpha, &root, "add-demo").unwrap(),
         TargetStatus::Current
     );
-    let revised = document("alpha", "# alpha\n\n## ADDED Requirements\n\nrevised\n");
+    let revised = document(
+        "alpha",
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: Gamma\nThe system SHALL gamma.\n",
+    );
     assert_eq!(
         target_status(&revised, &root, "add-demo").unwrap(),
         TargetStatus::UpdatePending
@@ -598,7 +607,7 @@ fn h1_slug_rename_leaves_stale_target_refusal() {
     // Simulate a previous merge: timestamp note materialized as
     // user-auth.md with provenance naming the timestamp source.
     let source_note = "proposals/add-demo/specifications/20260710175830.md";
-    let body = "# user-auth\n\n## ADDED Requirements\n";
+    let body = "# user-auth\n\n## ADDED Requirements\n\n### Requirement: Auth\nOld text.\n";
     let stamped = provenance::stamp(body, "add-demo", "home", source_note);
     fs::write(target_dir.join("user-auth.md"), stamped).unwrap();
 
@@ -609,7 +618,8 @@ fn h1_slug_rename_leaves_stale_target_refusal() {
         tree_path: "specifications/authentication.md".to_string(),
         target_path: Some("documentation/specifications/authentication.md".to_string()),
         source_note: source_note.to_string(),
-        content: "# authentication\n\n## ADDED Requirements\n".to_string(),
+        content: "# authentication\n\n## ADDED Requirements\n\n### Requirement: Auth\nOld text.\n"
+            .to_string(),
     };
 
     let result = merge_documents(
@@ -642,7 +652,7 @@ fn h1_slug_rename_force_override_announces_stale_target() {
     fs::create_dir_all(&target_dir).unwrap();
 
     let source_note = "proposals/add-demo/specifications/20260710175830.md";
-    let body = "# user-auth\n\n## ADDED Requirements\n";
+    let body = "# user-auth\n\n## ADDED Requirements\n\n### Requirement: Auth\nOld text.\n";
     let stamped = provenance::stamp(body, "add-demo", "home", source_note);
     fs::write(target_dir.join("user-auth.md"), stamped).unwrap();
 
@@ -651,7 +661,8 @@ fn h1_slug_rename_force_override_announces_stale_target() {
         tree_path: "specifications/authentication.md".to_string(),
         target_path: Some("documentation/specifications/authentication.md".to_string()),
         source_note: source_note.to_string(),
-        content: "# authentication\n\n## ADDED Requirements\n".to_string(),
+        content: "# authentication\n\n## ADDED Requirements\n\n### Requirement: Auth\nOld text.\n"
+            .to_string(),
     };
 
     let report = merge_documents(
@@ -784,7 +795,8 @@ fn stale_scan_skips_symlink_entries_inside_real_directory() {
         tree_path: "specifications/authentication.md".to_string(),
         target_path: Some("documentation/specifications/authentication.md".to_string()),
         source_note: source_note.to_string(),
-        content: "# authentication\n\n## ADDED Requirements\n".to_string(),
+        content: "# authentication\n\n## ADDED Requirements\n\n### Requirement: Auth\nOld text.\n"
+            .to_string(),
     };
     // Symlink entry is skipped; no stale refusal; new target writes.
     let report = merge_documents(

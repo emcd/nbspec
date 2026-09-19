@@ -67,7 +67,8 @@ pub struct TargetBlock {
 pub fn parse_target_blocks(content: &str) -> Vec<TargetBlock> {
     let normalized = normalize_line_endings(content);
     let lines: Vec<&str> = normalized.split('\n').collect();
-    let sections = split_top_level_sections(&lines);
+    let mask = mask_fenced_lines(&lines);
+    let sections = split_top_level_sections(&lines, &mask);
     let mut blocks = Vec::new();
     for section_name in ["added requirements", "modified requirements"] {
         let Some(section) = find_section(&sections, section_name) else {
@@ -75,15 +76,19 @@ pub fn parse_target_blocks(content: &str) -> Vec<TargetBlock> {
         };
         let mut cursor = section.body_start;
         while cursor < section.body_end {
-            let Some(name) = requirement_header_name(lines[cursor]) else {
+            let Some(name) = (!mask[cursor])
+                .then(|| requirement_header_name(lines[cursor]))
+                .flatten()
+            else {
                 cursor += 1;
                 continue;
             };
             let header_index = cursor;
             cursor += 1;
             while cursor < section.body_end
-                && requirement_header_name(lines[cursor]).is_none()
-                && section_title(lines[cursor]).is_none()
+                && (mask[cursor]
+                    || (requirement_header_name(lines[cursor]).is_none()
+                        && section_title(lines[cursor]).is_none()))
             {
                 cursor += 1;
             }
@@ -101,7 +106,7 @@ pub fn parse_target_blocks(content: &str) -> Vec<TargetBlock> {
             blocks.push(TargetBlock {
                 name,
                 raw,
-                scenarios: parse_scenarios(body, header_index + 1)
+                scenarios: parse_scenarios(body, &mask[header_index + 1..cursor], header_index + 1)
                     .into_iter()
                     .map(|scenario| scenario.name)
                     .collect(),
@@ -140,7 +145,8 @@ pub enum UnpairedSide {
 pub fn find_unpaired_renames(content: &str) -> Vec<UnpairedRename> {
     let normalized = normalize_line_endings(content);
     let lines: Vec<&str> = normalized.split('\n').collect();
-    let sections = split_top_level_sections(&lines);
+    let mask = mask_fenced_lines(&lines);
+    let sections = split_top_level_sections(&lines, &mask);
     let Some(section) = find_section(&sections, "renamed requirements") else {
         return Vec::new();
     };
@@ -151,6 +157,9 @@ pub fn find_unpaired_renames(content: &str) -> Vec<UnpairedRename> {
         .enumerate()
     {
         let line_number = section.body_start + offset + 1;
+        if mask[section.body_start + offset] {
+            continue;
+        }
         if let Some(name) = labeled_requirement_name(line, "FROM:") {
             if let Some((pending_line, pending_name)) = pending_from.take() {
                 unpaired.push(UnpairedRename {
@@ -186,7 +195,8 @@ pub fn find_unpaired_renames(content: &str) -> Vec<UnpairedRename> {
 pub fn extract_purpose_section(content: &str) -> Option<String> {
     let normalized = normalize_line_endings(content);
     let lines: Vec<&str> = normalized.split('\n').collect();
-    let sections = split_top_level_sections(&lines);
+    let mask = mask_fenced_lines(&lines);
+    let sections = split_top_level_sections(&lines, &mask);
     let section = find_section(&sections, "purpose")?;
     let body = lines[section.body_start..section.body_end].join("\n");
     let trimmed = body.trim().to_string();
@@ -208,16 +218,51 @@ pub fn fold_requirement_name(name: &str) -> String {
         .to_lowercase()
 }
 
+/// Reports delta-section kinds (`added/modified/removed/renamed
+/// requirements`, case-insensitive) appearing more than once in the
+/// note. Repeated sections leave operations silently ignored (only
+/// the first binds), so pre-validation rejects them as incoherent.
+pub fn duplicate_section_kinds(content: &str) -> Vec<String> {
+    const DELTA_KINDS: [&str; 4] = [
+        "added requirements",
+        "modified requirements",
+        "removed requirements",
+        "renamed requirements",
+    ];
+    let normalized = normalize_line_endings(content);
+    let lines: Vec<&str> = normalized.split('\n').collect();
+    let mask = mask_fenced_lines(&lines);
+    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for section in split_top_level_sections(&lines, &mask) {
+        if let Some(kind) = DELTA_KINDS
+            .iter()
+            .find(|kind| **kind == section.title_lowercase)
+        {
+            *counts.entry(kind).or_insert(0) += 1;
+        }
+    }
+    let mut duplicated: Vec<String> = counts
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(kind, _)| kind.to_string())
+        .collect();
+    duplicated.sort();
+    duplicated
+}
+
 /// Reports whether content carries any `## ... Requirements` section
 /// header: the requirement structure surgical application needs as
 /// a base. Matched case-insensitively over the full section title.
 pub fn has_requirements_section(content: &str) -> bool {
     let normalized = normalize_line_endings(content);
     let lines: Vec<&str> = normalized.split('\n').collect();
-    split_top_level_sections(&lines).iter().any(|section| {
-        section.title_lowercase == "requirements"
-            || section.title_lowercase.ends_with(" requirements")
-    })
+    let mask = mask_fenced_lines(&lines);
+    split_top_level_sections(&lines, &mask)
+        .iter()
+        .any(|section| {
+            section.title_lowercase == "requirements"
+                || section.title_lowercase.ends_with(" requirements")
+        })
 }
 
 /// Presence of each delta section, independent of section content.
@@ -251,7 +296,8 @@ pub struct DeltaSpecification {
 pub fn parse_delta_specification(content: &str) -> DeltaSpecification {
     let normalized = normalize_line_endings(content);
     let lines: Vec<&str> = normalized.split('\n').collect();
-    let sections = split_top_level_sections(&lines);
+    let mask = mask_fenced_lines(&lines);
+    let sections = split_top_level_sections(&lines, &mask);
 
     let added_section = find_section(&sections, "added requirements");
     let modified_section = find_section(&sections, "modified requirements");
@@ -260,16 +306,30 @@ pub fn parse_delta_specification(content: &str) -> DeltaSpecification {
 
     DeltaSpecification {
         added: added_section
-            .map(|section| parse_requirement_blocks(&lines, section.body_start, section.body_end))
+            .map(|section| {
+                parse_requirement_blocks(&lines, &mask, section.body_start, section.body_end)
+            })
             .unwrap_or_default(),
         modified: modified_section
-            .map(|section| parse_requirement_blocks(&lines, section.body_start, section.body_end))
+            .map(|section| {
+                parse_requirement_blocks(&lines, &mask, section.body_start, section.body_end)
+            })
             .unwrap_or_default(),
         removed: removed_section
-            .map(|section| parse_removed_names(&lines[section.body_start..section.body_end]))
+            .map(|section| {
+                parse_removed_names(
+                    &lines[section.body_start..section.body_end],
+                    &mask[section.body_start..section.body_end],
+                )
+            })
             .unwrap_or_default(),
         renamed: renamed_section
-            .map(|section| parse_renamed_pairs(&lines[section.body_start..section.body_end]))
+            .map(|section| {
+                parse_renamed_pairs(
+                    &lines[section.body_start..section.body_end],
+                    &mask[section.body_start..section.body_end],
+                )
+            })
             .unwrap_or_default(),
         presence: SectionPresence {
             added: added_section.is_some(),
@@ -285,6 +345,67 @@ struct SectionSpan {
     title_lowercase: String,
     body_start: usize,
     body_end: usize,
+}
+
+/// Marks lines inside fenced code blocks so structural scans skip
+/// example content: a `## ADDED Requirements` or
+/// `### Requirement:` inside a fenced example is prose, never merge
+/// state. CommonMark-ish: an opening run of 3+ backticks/tildes
+/// (indented at most 3 spaces) opens; a run of the same character
+/// with length >= the opening run and nothing but whitespace after
+/// it closes. An unclosed fence masks to end of file (fail safe:
+/// example content stays inert rather than becoming operations).
+/// Line indices are stable — masking never adds or removes lines,
+/// so diagnostics keep pointing at the right lines.
+fn mask_fenced_lines(lines: &[&str]) -> Vec<bool> {
+    let mut mask = vec![false; lines.len()];
+    let mut open: Option<(char, usize)> = None;
+    for (index, line) in lines.iter().enumerate() {
+        match fence_run(line) {
+            Some((ch, len, rest)) => match open {
+                None => {
+                    open = Some((ch, len));
+                    mask[index] = true;
+                }
+                Some((open_ch, open_len))
+                    if ch == open_ch && len >= open_len && rest.trim().is_empty() =>
+                {
+                    mask[index] = true;
+                    open = None;
+                }
+                _ => {
+                    mask[index] = true;
+                }
+            },
+            None => {
+                if open.is_some() {
+                    mask[index] = true;
+                }
+            }
+        }
+    }
+    mask
+}
+
+/// Splits one line into a fence run `(char, length, rest)` when it
+/// opens or participates in a code fence: at most 3 leading spaces,
+/// then a run of 3+ backticks or tildes.
+fn fence_run(line: &str) -> Option<(char, usize, &str)> {
+    let leading = line.bytes().take_while(|byte| *byte == b' ').count();
+    if leading > 3 {
+        return None;
+    }
+    let indented = &line[leading..];
+    let mut chars = indented.chars();
+    let ch = chars.next()?;
+    if ch != '`' && ch != '~' {
+        return None;
+    }
+    let len = 1 + chars.take_while(|c| *c == ch).count();
+    if len < 3 {
+        return None;
+    }
+    Some((ch, len, &indented[len..]))
 }
 
 fn normalize_line_endings(content: &str) -> String {
@@ -336,9 +457,12 @@ fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option<&'a
     }
 }
 
-fn split_top_level_sections(lines: &[&str]) -> Vec<SectionSpan> {
+fn split_top_level_sections(lines: &[&str], mask: &[bool]) -> Vec<SectionSpan> {
     let mut headers: Vec<(usize, String)> = Vec::new();
     for (index, line) in lines.iter().enumerate() {
+        if mask[index] {
+            continue;
+        }
         if let Some(title) = section_title(line) {
             headers.push((index, title.to_ascii_lowercase()));
         }
@@ -364,12 +488,22 @@ fn find_section<'a>(sections: &'a [SectionSpan], title_lowercase: &str) -> Optio
 }
 
 /// Parses requirement blocks from `lines[start..end]`, reporting 1-indexed
-/// line numbers relative to the full line sequence.
-fn parse_requirement_blocks(lines: &[&str], start: usize, end: usize) -> Vec<Requirement> {
+/// line numbers relative to the full line sequence. Headers inside
+/// fenced examples never open blocks; fenced lines inside a block
+/// body stay part of the block verbatim.
+fn parse_requirement_blocks(
+    lines: &[&str],
+    mask: &[bool],
+    start: usize,
+    end: usize,
+) -> Vec<Requirement> {
     let mut requirements = Vec::new();
     let mut cursor = start;
     while cursor < end {
-        let Some(name) = requirement_header_name(lines[cursor]) else {
+        let Some(name) = (!mask[cursor])
+            .then(|| requirement_header_name(lines[cursor]))
+            .flatten()
+        else {
             cursor += 1;
             continue;
         };
@@ -377,8 +511,9 @@ fn parse_requirement_blocks(lines: &[&str], start: usize, end: usize) -> Vec<Req
         cursor += 1;
         let body_start = cursor;
         while cursor < end
-            && requirement_header_name(lines[cursor]).is_none()
-            && section_title(lines[cursor]).is_none()
+            && (mask[cursor]
+                || (requirement_header_name(lines[cursor]).is_none()
+                    && section_title(lines[cursor]).is_none()))
         {
             cursor += 1;
         }
@@ -392,7 +527,7 @@ fn parse_requirement_blocks(lines: &[&str], start: usize, end: usize) -> Vec<Req
         requirements.push(Requirement {
             name,
             text: requirement_text(body),
-            scenarios: parse_scenarios(body, body_start),
+            scenarios: parse_scenarios(body, &mask[body_start..cursor], body_start),
             raw,
             line: header_index + 1,
         });
@@ -417,18 +552,23 @@ fn requirement_text(body: &[&str]) -> Option<String> {
 
 /// Parses scenario blocks from a requirement body, reporting 1-indexed line
 /// numbers relative to the full line sequence (`body_start` is 0-indexed).
-fn parse_scenarios(body: &[&str], body_start: usize) -> Vec<Scenario> {
+/// `mask` parallels `body`: fenced scenario headers never open blocks,
+/// but fenced lines inside a scenario stay part of its body verbatim.
+fn parse_scenarios(body: &[&str], mask: &[bool], body_start: usize) -> Vec<Scenario> {
     let mut scenarios = Vec::new();
     let mut cursor = 0;
     while cursor < body.len() {
-        let Some(name) = scenario_header_name(body[cursor]) else {
+        let Some(name) = (!mask[cursor])
+            .then(|| scenario_header_name(body[cursor]))
+            .flatten()
+        else {
             cursor += 1;
             continue;
         };
         let header_index = cursor;
         cursor += 1;
         let content_start = cursor;
-        while cursor < body.len() && !ends_scenario_body(body[cursor]) {
+        while cursor < body.len() && (mask[cursor] || !ends_scenario_body(body[cursor])) {
             cursor += 1;
         }
         let content = body[content_start..cursor].join("\n").trim().to_string();
@@ -456,9 +596,13 @@ fn ends_scenario_body(line: &str) -> bool {
 
 /// Parses removed-requirement names: requirement headers, or bullet items of
 /// the form ``- `### Requirement: <name>` `` (backticks optional).
-fn parse_removed_names(lines: &[&str]) -> Vec<String> {
+/// Fenced lines never contribute names.
+fn parse_removed_names(lines: &[&str], mask: &[bool]) -> Vec<String> {
     let mut names = Vec::new();
-    for line in lines {
+    for (line, masked) in lines.iter().zip(mask.iter()) {
+        if *masked {
+            continue;
+        }
         if let Some(name) = requirement_header_name(line) {
             names.push(name);
             continue;
@@ -479,11 +623,15 @@ fn bullet_requirement_name(line: &str) -> Option<String> {
 
 /// Parses rename pairs from `FROM:`/`TO:` lines (leading bullet markers and
 /// backticks around the requirement header are optional). Labels are
-/// case-sensitive, matching the upstream parser.
-fn parse_renamed_pairs(lines: &[&str]) -> Vec<Rename> {
+/// case-sensitive, matching the upstream parser. Fenced lines never
+/// contribute pairs.
+fn parse_renamed_pairs(lines: &[&str], mask: &[bool]) -> Vec<Rename> {
     let mut pairs = Vec::new();
     let mut pending_from: Option<String> = None;
-    for line in lines {
+    for (line, masked) in lines.iter().zip(mask.iter()) {
+        if *masked {
+            continue;
+        }
         if let Some(name) = labeled_requirement_name(line, "FROM:") {
             pending_from = Some(name);
         } else if let Some(name) = labeled_requirement_name(line, "TO:")

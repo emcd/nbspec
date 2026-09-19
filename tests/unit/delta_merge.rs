@@ -151,22 +151,68 @@ The system SHALL gamma.
 }
 
 #[test]
-fn added_only_notes_keep_whole_write() {
-    // Transition preservation: full-content ADDED-only notes overwrite
-    // the target whole, exactly as before surgical merge existed.
-    let root = unique_temp_root("delta-whole");
+fn added_only_notes_apply_surgically() {
+    // No whole-write exemption: an ADDED-only note appends new
+    // blocks, no-ops identical ones, and refuses differing ones.
+    // Full-content restatement is a loud error, never silent
+    // duplication or overwrite.
+    let root = unique_temp_root("delta-append");
     fs::create_dir_all(&root).unwrap();
     seed_target(&root, "alpha", "add-prior", BASE_SPEC);
-    let full = "\
+    let delta = "\
 # alpha
 
 ## ADDED Requirements
 
-### Requirement: Alpha
-The system SHALL alpha, restated whole.
+### Requirement: Beta
+The system SHALL beta, restated differently.
+
+### Requirement: Gamma
+The system SHALL gamma.
+";
+    let error = merge_documents(
+        &[document("alpha", delta)],
+        &root,
+        "add-demo",
+        "home",
+        None,
+        false,
+    )
+    .unwrap_err();
+    let MergeError::Refused { refusals } = error else {
+        panic!("expected refusal");
+    };
+    assert!(
+        matches!(refusals[0].reason, RefusalReason::DanglingDelta(_)),
+        "restated content collides loudly"
+    );
+    assert!(
+        fs::read_to_string(target_of(&root, "alpha"))
+            .unwrap()
+            .contains("### Requirement: Beta"),
+        "refused merge leaves the target untouched"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn added_only_note_appends_fresh_block() {
+    let root = unique_temp_root("delta-append-ok");
+    fs::create_dir_all(&root).unwrap();
+    seed_target(&root, "alpha", "add-prior", BASE_SPEC);
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Beta
+The system SHALL beta.
+
+### Requirement: Gamma
+The system SHALL gamma.
 ";
     let report = merge_documents(
-        &[document("alpha", full)],
+        &[document("alpha", delta)],
         &root,
         "add-demo",
         "home",
@@ -177,10 +223,14 @@ The system SHALL alpha, restated whole.
     assert_eq!(report.written.len(), 1);
     let stamped = fs::read_to_string(target_of(&root, "alpha")).unwrap();
     let (_, body) = provenance::split_document(&stamped);
-    assert_eq!(body, full, "whole-write overwrites verbatim");
     assert!(
-        !body.contains("### Requirement: Beta"),
-        "old blocks do not survive"
+        body.contains("### Requirement: Gamma"),
+        "fresh block appended"
+    );
+    assert_eq!(
+        body.matches("### Requirement: Beta").count(),
+        1,
+        "no duplication"
     );
     fs::remove_dir_all(&root).unwrap();
 }
@@ -448,5 +498,48 @@ The system SHALL gamma.
     assert_eq!(report.written.len(), 1);
     assert_eq!(report.warnings.len(), 1, "already-removed warns");
     assert!(report.warnings[0].contains("Ghost"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn incoherence_preempts_drift() {
+    // Coherence runs before state: a broken note on a drifted
+    // target reports the note, not the drift.
+    let root = unique_temp_root("delta-order");
+    fs::create_dir_all(&root).unwrap();
+    seed_target(&root, "alpha", "add-demo", BASE_SPEC);
+    let path = target_of(&root, "alpha");
+    let drifted = fs::read_to_string(&path)
+        .unwrap()
+        .replace("SHALL alpha.", "SHALL omega.");
+    fs::write(&path, drifted).unwrap();
+    let delta = "\
+# alpha
+
+## ADDED Requirements
+
+### Requirement: Alpha
+Text.
+
+## REMOVED Requirements
+
+### Requirement: Alpha
+";
+    let error = merge_documents(
+        &[document("alpha", delta)],
+        &root,
+        "add-demo",
+        "home",
+        None,
+        false,
+    )
+    .unwrap_err();
+    let MergeError::Refused { refusals } = error else {
+        panic!("expected refusal");
+    };
+    assert!(
+        matches!(refusals[0].reason, RefusalReason::IncoherentDelta(_)),
+        "note fault beats target fault"
+    );
     fs::remove_dir_all(&root).unwrap();
 }

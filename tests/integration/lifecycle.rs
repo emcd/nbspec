@@ -744,7 +744,8 @@ The system SHALL refresh sessions.
         "added: {body}"
     );
     assert!(!body.contains("Legacy login"), "removed: {body}");
-    // Idempotent remerge: rebuilt comparison reports unchanged.
+    // Idempotent remerge: rebuilt comparison reports unchanged, and
+    // the already-absent warning repeats (warnings report every merge).
     let again = nbspec(&fixture, &["merge", SECOND_ID]);
     assert!(again.status.success(), "{}", stderr_of(&again));
     let again_output = stdout_of(&again);
@@ -753,7 +754,7 @@ The system SHALL refresh sessions.
         "remerge writes nothing: {again_output}"
     );
     assert!(
-        !again_output.contains("Ghost"),
-        "idempotent remerge repeats no delta warning: {again_output}"
+        again_output.contains("Ghost"),
+        "remerge repeats the warning: {again_output}"
     );
 }

@@ -20,7 +20,7 @@ The system SHALL beta.
 ";
 
 fn plan(delta: &str, target: Option<&str>) -> Result<String, String> {
-    plan_delta_merge(delta, target, "alpha")
+    plan_delta_merge(delta, target, "alpha", false)
         .map(|applied| applied.body)
         .map_err(|failure| failure.message)
 }
@@ -79,7 +79,7 @@ The system SHALL beta.
 
 ### Requirement: Ghost
 ";
-    let applied = plan_delta_merge(delta, Some(TARGET), "alpha").unwrap();
+    let applied = plan_delta_merge(delta, Some(TARGET), "alpha", false).unwrap();
     assert_eq!(applied.body, TARGET, "already-removed is a no-op");
     assert_eq!(applied.warnings.len(), 1, "one already-removed warning");
     assert!(
@@ -247,7 +247,7 @@ fn renamed_already_synced_is_a_noop() {
 - FROM: `### Requirement: Alpha`
 - TO: `### Requirement: Alpha2`
 ";
-    let applied = plan_delta_merge(delta, Some(&target), "alpha").unwrap();
+    let applied = plan_delta_merge(delta, Some(&target), "alpha", false).unwrap();
     assert_eq!(applied.body, target, "synced rename changes nothing");
     assert!(applied.warnings.is_empty());
 }
@@ -298,7 +298,7 @@ fn added_identical_is_a_noop() {
 ### Requirement: Beta
 The system SHALL beta.
 ";
-    let applied = plan_delta_merge(delta, Some(TARGET), "alpha").unwrap();
+    let applied = plan_delta_merge(delta, Some(TARGET), "alpha", false).unwrap();
     assert_eq!(applied.body, TARGET, "identical re-add changes nothing");
 }
 
@@ -418,7 +418,7 @@ The system SHALL first.
 
 ### Requirement: Ghost
 ";
-    let applied = plan_delta_merge(delta, None, "fresh").unwrap();
+    let applied = plan_delta_merge(delta, None, "fresh", false).unwrap();
     assert!(
         applied.body.starts_with("# Fresh capability\n"),
         "title kept"
@@ -448,7 +448,7 @@ fn removed_only_against_absent_target_skips() {
 
 ### Requirement: Ghost
 ";
-    let applied = plan_delta_merge(delta, None, "alpha").unwrap();
+    let applied = plan_delta_merge(delta, None, "alpha", false).unwrap();
     assert!(applied.skipped, "nothing effective means skip");
     assert!(applied.body.is_empty(), "no skeleton materializes");
     assert_eq!(applied.warnings.len(), 1, "skip warns");
@@ -469,7 +469,7 @@ New why.
 ### Requirement: First
 The system SHALL first.
 ";
-    let applied = plan_delta_merge(delta, Some(target), "alpha").unwrap();
+    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
     assert!(
         applied
             .warnings
@@ -568,5 +568,111 @@ The system SHALL beta, revised.
     assert!(
         message.contains("NEW header"),
         "rename/modified interplay: {message}"
+    );
+}
+
+#[test]
+fn crlf_noop_round_trips_bytes() {
+    // The reviewer's exact case: missing REMOVED on a CRLF target
+    // with deliberate spacing must not rewrite a single byte.
+    let target = "# alpha\r\n\r\n## ADDED Requirements\r\n\r\n### Requirement: Alpha\r\nText.\r\n";
+    let delta = "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n";
+    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    assert_eq!(applied.body, target, "no-op preserves bytes and EOL");
+    assert_eq!(applied.warnings.len(), 1);
+}
+
+#[test]
+fn deliberate_blanks_survive_noop() {
+    let target = "# alpha\n\n\n## ADDED Requirements\n\n\n### Requirement: Alpha\nText.\n";
+    let delta = "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n";
+    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    assert_eq!(applied.body, target, "deliberate spacing preserved");
+}
+
+#[test]
+fn crlf_edits_adopt_crlf() {
+    let target = "# alpha\r\n\r\n## ADDED Requirements\r\n\r\n### Requirement: Alpha\r\nText.\r\n\r\n### Requirement: Beta\r\nOld.\r\n";
+    let delta = "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Beta\n";
+    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    assert!(!applied.body.contains("Beta"), "removed");
+    let bare_lf = applied
+        .body
+        .match_indices('\n')
+        .any(|(index, _)| index == 0 || applied.body.as_bytes()[index - 1] != b'\r');
+    assert!(!bare_lf, "no bare LF in CRLF output");
+}
+
+#[test]
+fn duplicate_target_names_refuse() {
+    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: Same\nOne.\n\n### Requirement: Same\nTwo.\n";
+    let delta = "# alpha\n\n## MODIFIED Requirements\n\n### Requirement: Same\nThree.\n";
+    let message = plan(delta, Some(target)).unwrap_err();
+    assert!(
+        message.contains("duplicate"),
+        "twin blocks refuse: {message}"
+    );
+}
+
+#[test]
+fn duplicate_sections_refuse() {
+    let delta = "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nX.\n\n## ADDED Requirements\n\n### Requirement: B\nY.\n";
+    let message = plan(delta, None).unwrap_err();
+    assert!(
+        message.contains("duplicate"),
+        "repeated sections refuse: {message}"
+    );
+}
+
+#[test]
+fn rename_chain_remerges_clean() {
+    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: C\nText.\n";
+    let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n";
+    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    assert_eq!(applied.body, target, "applied chain remerges silently");
+    assert!(applied.warnings.is_empty());
+}
+
+#[test]
+fn rename_cycle_refuses() {
+    let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: A`\n";
+    let message = plan(delta, Some(TARGET)).unwrap_err();
+    assert!(message.contains("cycle"), "cycles refuse: {message}");
+}
+
+#[test]
+fn delta_purpose_without_target_purpose_warns() {
+    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
+    let delta =
+        "# alpha\n\n## Purpose\n\nWhy.\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
+    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    assert!(
+        applied
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("Purpose")),
+        "missing target Purpose still warns"
+    );
+    assert!(
+        !applied.body.contains("## Purpose"),
+        "nothing seeded into existing targets"
+    );
+}
+
+#[test]
+fn rename_targets_recorded_span_not_scan() {
+    // A same-named header under a non-addressable section must not
+    // capture the rename: the live block moves, the prose stays.
+    let target = "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Old\nRecord.\n\n## ADDED Requirements\n\n### Requirement: Old\nLive.\n";
+    let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: Old`\n- TO: `### Requirement: New`\n";
+    let body = plan(delta, Some(target)).unwrap();
+    assert_eq!(
+        body.matches("### Requirement: New").count(),
+        1,
+        "exactly one rename lands: {body}"
+    );
+    assert!(
+        body.contains("### Requirement: Old\nRecord."),
+        "prose untouched: {body}"
     );
 }
