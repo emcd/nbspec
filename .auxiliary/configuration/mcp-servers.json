@@ -3,26 +3,30 @@
     "agentmux": {
       "command": "agentmux",
       "args": [
-        "host", "mcp",
-        "--bundle", "notebook"
+        "host",
+        "mcp",
+        "--bundle",
+        "notebook"
       ]
     },
     "context7": {
       "command": "npx",
-      "args": [ "-y", "@upstash/context7-mcp" ]
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ]
     },
     "nb": {
       "command": "nb-mcp",
       "args": [
-        "--notebook", "nbspec",
+        "--notebook",
+        "nbspec",
         "--no-commit-signing"
       ]
     },
     "nbspec": {
-      "command": "reloaderoo",
+      "command": "cargo",
       "args": [
-        "--",
-        "cargo",
         "run",
         "--release",
         "--",

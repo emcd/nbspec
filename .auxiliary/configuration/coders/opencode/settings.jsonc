@@ -89,7 +89,7 @@
     "nbspec": {
       "type": "local",
       "command": [
-        "reloaderoo", "--",
+        
         "cargo", "run", "--release", "--",
         "serve", "mcp",
         "--notebook", "nbspec"
