@@ -311,72 +311,45 @@ fn archive_conversion_refuses_non_utf8_filename() {
 /// `tar --use-compress-program=unzstd -tf` when the platform's
 /// `tar` lacks `-I`.
 fn list_tar_zstd_entries(bytes: &[u8]) -> Vec<String> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let candidates: Vec<Vec<&str>> = vec![
-        vec!["tar", "-I", "zstd", "-tf", "-"],
-        vec!["tar", "--use-compress-program=unzstd", "-tf", "-"],
-        vec!["tar", "--zstd", "-tf", "-"],
-    ];
-    for args in candidates {
-        let Ok(mut child) = Command::new(args[0])
-            .args(&args[1..])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        else {
-            continue;
-        };
-        if let Some(stdin) = child.stdin.as_mut() {
-            let _ = stdin.write_all(bytes);
-        }
-        if let Ok(output) = child.wait_with_output()
-            && output.status.success()
-        {
-            return String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(str::to_string)
-                .collect();
-        }
-    }
-    Vec::new()
+    // In-process listing: the tar/zstd CLIs are not guaranteed on
+    // PATH (and must not be a test dependency). Mirrors the
+    // archives.rs unit pattern.
+    let Ok(decoded) = zstd::decode_all(bytes) else {
+        return Vec::new();
+    };
+    let mut archive = tar::Archive::new(decoded.as_slice());
+    let Ok(entries) = archive.entries() else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| entry.path().ok().map(|path| path.display().to_string()))
+        .collect()
 }
 
 /// Extracts a single entry from a deterministic `tar.zst` archive
 /// and returns its raw bytes. Used by the binary-archive
 /// regression test to verify the bytes round-tripped verbatim.
 fn extract_tar_zstd_entry(bytes: &[u8], entry_path: &str) -> Vec<u8> {
-    use std::io::Write;
-    use std::process::{Command, Stdio};
-    let args_variants: Vec<Vec<&str>> = vec![
-        vec!["tar", "-I", "zstd", "-xOf", "-", entry_path],
-        vec![
-            "tar",
-            "--use-compress-program=unzstd",
-            "-xOf",
-            "-",
-            entry_path,
-        ],
-        vec!["tar", "--zstd", "-xOf", "-", entry_path],
-    ];
-    for args in args_variants {
-        let Ok(mut child) = Command::new(args[0])
-            .args(&args[1..])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        else {
+    // In-process extraction (see list_tar_zstd_entries): no CLI dependency.
+    let Ok(decoded) = zstd::decode_all(bytes) else {
+        return Vec::new();
+    };
+    let mut archive = tar::Archive::new(decoded.as_slice());
+    let Ok(entries) = archive.entries() else {
+        return Vec::new();
+    };
+    use std::io::Read;
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let Ok(path) = entry.path() else {
             continue;
         };
-        if let Some(stdin) = child.stdin.as_mut() {
-            let _ = stdin.write_all(bytes);
-        }
-        if let Ok(output) = child.wait_with_output()
-            && output.status.success()
-        {
-            return output.stdout;
+        if path.display().to_string() == entry_path {
+            let mut content = Vec::new();
+            let mut entry = entry;
+            if entry.read_to_end(&mut content).is_ok() {
+                return content;
+            }
         }
     }
     Vec::new()
