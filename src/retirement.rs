@@ -114,29 +114,17 @@ fn walk_snapshot(
         })?;
     entries.sort_by_key(|entry| entry.file_name());
     for entry in entries {
-        // Filenames are checked before joining: non-UTF-8 names and
-        // backslashes (legal on Unix, separators on Windows, so they
-        // cannot round-trip through a tarball) fail closed here,
-        // before publication. Bookkeeping files are skipped.
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|_| OperationError::NoteRead {
-                path: current.to_path_buf(),
-                source: std::io::Error::other("filename is not representable; refusing retirement"),
-            })?;
-        if name.contains('\\') {
-            return Err(OperationError::NoteRead {
-                path: current.join(&name),
-                source: std::io::Error::other(
-                    "backslash filename is not representable; refusing retirement",
-                ),
-            });
-        }
-        if BOOKKEEPING_FILES.contains(&name.as_str()) {
+        // Bookkeeping files are skipped before anything else. All
+        // other names flow into relative_key, which fails closed on
+        // non-UTF-8 and backslash names before publication.
+        let file_name = entry.file_name();
+        if file_name
+            .to_str()
+            .is_some_and(|name| BOOKKEEPING_FILES.contains(&name))
+        {
             continue;
         }
-        let path = current.join(&name);
+        let path = current.join(&file_name);
         let file_type =
             std::fs::symlink_metadata(&path).map_err(|source| OperationError::NoteRead {
                 path: path.clone(),
@@ -156,16 +144,10 @@ fn walk_snapshot(
             path: path.clone(),
             source,
         })?;
-        // All names were checked UTF-8 without backslashes above,
-        // so the relative path is lossless verbatim.
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|source| OperationError::NoteRead {
-                path: path.clone(),
-                source: std::io::Error::other(source),
-            })?
-            .to_string_lossy()
-            .into_owned();
+        // One canonical key helper shared with persisted
+        // verification: forward slashes on every platform, with
+        // unrepresentable names refused rather than remapped.
+        let relative = relative_key(&path, root)?;
         let hash: [u8; 32] = Sha256::digest(&bytes).into();
         files.push(SnapshotFile {
             relative,
@@ -262,11 +244,12 @@ fn verify_extracted(
                 stack.push(path);
                 continue;
             }
-            let relative = path
-                .strip_prefix(&extract_root)
-                .map_err(|_| archive_problem("tarball holds an unmappable path".to_string()))?
-                .to_string_lossy()
-                .into_owned();
+            // Canonical key shared with snapshot capture: forward
+            // slashes, validated components. A tarball entry with a
+            // literal backslash cannot masquerade as a slash path.
+            let relative = relative_key(&path, &extract_root).map_err(|_| {
+                archive_problem("tarball holds an unrepresentable path".to_string())
+            })?;
             let bytes = std::fs::read(&path).map_err(|source| OperationError::NoteRead {
                 path: path.clone(),
                 source,
@@ -377,6 +360,61 @@ pub fn validate_archive_identity(bytes: &[u8], change_id: &str) -> Result<(), Op
     Ok(())
 }
 
+/// Builds the canonical forward-slash inventory key for a path
+/// relative to `root`, shared by snapshot capture and persisted
+/// verification so the two walks cannot disagree. Every component
+/// must be representable: non-UTF-8 names fail closed, and
+/// backslashes fail closed even on Unix — a literal backslash is a
+/// legal Unix filename character, but normalizing it to a separator
+/// would let a tarball entry `a\b` masquerade as inventory path
+/// `a/b` and lose the original name on deletion. Anything that is
+/// not a plain relative component (prefixes, parent or current dir)
+/// fails closed too.
+fn relative_key(path: &Path, root: &Path) -> Result<String, OperationError> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|source| OperationError::NoteRead {
+            path: path.to_path_buf(),
+            source: std::io::Error::other(source),
+        })?;
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        match component {
+            std::path::Component::Normal(name) => {
+                let text = name.to_str().ok_or_else(|| OperationError::NoteRead {
+                    path: path.to_path_buf(),
+                    source: std::io::Error::other(
+                        "filename is not representable; refusing retirement",
+                    ),
+                })?;
+                if text.contains('\\') {
+                    return Err(OperationError::NoteRead {
+                        path: path.to_path_buf(),
+                        source: std::io::Error::other(
+                            "backslash filename is not representable; refusing retirement",
+                        ),
+                    });
+                }
+                parts.push(text);
+            }
+            _ => {
+                return Err(OperationError::NoteRead {
+                    path: path.to_path_buf(),
+                    source: std::io::Error::other(
+                        "non-relative inventory path; refusing retirement",
+                    ),
+                });
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Err(OperationError::NoteRead {
+            path: path.to_path_buf(),
+            source: std::io::Error::other("empty inventory path; refusing retirement"),
+        });
+    }
+    Ok(parts.join("/"))
+}
 /// What occupies an expected archive path, resolved WITHOUT
 /// following symlinks. A symlink to a valid tarball must never read
 /// as proof, and a dangling link must never read as absence.

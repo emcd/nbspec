@@ -155,8 +155,10 @@ fn missing_root_returns_no_trees() {
 }
 
 /// rename_no_replace publishes to an absent destination: the staged
-/// file lands intact. On Linux this exercises renameat2; on macOS
-/// the native EXCL path in CI.
+/// file lands intact. Linux exercises renameat2; macOS CI exercises
+/// the native EXCL path. Windows has no primitive and refuses by
+/// design, so this runs only where publication exists.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[test]
 fn rename_no_replace_publishes_to_absent_destination() {
     let root = scratch("no-replace-absent");

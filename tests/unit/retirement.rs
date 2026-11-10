@@ -236,7 +236,9 @@ fn snapshot_refuses_backslash_filenames() {
 }
 
 #[test]
-#[cfg(unix)]
+/// APFS rejects non-UTF-8 filenames at the filesystem level, so
+/// this is Linux-specific, not merely Unix.
+#[cfg(target_os = "linux")]
 fn snapshot_refuses_non_utf8_filenames() {
     use std::os::unix::ffi::OsStringExt;
     let root = unique_root("nonutf8");
@@ -246,6 +248,39 @@ fn snapshot_refuses_non_utf8_filenames() {
     assert!(
         capture_snapshot(&namespace).is_err(),
         "non-UTF-8 filename refuses before publication"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
+
+#[test]
+#[cfg(unix)]
+fn persisted_verification_refuses_backslash_masquerade() {
+    // Unix-only: on Windows a\b is a normal nested path that tar
+    // normalizes to a/b, so verification correctly succeeds there.
+    // A tarball entry with a literal backslash must not match the
+    // slash-path inventory entry: extraction creates a file named
+    // `a\b`, and the shared key helper refuses it instead of
+    // normalizing it to `a/b` and losing the original name.
+    use nbspec::retirement::{NamespaceSnapshot, SnapshotFile};
+    use sha2::{Digest, Sha256};
+    let snapshot = NamespaceSnapshot {
+        files: vec![SnapshotFile {
+            relative: "a/b".to_string(),
+            hash: Sha256::digest(b"X").into(),
+            bytes: b"X".to_vec(),
+        }],
+    };
+    let root = unique_root("masquerade");
+    let tarball = root.join("add-demo.tar.zst");
+    let entries = vec![ArchiveEntry {
+        path: PathBuf::from("add-demo/namespace/a\\b"),
+        content: b"X".to_vec(),
+    }];
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(&tarball, build_archive(&entries).unwrap()).unwrap();
+    assert!(
+        verify_persisted_archive(&tarball, "add-demo", &snapshot).is_err(),
+        "literal-backslash entry must not match the slash-path inventory"
     );
     std::fs::remove_dir_all(&root).ok();
 }
