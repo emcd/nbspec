@@ -141,7 +141,9 @@ fn round_trip_dirty_when_export_missing_source_file() {
 /// Symlinks are not part of the deterministic interchange
 /// artifact; the proof must name them rather than silently
 /// following them (which would let a symlinked target escape
-/// the source tree).
+/// the source tree). Unix-only: symlink creation is not portable
+/// to Windows.
+#[cfg(unix)]
 #[test]
 fn round_trip_dirty_when_source_contains_symlink() {
     let source = scratch("rt-symlink-source");

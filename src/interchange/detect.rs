@@ -111,21 +111,44 @@ pub fn rename_no_replace(src: &Path, dst: &Path) -> std::io::Result<()> {
     }
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
 pub fn rename_no_replace(_src: &Path, _dst: &Path) -> std::io::Result<()> {
     // R7_fourth re-review 2026-07-25: the previous check-then-rename
     // fallback kept a residual race window between the `dst.exists()`
     // sample and the actual `rename` call. There is no portable
-    // atomic no-replace rename on non-Linux platforms without
-    // `renameat2`. Refuse explicitly so the operator can fail
-    // closed rather than discover the race after the fact; the
-    // publish re-check at the publish boundary is the wider guard
-    // and remains in place.
+    // atomic no-replace rename on this platform. Refuse explicitly so
+    // the operator can fail closed rather than discover the race
+    // after the fact; the publish re-check at the publish boundary is
+    // the wider guard and remains in place.
     Err(std::io::Error::new(
         std::io::ErrorKind::Unsupported,
         "atomic no-replace rename is not available on this platform; \
          refusing rather than risking a race",
     ))
+}
+
+/// Atomic no-clobber rename on macOS via `renamex_np` with
+/// `RENAME_EXCL`: fails with EEXIST if `dst` already exists, exactly
+/// the `renameat2(RENAME_NOREPLACE)` contract. Available since macOS
+/// 10.12; filesystems without support surface their errno, which
+/// callers report fail-closed.
+#[cfg(target_os = "macos")]
+pub fn rename_no_replace(src: &Path, dst: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    let src_c = CString::new(src.as_os_str().as_bytes())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    let dst_c = CString::new(dst.as_os_str().as_bytes())
+        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    // Safety: documented `renamex_np` invocation with `RENAME_EXCL`
+    // to fail with EEXIST if `dst` already exists. The C strings are
+    // constructed from valid Rust paths with no interior NULs.
+    let result = unsafe { libc::renamex_np(src_c.as_ptr(), dst_c.as_ptr(), libc::RENAME_EXCL) };
+    if result < 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
 }
 
 /// Creates a directory at `path` exclusively: returns an error if

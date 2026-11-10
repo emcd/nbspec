@@ -223,6 +223,7 @@ fn archive_identity_rejects_prefix_lookalikes_and_duplicate_meta() {
 }
 
 #[test]
+#[cfg(unix)]
 fn snapshot_refuses_backslash_filenames() {
     let root = unique_root("backslash");
     let namespace = seed_namespace(&root);

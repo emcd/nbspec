@@ -153,3 +153,44 @@ fn missing_root_returns_no_trees() {
     let detected = detect_trees(Path::new("/no/such/path/should/exist"));
     assert!(detected.is_empty());
 }
+
+/// rename_no_replace publishes to an absent destination: the staged
+/// file lands intact. On Linux this exercises renameat2; on macOS
+/// the native EXCL path in CI.
+#[test]
+fn rename_no_replace_publishes_to_absent_destination() {
+    let root = scratch("no-replace-absent");
+    let staging = root.join("payload.tar.zst.staging-1");
+    let target = root.join("payload.tar.zst");
+    write_bytes(&root, "payload.tar.zst.staging-1", b"staged-bytes");
+    nbspec::interchange::detect::rename_no_replace(&staging, &target)
+        .expect("absent destination must publish");
+    assert_eq!(std::fs::read(&target).unwrap(), b"staged-bytes");
+    assert!(!staging.exists(), "staging file is consumed");
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// rename_no_replace refuses an occupied destination without
+/// touching either side: no clobber, source and destination bytes
+/// preserved. On macOS this exercises the native EXCL refusal.
+#[test]
+fn rename_no_replace_refuses_occupied_destination() {
+    let root = scratch("no-replace-occupied");
+    let staging = root.join("payload.tar.zst.staging-1");
+    let target = root.join("payload.tar.zst");
+    write_bytes(&root, "payload.tar.zst.staging-1", b"staged-bytes");
+    write_bytes(&root, "payload.tar.zst", b"shipped-history");
+    let refused = nbspec::interchange::detect::rename_no_replace(&staging, &target);
+    assert!(refused.is_err(), "occupied destination must refuse");
+    assert_eq!(
+        std::fs::read(&target).unwrap(),
+        b"shipped-history",
+        "destination preserved"
+    );
+    assert_eq!(
+        std::fs::read(&staging).unwrap(),
+        b"staged-bytes",
+        "staging preserved"
+    );
+    std::fs::remove_dir_all(&root).ok();
+}
