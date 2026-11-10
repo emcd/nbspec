@@ -229,7 +229,9 @@ fn round_trip_dirty_when_source_binary_diverges_from_export() {
 /// proof must therefore require every entry to be enumerated
 /// with explicit failure surfacing.
 #[test]
-#[cfg(unix)]
+/// APFS rejects non-UTF-8 filenames at the filesystem level, so
+/// this is Linux-specific, not merely Unix.
+#[cfg(target_os = "linux")]
 fn round_trip_dirty_when_source_contains_non_utf8_filename() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;

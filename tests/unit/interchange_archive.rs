@@ -274,7 +274,9 @@ fn archive_conversion_refuses_symlink_in_source() {
 /// than being silently dropped via `into_string().ok()`. The
 /// archived inventory must match the source inventory exactly.
 #[test]
-#[cfg(unix)]
+/// APFS rejects non-UTF-8 filenames at the filesystem level, so
+/// this is Linux-specific, not merely Unix.
+#[cfg(target_os = "linux")]
 fn archive_conversion_refuses_non_utf8_filename() {
     use std::ffi::OsString;
     use std::os::unix::ffi::OsStringExt;
