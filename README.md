@@ -125,6 +125,15 @@ A target inherited from an earlier change succeeds when it still matches
 its recorded provenance — the takeover is announced, never silent. A
 foreign target that has drifted refuses without `--force`.
 
+A successful merge with archiving enabled ends retired: the change
+archive is verified and published, then the source namespace under
+`proposals/` is deleted in one snapshot-bound transaction — the
+tarball is the surviving record. Re-running merge reports
+already-merged without writing anything. With `archives = false`,
+merge materializes, warns loudly, and leaves the namespace in place
+as the only record. Superseded and abandoned changes never merge,
+under `--force` or otherwise.
+
 ```sh
 nbspec merge add-foo
 ```

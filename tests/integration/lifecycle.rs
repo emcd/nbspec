@@ -14,9 +14,9 @@ use std::process::{Command, Output};
 
 use super::harness::Fixture;
 
-const CHANGE_ID: &str = "add-demo";
+pub(super) const CHANGE_ID: &str = "add-demo";
 
-const SPECIFICATION: &str = "\
+pub(super) const SPECIFICATION: &str = "\
 # user-auth
 
 ## ADDED Requirements
@@ -33,7 +33,7 @@ The system SHALL authenticate users before granting access.
 /// scratch notebook, with the fixture's environment applied (scrubs
 /// `GIT_*`, sets `NB_DIR`/`HOME`/`PATH`/git identity, and `cwd` to the
 /// project root).
-fn nbspec(fixture: &Fixture, arguments: &[&str]) -> Output {
+pub(super) fn nbspec(fixture: &Fixture, arguments: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nbspec"));
     fixture.configure_std(&mut command);
     command
@@ -71,11 +71,11 @@ fn nbspec_with_stdin(fixture: &Fixture, arguments: &[&str], stdin_content: &str)
     child.wait_with_output().unwrap()
 }
 
-fn stdout_of(output: &Output) -> String {
+pub(super) fn stdout_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
-fn stderr_of(output: &Output) -> String {
+pub(super) fn stderr_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
 }
 
@@ -358,6 +358,18 @@ fn change_lifecycle_end_to_end() {
     assert!(merge_output.contains("wrote documentation/specifications/user-auth.md"));
     assert!(merge_output.contains("archived documentation/archives/add-demo.tar.zst"));
     assert!(merge_output.contains("warning: no .gitattributes rule"));
+    assert!(
+        merge_output.contains("retired proposals/add-demo/"),
+        "merge retires the namespace: {merge_output}"
+    );
+    assert!(
+        !fixture
+            .notebook_path()
+            .join("proposals")
+            .join(CHANGE_ID)
+            .exists(),
+        "retired namespace is deleted from the notebook"
+    );
     let target = fixture
         .project_root()
         .join("documentation/specifications/user-auth.md");
@@ -389,6 +401,16 @@ fn change_lifecycle_end_to_end() {
         .collect();
     assert!(entry_paths.iter().any(|path| path == "add-demo/meta.md"));
     assert!(entry_paths.iter().any(|path| path == "add-demo/work.md"));
+    assert!(
+        entry_paths
+            .iter()
+            .any(|path| path == "add-demo/namespace/meta.md")
+    );
+    assert!(
+        entry_paths
+            .iter()
+            .any(|path| path == "add-demo/namespace/specifications/user-auth.md")
+    );
     assert_eq!(
         entry_paths
             .iter()
@@ -409,39 +431,45 @@ fn change_lifecycle_end_to_end() {
         "verdicts never materialize to the repository tree"
     );
 
-    // Re-merge is idempotent.
+    // Re-merge after retirement reports already-merged: no writes,
+    // no moves, no deletions.
     let remerged = nbspec(&fixture, &["merge", CHANGE_ID]);
-    assert!(remerged.status.success());
-    assert!(stdout_of(&remerged).contains("unchanged documentation/specifications/user-auth.md"));
+    assert!(remerged.status.success(), "{}", stderr_of(&remerged));
+    let remerge_output = stdout_of(&remerged);
+    assert!(
+        remerge_output.contains("already merged"),
+        "remerge reports already-merged: {remerge_output}"
+    );
+    assert!(
+        remerge_output.contains("documentation/archives/add-demo.tar.zst"),
+        "already-merged names the tarball: {remerge_output}"
+    );
 
-    // A hand-edited target refuses without force and nothing changes.
-    let drifted_content = format!("{merged_content}\nEdited by hand.\n");
-    std::fs::write(&target, &drifted_content).unwrap();
-    let refused = nbspec(&fixture, &["merge", CHANGE_ID]);
-    assert_eq!(refused.status.code(), Some(1));
-    let refusal = stderr_of(&refused);
-    assert!(refusal.contains("merge refused; no files were written"));
-    assert!(refusal.contains("documentation/specifications/user-auth.md"));
-    assert_eq!(std::fs::read_to_string(&target).unwrap(), drifted_content);
+    // A retired id cannot be recreated: the on-disk tarball claims it.
+    let recreated = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
+    assert_eq!(recreated.status.code(), Some(1));
+    assert!(
+        stderr_of(&recreated).contains("add-demo.tar.zst"),
+        "tarball collision names the tarball: {}",
+        stderr_of(&recreated)
+    );
 
-    // Force restores the notebook's version.
-    let forced = nbspec(&fixture, &["merge", CHANGE_ID, "--force"]);
-    assert!(forced.status.success(), "{}", stderr_of(&forced));
-    assert_eq!(std::fs::read_to_string(&target).unwrap(), merged_content);
-
-    // Breaking the specification surfaces a line-anchored diagnostic.
-    let broken = SPECIFICATION
-        .split("#### Scenario:")
-        .next()
-        .unwrap()
-        .to_string();
-    std::fs::write(&specification_note, broken).unwrap();
-    let rebroken = nbspec(&fixture, &["validate", CHANGE_ID]);
-    assert_eq!(rebroken.status.code(), Some(1));
-    assert!(stderr_of(&rebroken).contains(
-        "proposals/add-demo/specifications/user-auth.md:5: [specifications] \
-             requirement User authentication has no #### Scenario: block"
-    ));
+    // A corrupt tarball fails closed: neither already-merged nor
+    // overwrite, and the namespace stays absent.
+    std::fs::write(
+        fixture
+            .project_root()
+            .join("documentation/archives/add-demo.tar.zst"),
+        b"not a tarball",
+    )
+    .unwrap();
+    let corrupt = nbspec(&fixture, &["merge", CHANGE_ID]);
+    assert_eq!(corrupt.status.code(), Some(1));
+    assert!(
+        stderr_of(&corrupt).contains("inspection"),
+        "corrupt tarball demands inspection: {}",
+        stderr_of(&corrupt)
+    );
 }
 
 /// Regression for issues/1 + issues/8: `display` constructed nb
@@ -744,17 +772,13 @@ The system SHALL refresh sessions.
         "added: {body}"
     );
     assert!(!body.contains("Legacy login"), "removed: {body}");
-    // Idempotent remerge: rebuilt comparison reports unchanged, and
-    // the already-absent warning repeats (warnings report every merge).
+    // Already-merged remerge: the namespace is retired, so no
+    // writes, no warnings, no drift — just the tarball record.
     let again = nbspec(&fixture, &["merge", SECOND_ID]);
     assert!(again.status.success(), "{}", stderr_of(&again));
     let again_output = stdout_of(&again);
     assert!(
-        again_output.contains("unchanged"),
-        "remerge writes nothing: {again_output}"
-    );
-    assert!(
-        again_output.contains("Ghost"),
-        "remerge repeats the warning: {again_output}"
+        again_output.contains("already merged"),
+        "remerge reports already-merged: {again_output}"
     );
 }

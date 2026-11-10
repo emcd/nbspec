@@ -40,6 +40,29 @@ pub async fn create(
         return Err(OperationError::AlreadyExists(change_id.to_string()));
     }
 
+    // Tarball-claimed ids are retired history: recreating them would
+    // silently collide with (and later risk overwriting) a shipped
+    // record. The check resolves through the configured archive
+    // directory, like every other archive path, and fails closed on
+    // symlink or non-file occupants.
+    let tarball_path = project_root()
+        .join(&configuration.archive_directory)
+        .join(format!("{change_id}.tar.zst"));
+    match crate::retirement::read_archive_occupant(&tarball_path)? {
+        crate::retirement::ArchiveOccupant::Absent => {}
+        crate::retirement::ArchiveOccupant::File(_) => {
+            return Err(OperationError::AlreadyExists(
+                tarball_path.display().to_string(),
+            ));
+        }
+        crate::retirement::ArchiveOccupant::Invalid(detail) => {
+            return Err(crate::retirement::refuse_invalid_occupant(
+                &tarball_path,
+                &detail,
+            ));
+        }
+    }
+
     // One transaction materializes the whole namespace under a single
     // checkpoint: the `proposals/` parent root (when missing), the
     // change folder, its artifact subfolders, the meta note, the
