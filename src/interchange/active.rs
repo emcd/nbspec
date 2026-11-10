@@ -345,6 +345,38 @@ pub async fn preflight_active_source(
         }
     }
 
+    // Tarball-claimed ids are retired history: importing over them
+    // would silently collide with a shipped record. The check
+    // resolves through the configured archive directory, like every
+    // other archive path, and fails closed on symlink or non-file
+    // occupants.
+    {
+        use crate::configuration::load_configuration;
+        use crate::operations::context::project_root;
+        use crate::retirement::{ArchiveOccupant, read_archive_occupant, refuse_invalid_occupant};
+        let root = project_root();
+        if let Ok(configuration) = load_configuration(&root) {
+            let tarball = root
+                .join(&configuration.archive_directory)
+                .join(format!("{change_id}.tar.zst"));
+            match read_archive_occupant(&tarball) {
+                Ok(ArchiveOccupant::Absent) => {}
+                Ok(ArchiveOccupant::File(_)) => {
+                    return Err(crate::operations::OperationError::from(
+                        crate::interchange::plan::InterchangeError::Collision(format!(
+                            "{change_id} (retired tarball: {})",
+                            tarball.display()
+                        )),
+                    ));
+                }
+                Ok(ArchiveOccupant::Invalid(detail)) => {
+                    return Err(refuse_invalid_occupant(&tarball, &detail));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     // Build the full Transaction plan without committing — this validates
     // every spec/decision read and every add_note/add_todo path (including
     // DuplicateTitleHeading, PathCollision, etc.). Drop without commit.

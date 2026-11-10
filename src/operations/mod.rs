@@ -98,6 +98,12 @@ pub enum OperationError {
     #[error(transparent)]
     Invalid(#[from] ValidationFailure),
 
+    #[error("retirement refused: {reason} ({guidance})")]
+    RetirementRefused { reason: String, guidance: String },
+
+    #[error("retirement failed after {phases}: {guidance}")]
+    RetirementFailed { phases: String, guidance: String },
+
     #[error("cannot write archive {path}: {source}")]
     ArchiveWrite {
         path: PathBuf,

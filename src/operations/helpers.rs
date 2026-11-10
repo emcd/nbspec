@@ -154,10 +154,11 @@ pub(crate) fn show_note_source(show: &ShowNote) -> Result<String, NbError> {
 /// requested note or folder selector.
 ///
 /// After `nb-api` strips ANSI, the diagnostic is a line of the form
-/// `!<C0>* Not found: <target>` where `<target>` is the bare selector
-/// or `notebook:selector`, and folders may carry a trailing slash.
-/// Compound backend output that merely embeds the `Not found:` token
-/// against a different selector is not treated as absence.
+/// `![A-Z]* Not found: <target>` (the observed live form is `!B`)
+/// where `<target>` is the bare selector or `notebook:selector`, and
+/// folders may carry a trailing slash. Compound backend output that
+/// merely embeds the `Not found:` token against a different selector
+/// is not treated as absence.
 pub fn is_nb_missing_item(message: &str, selector: &str) -> bool {
     let requested = selector.trim().trim_end_matches('/');
     if requested.is_empty() {
@@ -176,19 +177,23 @@ pub fn is_nb_missing_item(message: &str, selector: &str) -> bool {
 }
 
 /// Extracts the target from a single pinned `! Not found: <target>`
-/// line. Prefix may include C0 controls (nb emits SI after SGR reset).
+/// line. Prefix may include C0 controls (nb emits SI after SGR reset)
+/// and format-code letters (live `nb` emits e.g. `!B`); the line must
+/// still open with the `!` marker so compound output that merely
+/// embeds the `Not found:` token stays rejected.
 fn nb_not_found_target(line: &str) -> Option<&str> {
     const MARKER: &str = "Not found: ";
     let trimmed = line.trim();
     let index = trimmed.find(MARKER)?;
     let prefix = &trimmed[..index];
-    if !prefix.contains('!') {
-        return None;
-    }
-    if !prefix
-        .chars()
-        .all(|c| c == '!' || c.is_whitespace() || c.is_control())
-    {
+    // Observed live grammar: `!`, `!B`, each possibly padded with
+    // whitespace or C0 controls — but the format marker itself is a
+    // contiguous run of ASCII uppercase letters with no interior
+    // separators. `! BACKEND DOWN` (uppercase words split by spaces)
+    // is compound prose, not a marker, and stays rejected.
+    let padded = prefix.trim_matches(|c: char| c.is_whitespace() || c.is_control());
+    let marker = padded.strip_prefix('!')?;
+    if !marker.chars().all(|c| c.is_ascii_uppercase()) {
         return None;
     }
     let target = trimmed[index + MARKER.len()..].trim();

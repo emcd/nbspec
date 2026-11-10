@@ -14,6 +14,7 @@ mod merging;
 mod nb_diagnostics;
 mod operations;
 mod rendering;
+mod retirement;
 mod reviews;
 mod schemata;
 mod transaction_atomicity;

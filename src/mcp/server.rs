@@ -278,7 +278,13 @@ impl McpServer {
                        unmanaged surgical base only with addressable \
                        blocks. ADDED collisions against drifted text \
                        resolve delta-wins under force; hash-valid \
-                       collisions refuse regardless."
+                       collisions refuse regardless. A successful merge \
+                       with archiving enabled retires the namespace: \
+                       the verified tarball is published, then \
+                       proposals/<id> is deleted (re-merge reports \
+                       already-merged); with archives=false the \
+                       namespace is retained with a warning. \
+                       Superseded/abandoned changes never merge."
     )]
     async fn merge(
         &self,

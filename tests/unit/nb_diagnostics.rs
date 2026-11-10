@@ -18,6 +18,22 @@ fn compound_prose_with_embedded_token_is_not_absence() {
         "! Not found in scratch: query terms\n",
         "query terms"
     ));
+    // The reviewer's adversarial cases: compound failures naming a
+    // different shape must not read as absence, whether lowercase or
+    // uppercase multiword prose.
+    assert!(!is_nb_missing_item(
+        "! Backend unavailable Not found: proposals/x\n",
+        "proposals/x"
+    ));
+    assert!(!is_nb_missing_item(
+        "! BACKEND DOWN Not found: proposals/x\n",
+        "proposals/x"
+    ));
+    // The observed live form carries a format-code letter.
+    assert!(is_nb_missing_item(
+        "!B Not found: proposals/x\n",
+        "proposals/x"
+    ));
 }
 
 #[cfg(unix)]
