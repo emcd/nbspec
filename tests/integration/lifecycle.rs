@@ -34,6 +34,10 @@ The system SHALL authenticate users before granting access.
 /// `GIT_*`, sets `NB_DIR`/`HOME`/`PATH`/git identity, and `cwd` to the
 /// project root).
 pub(super) fn nbspec(fixture: &Fixture, arguments: &[&str]) -> Output {
+    // Commit direct notebook edits first (see commit_notebook):
+    // without nb's former auto-checkpoint side effect, a
+    // transaction refuses a dirty baseline.
+    commit_notebook(fixture);
     let mut command = Command::new(env!("CARGO_BIN_EXE_nbspec"));
     fixture.configure_std(&mut command);
     command
@@ -77,6 +81,52 @@ pub(super) fn stdout_of(output: &Output) -> String {
 
 pub(super) fn stderr_of(output: &Output) -> String {
     String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// Commits any direct filesystem edits in the scratch notebook.
+///
+/// nb-api 0.4.4 removed the `nb` spawns whose auto-checkpoints used
+/// to commit such edits as a side effect, so a transaction now
+/// refuses a dirty baseline. Tests write notes directly (as an
+/// agent's editor would); committing here mirrors what a real
+/// editor must do — commit via `nb` or git — before invoking a
+/// transacting verb. Skips clean trees.
+pub(super) fn commit_notebook(fixture: &Fixture) {
+    let notebook = fixture.notebook_path();
+    let mut status = Command::new("git");
+    fixture.configure_std(&mut status);
+    let status = status
+        .args(["-C"])
+        .arg(&notebook)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("git status must run");
+    if String::from_utf8_lossy(&status.stdout).trim().is_empty() {
+        return;
+    }
+    let mut add = Command::new("git");
+    fixture.configure_std(&mut add);
+    assert!(
+        add.args(["-C"])
+            .arg(&notebook)
+            .args(["add", "-A"])
+            .status()
+            .expect("git add must run")
+            .success(),
+        "git add must succeed"
+    );
+    let mut commit = Command::new("git");
+    fixture.configure_std(&mut commit);
+    assert!(
+        commit
+            .args(["-C"])
+            .arg(&notebook)
+            .args(["commit", "-m", "test checkpoint"])
+            .status()
+            .expect("git commit must run")
+            .success(),
+        "git commit must succeed"
+    );
 }
 
 #[test]
