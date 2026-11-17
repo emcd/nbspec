@@ -727,9 +727,9 @@ dependencies = [
 
 [[package]]
 name = "nb-api"
-version = "0.4.3"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5f45ac40ab099f3eb50258e0eaa90fbf1d3073b164d71b4af9bf13899407207"
+checksum = "36bf54676fc3dc158b0165dce236642f0325e33790f78ba9659c1beaf7f39d05"
 dependencies = [
  "anyhow",
  "blake3",

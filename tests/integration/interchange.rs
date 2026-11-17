@@ -18,6 +18,10 @@ pub const ACTIVE_CHANGE: &str = "add-foo";
 pub const ARCHIVE_CHANGE: &str = "legacy";
 
 pub(crate) fn nbspec(fixture: &Fixture, arguments: &[&str]) -> Output {
+    // Commit direct notebook edits first (see lifecycle::commit_notebook):
+    // without nb's former auto-checkpoint side effect, a transaction
+    // refuses a dirty baseline.
+    super::lifecycle::commit_notebook(fixture);
     let mut command = Command::new(env!("CARGO_BIN_EXE_nbspec"));
     fixture.configure_std(&mut command);
     command

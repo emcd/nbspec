@@ -448,6 +448,7 @@ async fn mcp_server_drives_change_lifecycle() {
     std::fs::write(change_directory.join("proposal.md"), proposal).unwrap();
     let specification_note = change_directory.join("specifications/user-auth.md");
     std::fs::write(&specification_note, SPECIFICATION).unwrap();
+    super::lifecycle::commit_notebook(&fixture);
 
     // validate: success path returns text + structured success payload.
     let valid = harness
@@ -714,6 +715,7 @@ async fn mcp_merge_warnings_reach_text_and_structured() {
         "# user-auth\n\n## ADDED Requirements\n\n### Requirement: New\nText.\n\n#### Scenario: S\n- **WHEN** x\n- **THEN** y\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n",
     )
     .unwrap();
+    super::lifecycle::commit_notebook(&fixture);
     harness
         .call_tool(
             "review",

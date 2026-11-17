@@ -134,6 +134,12 @@ merge materializes, warns loudly, and leaves the namespace in place
 as the only record. Superseded and abandoned changes never merge,
 under `--force` or otherwise.
 
+Direct filesystem edits to the notebook (an agent editing notes
+outside `nb`) must be committed — via `nb` or git — before any verb
+that writes through a transaction (`create`, `review`, `merge`,
+`import`). Uncommitted edits refuse with a dirty-baseline error
+rather than being swept into someone else's checkpoint.
+
 Change archives are compressed tarballs committed to the repository,
 so track them with Git LFS — git cannot delta-compress non-textual
 data, so without LFS every version of every tarball lives in history
