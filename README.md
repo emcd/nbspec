@@ -134,6 +134,25 @@ merge materializes, warns loudly, and leaves the namespace in place
 as the only record. Superseded and abandoned changes never merge,
 under `--force` or otherwise.
 
+Change archives are compressed tarballs committed to the repository,
+so track them with Git LFS — git cannot delta-compress non-textual
+data, so without LFS every version of every tarball lives in history
+forever. One line in `.gitattributes` covers all
+current and future change archives:
+
+```gitattributes
+documentation/archives/*.tar.zst filter=lfs diff=lfs merge=lfs -text
+```
+
+nbspec never writes this rule itself (merge writes only durable
+documents plus the archive, never repository configuration), so set
+it up once per repository. The rule is safe to add at any time:
+archives committed as raw blobs before the rule stay valid, and
+merging after the rule stores new tarballs in LFS. Until the rule
+exists, every merge warns (`no .gitattributes rule marks ... for Git
+LFS`) — deliberately on every archive regardless of size, so the
+setup is never silently skipped for small changes.
+
 ```sh
 nbspec merge add-foo
 ```
@@ -230,7 +249,7 @@ directory is relocatable via `NBSPEC_CONFIG_DIR` or the user-global
 | `schema` | embedded `nbspec-default` | Workflow schema for changes that do not name one |
 | `scratch_directory` | platform cache directory | Where rendered change trees land |
 | `archives` | `true` | Whether merge writes a change archive |
-| `archive_directory` | `documentation/archives` | Repository directory receiving archives (Git LFS recommended) |
+| `archive_directory` | `documentation/archives` | Repository directory receiving archives (Git LFS recommended; see Merge) |
 
 Workflow schemata (artifact sets, dependency graphs, merge targets)
 follow the OpenSpec 1.x data model as `schemata/<name>/schema.toml`
