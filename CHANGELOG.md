@@ -5,6 +5,17 @@ All notable changes to `nbspec` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and `nbspec` adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-19
+
+### Fixed
+
+- **nb-api 0.4.6 locked**: child `TERM` is canonicalized to
+  `dumb` for `nb` spawns, so terminal color sequences no longer
+  leak into parsed command output; notebook store resolution with
+  an unset `NB_DIR` now tries explicit `NB_DIR`, the parsed
+  `~/.nbrc` value, then `~/.nb` with warn-and-fallback instead of
+  failing. No nbspec source or API changes.
+
 ## [0.3.0] - 2026-11-17
 
 ### Added
