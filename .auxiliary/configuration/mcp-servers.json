@@ -3,24 +3,24 @@
     "agentmux": {
       "command": "agentmux",
       "args": [
-        "host",
-        "mcp",
-        "--bundle",
-        "notebook"
-      ]
+        "host", "mcp",
+        "--default-bundle", "notebook"
+      ],
+      "env": {
+        "AGENTMUX_BUNDLE": "${AGENTMUX_BUNDLE:-}",
+        "AGENTMUX_SESSION": "${AGENTMUX_SESSION:-}",
+        "AGENTMUX_CONFIGURATION_DIRECTORY": "${AGENTMUX_CONFIGURATION_DIRECTORY:-}",
+        "AGENTMUX_STATE_DIRECTORY": "${AGENTMUX_STATE_DIRECTORY:-}"
+      }
     },
     "context7": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp"
-      ]
+      "args": [ "-y", "@upstash/context7-mcp" ]
     },
     "nb": {
       "command": "nb-mcp",
       "args": [
-        "--notebook",
-        "nbspec",
+        "--notebook", "nbspec",
         "--no-commit-signing"
       ]
     },
@@ -30,10 +30,8 @@
         "run",
         "--release",
         "--",
-        "serve",
-        "mcp",
-        "--notebook",
-        "nbspec"
+        "serve", "mcp",
+        "--notebook", "nbspec"
       ]
     }
   }
