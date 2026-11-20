@@ -17,7 +17,7 @@ The `nb` MCP server provides LLM-friendly access to the `nb` note-taking system 
 Use consistent tags for discoverability:
 - **Project Component**: `#component-<name>` (e.g., `#component-data-models`)
 - **Task Type**: `#task-<type>` (e.g., `#task-design`, `#task-bug`)
-- **Status**: `#status-<state>` (e.g., `#status-in-progress`, `#status-review`)
+- **Status**: `#status-<state>` (e.g., `#status-in-progress`, `#status-review`) on notes that have no checkbox. Do not put status tags on todos. The title checkbox is the completion state. Use `do` and `tasks`.
 - **Coordination**: `#handoff`, `#coordination`
 - **Assignment**: Avoid owner tags (for example `#llm-*`) for task ownership. Use lane/folder ownership and explicit owner text in the note body when needed.
 
@@ -43,36 +43,28 @@ Use consistent tags for discoverability:
 ## Recommended `nb` Organization (Project-Defined)
 - Prefer a folder taxonomy of `<issue-type>/<component>` (max depth 2) and avoid mixing top-level component folders with top-level issue-type folders.
 
-- Tentative or pending design rationale lives in each change's
-  `designs/<name>.md` note under `proposals/<change-id>/designs/`;
-  completed (merged) designs are materialized onto the filesystem
-  at `documentation/designs/<name>.md` by `nbspec merge`.
-  Subsystem README files complement the materialized designs for
-  hand-curated rationale. Avoid a separate top-level `designs/`
-  notebook category because it creates an extra place to look that
-  can go stale.
-- Use `decisions/` only when the project wants optional durable
-  rationale notes outside the Nbspec-managed change namespace or
-  architecture README files.
-- When an idea promotes to a formal Nbspec proposal, delete or
-  archive the notebook draft so the change namespace under
-  `proposals/` is the single source of truth for the change.
+- Design rationale belongs in subsystem README files and OpenSpec specs. Avoid a separate `designs/` notebook category because it creates an extra place to look that can go stale.
+- Use `decisions/` only when the project wants optional durable rationale notes outside OpenSpec or architecture README files.
+- When an idea promotes to a formal OpenSpec proposal, delete or archive the notebook draft so the OpenSpec file is the canonical record.
 - Example component names include `engine`, `mcp`, `tui`, `web`, `handbook`, and `data-models`.
-- This project should define and document its specific component-folder conventions in the **Project Notes** section.
+- This project should define and document its specific component-folder conventions in @.auxiliary/agents/project.md.
 - For cross-component work, prefer `coordination/general` and use multiple `#component-*` tags.
-- For per-component rolling handoffs, prefer `coordination/<component>` (one stable note updated at checkpoints).
+- For tech-lead lane handoffs, prefer `coordination/<component>` (one stable note updated in place).
 - Keep notebook lifecycle hygiene:
     - prune completed todos quickly,
     - keep only active/near-term coordination checkpoints,
     - delete stale history-only notes with no owner or action.
 - Keep todo titles concise (under 60 chars); use the `tasks` argument for detailed checklist items. This keeps notebook list views readable.
 
-## `nb` vs Nbspec Rubric
-- Use **Nbspec proposals** for cross-cutting changes, contract-shaping work, architecture shifts, or work that needs explicit design discussion.
+## `nb` vs OpenSpec Rubric
+- Use **OpenSpec proposals** for cross-cutting changes, contract-shaping work, architecture shifts, or work that needs explicit design discussion.
 - Use **`nb` todos/notes** for scoped, self-contained implementation tasks where the path is straightforward.
-- When in doubt about whether work needs a Nbspec proposal or only `nb` execution tracking, prefer a proposal first for design clarity.
+- When in doubt about whether work needs an OpenSpec proposal or only `nb` execution tracking, prefer OpenSpec first for design clarity.
+- For each active OpenSpec proposal, keep **exactly one** linked `nb` todo as the tracking anchor (with proposal reference), rather than duplicating full task trees in both systems.
 
 ## Handoff Hygiene
-- Keep rolling handoff notes stable and update in place, separate from Nbspec-managed proposal content.
-- Do not repurpose or overwrite rolling handoff notes with proposal content.
-- Handoff content should be a brief summary of recent accomplishments and the current agenda. Replace the note body rather than appending so the handoff stays one screenful; a growing checkpoint log is an anti-pattern.
+- **Who maintains handoffs:** coordinators and sole owners maintain project-level rolling handoffs (typically `coordination/general`). Tech leads maintain handoffs for lanes under their purview (`coordination/<component>` or equivalent). No one else maintains a rolling handoff. A coordinated team may have several coordination levels (for example a coordinator above several tech leads); each level owns only its scope. These are not review tiers.
+- Keep rolling handoff notes separate from OpenSpec proposal content. Do not repurpose or overwrite rolling handoff notes with proposal content.
+- **When to update:** before compaction or planned seat transfer; when the coordinator or operator requests it; or when material state would otherwise be lost (active blocker, uncommitted work, non-obvious decision, external dependency, required next action with no durable task record). Do not update routinely after ordinary commits, merges, tests, review rounds, or status pings when those outcomes are already visible from Git, `nb`, or packets.
+- **What goes in a handoff:** a brief summary of recent accomplishments and the current agenda (next accountable action). Include blockers or decisions only when material. Link to todos, issues, commits, or proposals instead of reproducing history.
+- Keep the note brief and operational. Replace the body rather than appending checkpoints. A growing chronological log is an anti-pattern.
