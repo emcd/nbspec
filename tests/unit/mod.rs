@@ -18,6 +18,7 @@ mod rendering;
 mod retirement;
 mod reviews;
 mod schemata;
+#[cfg(unix)]
 mod transaction_atomicity;
 mod validation;
 mod worknotes;
