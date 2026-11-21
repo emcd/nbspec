@@ -33,8 +33,13 @@ repos:
     name: 'Validate: YAML Files'
   - id: end-of-file-fixer
     name: 'Fix: End of Files'
+    # Nbspec-managed durable documents are byte-exact (merge records
+    # SHA-256 over their bytes); hygiene must never rewrite them.
+    exclude: '^documentation/(specifications|designs|decisions)/.*\.md$'
   - id: trailing-whitespace
     name: 'Fix: Trailing Whitespace'
+    # Same byte-exactness contract as above.
+    exclude: '^documentation/(specifications|designs|decisions)/.*\.md$'
 
 - repo: local
   hooks:

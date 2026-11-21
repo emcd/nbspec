@@ -111,5 +111,18 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Stage OpenSpec Layout
+        # The root `openspec` convenience symlink is git-excluded, so a
+        # clean checkout has no `./openspec/` tree and `validate --all`
+        # exits 0 with "No items found" — a silent no-op gate. Link the
+        # tracked tree into place before validating.
+        run: ln -s documentation/architecture/openspec openspec
+
       - name: Validate OpenSpec Tree
-        run: npx --yes "@fission-ai/openspec@1.5.0" validate --all --strict
+        # Guard the item count: zero validated items means the layout
+        # staging above silently broke, and must fail loudly instead of
+        # passing as a no-op.
+        run: |
+          output="$(npx --yes "@fission-ai/openspec@1.5.0" validate --all --strict 2>&1)"
+          echo "$output"
+          echo "$output" | grep -Eq '\([1-9][0-9]* items\)' || { echo 'openspec-gate: zero items validated' >&2; exit 1; }

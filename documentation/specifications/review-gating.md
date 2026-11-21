@@ -191,3 +191,4 @@ Evaluation MUST read verdict notes via resolved filesystem paths and MUST parse 
 - **WHEN** a change with verdicts is merged and archived
 - **THEN** the archive contains each `verdicts/` note alongside `meta` and `work`, sorted by archive path
 - **AND THEN** no verdict content is written into the repository tree
+
