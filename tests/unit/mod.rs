@@ -18,7 +18,7 @@ mod rendering;
 mod retirement;
 mod reviews;
 mod schemata;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "live-nb"))]
 mod transaction_atomicity;
 mod validation;
 mod worknotes;

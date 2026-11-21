@@ -57,6 +57,15 @@ These specialize `@.auxiliary/agents/procedures/notebook.md` for this project:
 
 ## Tests Development
 
+- Bare `cargo test` is the fast hermetic suite: the live-nb tests are
+  excluded by default (feature `live-nb`, never default, never
+  transitively enabled). Shared xrepo gates run `--no-default-features`
+  and stay ambient-tool-free by contract.
+- Full maintainer validation: `cargo test-live` (alias for
+  `cargo test --features live-nb --locked`) with pinned nb 7.24.0
+  provisioned and `NB_API_TEST_NB` set — the same invocation as the
+  project-owned CI gates. Live tests fail closed without nb by design;
+  never add skip-when-absent.
 - Prefer tests under `tests/unit` and `tests/integration` over inline `#[cfg(test)]` modules in `src/**`.
 - Prefer tests that exercise public interfaces; avoid source-inclusion patterns used only to reach private internals.
 - Inline `#[cfg(test)]` is permitted only when ALL of the following hold:

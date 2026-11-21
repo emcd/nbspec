@@ -95,6 +95,12 @@ thiserror = "2.0"
 # deterministic retirement-ordering regression. Default builds
 # contain no environment-activated mutator.
 test-support = []
+# Live-nb suite: tests driving a real `nb` binary through
+# `nb_api::testing::NbTestEnv`. Explicitly selected (never default)
+# so shared hermetic gates stay ambient-tool-free; project-owned
+# gates provision pinned nb 7.24.0 and run with this feature.
+# Never transitively enabled by product features or test-support.
+live-nb = []
 
 [dev-dependencies]
 # Hermetic nb fixtures for integration-style unit tests that must

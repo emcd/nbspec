@@ -52,12 +52,12 @@ jobs:
           components: rustfmt, clippy
 
       - name: Build
-        run: cargo build --release --locked
+        run: cargo build --release --locked --features live-nb
         env:
           NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
 
       - name: Test
-        run: cargo test --release --locked
+        run: cargo test --release --locked --features live-nb
         env:
           NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
 
