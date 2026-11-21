@@ -41,7 +41,9 @@ pub mod validate;
 // working as before the directory split.
 pub use create::create;
 pub use display::display;
-pub use helpers::{classify_folder_listing, classify_note_content, is_nb_missing_item};
+pub use helpers::{
+    classify_folder_listing, classify_note_content, is_nb_missing_item,
+};
 pub use merge::merge;
 pub use render::render;
 pub use review::review;
@@ -113,7 +115,9 @@ pub enum OperationError {
     #[error("unknown review gate {gate:?}; known gates: {known}")]
     GateUnknown { gate: String, known: String },
 
-    #[error("reviewer identity unresolved; pass --reviewer or set git config user.name")]
+    #[error(
+        "reviewer identity unresolved; pass --reviewer or set git config user.name"
+    )]
     ReviewerUnresolved,
 
     #[error(

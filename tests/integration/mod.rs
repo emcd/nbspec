@@ -1,12 +1,14 @@
-#[cfg(unix)]
+#[cfg(all(unix, feature = "live-nb"))]
 mod harness;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "live-nb"))]
 mod interchange;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "live-nb"))]
 mod interchange_preflight;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "live-nb"))]
 mod lifecycle;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "live-nb"))]
+mod mcp_client;
+#[cfg(all(unix, feature = "live-nb"))]
 mod mcp_lifecycle;
-#[cfg(unix)]
+#[cfg(all(unix, feature = "live-nb"))]
 mod retirement;

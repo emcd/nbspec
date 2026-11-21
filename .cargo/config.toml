@@ -1,0 +1,9 @@
+# Project-local cargo aliases. Not rendered by any template; safe to extend.
+
+[alias]
+# Full maintainer validation: the live-nb suite (real `nb` binary via
+# NB_API_TEST_NB) on top of the hermetic default suite. Same feature
+# selection as the project-owned CI gates (local--tester/releaser).
+# Provision pinned nb 7.24.0 first (nb-api setup-nb action in CI);
+# without it the live tests fail closed by design.
+test-live = "test --features live-nb --locked"

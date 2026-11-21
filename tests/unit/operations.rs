@@ -9,12 +9,14 @@
 
 use nb_api::{Config, NbClient, NbError};
 use nbspec::operations::{
-    self, OperationError, classify_folder_listing, classify_note_content, is_nb_missing_item,
+    self, OperationError, classify_folder_listing, classify_note_content,
+    is_nb_missing_item,
 };
 use nbspec::reviews::VerdictValue;
 
 fn client() -> NbClient {
-    NbClient::new(&Config::default()).expect("client construction is pure configuration")
+    NbClient::new(&Config::default())
+        .expect("client construction is pure configuration")
 }
 
 #[tokio::test]
@@ -34,7 +36,7 @@ async fn review_refuses_unknown_gate() {
         OperationError::GateUnknown { gate, known } => {
             assert_eq!(gate, "publish");
             assert!(known.contains("merge"));
-        }
+        },
         other => panic!("expected GateUnknown, got {other}"),
     }
 }
@@ -103,7 +105,8 @@ fn missing_item_matches_pinned_nb_diagnostic_with_si_control() {
 
 #[test]
 fn missing_item_matches_folder_with_trailing_slash() {
-    let msg = "!\u{0f} Not found: scratch:proposals/add-demo/specifications/\n";
+    let msg =
+        "!\u{0f} Not found: scratch:proposals/add-demo/specifications/\n";
     assert!(is_nb_missing_item(msg, "proposals/add-demo/specifications"));
     assert!(is_nb_missing_item(
         msg,
@@ -137,14 +140,22 @@ fn missing_item_matches_bare_and_qualified_selectors() {
 fn classify_note_content_maps_absence_and_failures() {
     let selector = "proposals/x/proposal.md";
     assert!(
-        !classify_note_content(Ok("# proposal\n\n<!-- scaffold -->\n".into()), selector).unwrap()
+        !classify_note_content(
+            Ok("# proposal\n\n<!-- scaffold -->\n".into()),
+            selector
+        )
+        .unwrap()
     );
-    assert!(classify_note_content(Ok("# proposal\n\nBody.\n".into()), selector).unwrap());
+    assert!(
+        classify_note_content(Ok("# proposal\n\nBody.\n".into()), selector)
+            .unwrap()
+    );
     assert!(
         !classify_note_content(
             Err(NbError::CommandFailed {
                 command: "nb show".into(),
-                stderr: "!\u{0f} Not found: home:proposals/x/proposal.md\n".into(),
+                stderr: "!\u{0f} Not found: home:proposals/x/proposal.md\n"
+                    .into(),
                 exit_code: Some(1),
             }),
             selector
@@ -174,7 +185,9 @@ fn classify_folder_listing_maps_absence_and_failures() {
         classify_folder_listing(
             Err(NbError::CommandFailed {
                 command: "nb ls".into(),
-                stderr: "!\u{0f} Not found: home:proposals/x/specifications/\n".into(),
+                stderr:
+                    "!\u{0f} Not found: home:proposals/x/specifications/\n"
+                        .into(),
                 exit_code: Some(1),
             }),
             folder
@@ -192,6 +205,8 @@ fn classify_folder_listing_maps_absence_and_failures() {
     )
     .unwrap_err();
     assert!(err.contains("backend exploded"), "{err}");
-    let listing = classify_folder_listing(Ok("[home:1] alpha.md\n".into()), folder).unwrap();
+    let listing =
+        classify_folder_listing(Ok("[home:1] alpha.md\n".into()), folder)
+            .unwrap();
     assert!(listing.contains("alpha.md"), "{listing}");
 }

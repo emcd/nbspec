@@ -50,7 +50,9 @@ pub struct ArchiveEntry {
 ///
 /// Returns [`ArchiveError::Build`] when tar packing or zstd
 /// compression fails.
-pub fn build_archive(entries: &[ArchiveEntry]) -> Result<Vec<u8>, ArchiveError> {
+pub fn build_archive(
+    entries: &[ArchiveEntry],
+) -> Result<Vec<u8>, ArchiveError> {
     let mut sorted: Vec<&ArchiveEntry> = entries.iter().collect();
     sorted.sort_by(|first, second| first.path.cmp(&second.path));
     let mut builder = tar::Builder::new(Vec::new());
@@ -62,7 +64,11 @@ pub fn build_archive(entries: &[ArchiveEntry]) -> Result<Vec<u8>, ArchiveError> 
         header.set_uid(0);
         header.set_gid(0);
         header.set_entry_type(tar::EntryType::Regular);
-        builder.append_data(&mut header, &entry.path, entry.content.as_slice())?;
+        builder.append_data(
+            &mut header,
+            &entry.path,
+            entry.content.as_slice(),
+        )?;
     }
     let tar_bytes = builder.into_inner()?;
     Ok(zstd::encode_all(tar_bytes.as_slice(), COMPRESSION_LEVEL)?)
@@ -109,26 +115,29 @@ pub fn extract_archive(
         let mut entry = entry.map_err(ArchiveError::Extract)?;
         let path = entry.path().map_err(ArchiveError::Extract)?.into_owned();
         if path.is_absolute() {
-            return Err(ArchiveError::Extract(std::io::Error::other(format!(
-                "archive entry has absolute path: {}",
-                path.display()
-            ))));
+            return Err(ArchiveError::Extract(std::io::Error::other(
+                format!("archive entry has absolute path: {}", path.display()),
+            )));
         }
         for component in path.components() {
             if let std::path::Component::ParentDir = component {
-                return Err(ArchiveError::Extract(std::io::Error::other(format!(
-                    "archive entry escapes via parent: {}",
-                    path.display()
-                ))));
+                return Err(ArchiveError::Extract(std::io::Error::other(
+                    format!(
+                        "archive entry escapes via parent: {}",
+                        path.display()
+                    ),
+                )));
             }
         }
         let header = entry.header().clone();
         if !header.entry_type().is_file() {
-            return Err(ArchiveError::Extract(std::io::Error::other(format!(
-                "archive entry is not a regular file: {} (type {:?})",
-                path.display(),
-                header.entry_type()
-            ))));
+            return Err(ArchiveError::Extract(std::io::Error::other(
+                format!(
+                    "archive entry is not a regular file: {} (type {:?})",
+                    path.display(),
+                    header.entry_type()
+                ),
+            )));
         }
         let declared_size = header.size().map_err(ArchiveError::Extract)?;
         let relative = match strip_prefix {
@@ -136,11 +145,13 @@ pub fn extract_archive(
                 Some(p) if p.starts_with(prefix) => &p[prefix.len()..],
                 Some(_) => continue,
                 None => {
-                    return Err(ArchiveError::Extract(std::io::Error::other(format!(
-                        "non-UTF-8 archive entry path: {}",
-                        path.display()
-                    ))));
-                }
+                    return Err(ArchiveError::Extract(std::io::Error::other(
+                        format!(
+                            "non-UTF-8 archive entry path: {}",
+                            path.display()
+                        ),
+                    )));
+                },
             },
             None => path.to_str().ok_or_else(|| {
                 ArchiveError::Extract(std::io::Error::other(format!(
@@ -154,13 +165,17 @@ pub fn extract_archive(
         if let Some(parent) = absolute.parent() {
             std::fs::create_dir_all(parent).map_err(ArchiveError::Extract)?;
         }
-        let mut file = std::fs::File::create(&absolute).map_err(ArchiveError::Extract)?;
-        let copied = std::io::copy(&mut entry, &mut file).map_err(ArchiveError::Extract)?;
+        let mut file =
+            std::fs::File::create(&absolute).map_err(ArchiveError::Extract)?;
+        let copied = std::io::copy(&mut entry, &mut file)
+            .map_err(ArchiveError::Extract)?;
         if copied != declared_size {
-            return Err(ArchiveError::Extract(std::io::Error::other(format!(
-                "archive entry size mismatch at {}: declared {declared_size}, copied {copied}",
-                path.display()
-            ))));
+            return Err(ArchiveError::Extract(std::io::Error::other(
+                format!(
+                    "archive entry size mismatch at {}: declared {declared_size}, copied {copied}",
+                    path.display()
+                ),
+            )));
         }
     }
     Ok(())

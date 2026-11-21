@@ -8,9 +8,12 @@ use nbspec::interchange::ActiveTree;
 #[cfg(any())]
 use nbspec::interchange::import_active_tree;
 use nbspec::interchange::{
-    ArchiveTree, DetectedTree, detect_trees, import_archive_tree, round_trip_proof,
+    ArchiveTree, DetectedTree, detect_trees, import_archive_tree,
+    round_trip_proof,
 };
-use nbspec::interchange::{InterchangePlan, InterchangePlanStructured, PlanEntry};
+use nbspec::interchange::{
+    InterchangePlan, InterchangePlanStructured, PlanEntry,
+};
 
 fn write_file(base: &Path, relative: &str, content: &str) {
     let path = base.join(relative);
@@ -58,8 +61,10 @@ fn archive_conversion_produces_deterministic_tar_zst() {
         root: root.join("openspec/changes/archive/legacy-feature"),
         change_id: "legacy-feature".to_string(),
     };
-    let bytes_one = import_archive_tree(&archive).expect("archive build should succeed");
-    let bytes_two = import_archive_tree(&archive).expect("archive build should succeed");
+    let bytes_one =
+        import_archive_tree(&archive).expect("archive build should succeed");
+    let bytes_two =
+        import_archive_tree(&archive).expect("archive build should succeed");
     assert_eq!(
         bytes_one, bytes_two,
         "deterministic archive writer must produce byte-identical output"
@@ -85,7 +90,8 @@ fn archive_conversion_preserves_source_layout() {
         root: root.join("openspec/changes/archive/legacy-feature"),
         change_id: "legacy-feature".to_string(),
     };
-    let bytes = import_archive_tree(&archive).expect("archive build should succeed");
+    let bytes =
+        import_archive_tree(&archive).expect("archive build should succeed");
     let listing = list_tar_zstd_entries(&bytes);
     assert!(
         listing
@@ -96,7 +102,8 @@ fn archive_conversion_preserves_source_layout() {
     assert!(
         listing
             .iter()
-            .any(|entry| entry.contains("legacy-feature/tree/specs/auth/spec.md")),
+            .any(|entry| entry
+                .contains("legacy-feature/tree/specs/auth/spec.md")),
         "missing legacy-feature/tree/specs/auth/spec.md: {listing:?}"
     );
     assert!(
@@ -130,8 +137,10 @@ fn archive_conversion_preserves_binary_bytes() {
         root: root.join("openspec/changes/archive/binary-feature"),
         change_id: "binary-feature".to_string(),
     };
-    let archive_bytes = import_archive_tree(&archive).expect("archive build should succeed");
-    let extracted = extract_tar_zstd_entry(&archive_bytes, "binary-feature/tree/blob.bin");
+    let archive_bytes =
+        import_archive_tree(&archive).expect("archive build should succeed");
+    let extracted =
+        extract_tar_zstd_entry(&archive_bytes, "binary-feature/tree/blob.bin");
     assert_eq!(
         extracted, bytes,
         "binary bytes must round-trip through the archive"
@@ -154,7 +163,8 @@ fn archive_fidelity_proof_passes_when_source_matches_persisted() {
     };
     write_file(&source, "proposal.md", "# legacy-feature\n\nbody\n");
     write_file(&source, "tasks.md", "# [ ] legacy-feature work\n");
-    let archive_bytes = import_archive_tree(&archive).expect("archive build should succeed");
+    let archive_bytes =
+        import_archive_tree(&archive).expect("archive build should succeed");
     let archive_path = root.join("legacy-feature.tar.zst");
     std::fs::write(&archive_path, &archive_bytes).expect("archive write");
 
@@ -164,7 +174,9 @@ fn archive_fidelity_proof_passes_when_source_matches_persisted() {
         &source_change_root,
         &archive_path,
     )
-    .expect("archive fidelity proof should pass for matching source/extracted");
+    .expect(
+        "archive fidelity proof should pass for matching source/extracted",
+    );
     std::fs::remove_dir_all(&root).ok();
 }
 
@@ -180,7 +192,8 @@ fn archive_fidelity_proof_refuses_when_source_mutated_after_persist() {
         change_id: "legacy-feature".to_string(),
     };
     write_file(&source, "proposal.md", "# legacy-feature\n\nbody\n");
-    let archive_bytes = import_archive_tree(&archive).expect("archive build should succeed");
+    let archive_bytes =
+        import_archive_tree(&archive).expect("archive build should succeed");
     let archive_path = root.join("legacy-feature.tar.zst");
     std::fs::write(&archive_path, &archive_bytes).expect("archive write");
 
@@ -200,7 +213,8 @@ fn archive_fidelity_proof_refuses_when_source_mutated_after_persist() {
     .expect_err("archive fidelity proof must surface source mutation");
     let message = format!("{error:?}");
     assert!(
-        message.contains("ArchiveFidelity") || message.contains("archive fidelity"),
+        message.contains("ArchiveFidelity")
+            || message.contains("archive fidelity"),
         "expected ArchiveFidelity error, got {message:?}"
     );
     std::fs::remove_dir_all(&root).ok();
@@ -222,8 +236,8 @@ fn archive_conversion_refuses_empty_directory() {
         root: source.clone(),
         change_id: "legacy-feature".to_string(),
     };
-    let error =
-        import_archive_tree(&archive).expect_err("archive build must refuse empty directories");
+    let error = import_archive_tree(&archive)
+        .expect_err("archive build must refuse empty directories");
     let message = format!("{error:?}");
     assert!(
         message.contains("empty") || message.contains("LayoutAnomaly"),
@@ -254,13 +268,15 @@ fn archive_conversion_refuses_symlink_in_source() {
     let link_path = root
         .join("openspec/changes/archive/legacy-feature")
         .join("leaked");
-    std::os::unix::fs::symlink(victim.join("outside.txt"), &link_path).unwrap();
+    std::os::unix::fs::symlink(victim.join("outside.txt"), &link_path)
+        .unwrap();
 
     let archive = ArchiveTree {
         root: root.join("openspec/changes/archive/legacy-feature"),
         change_id: "legacy-feature".to_string(),
     };
-    let error = import_archive_tree(&archive).expect_err("archive conversion must refuse symlinks");
+    let error = import_archive_tree(&archive)
+        .expect_err("archive conversion must refuse symlinks");
     let message = format!("{error:?}");
     assert!(
         message.contains("symlink") || message.contains("symlinks"),
@@ -287,7 +303,8 @@ fn archive_conversion_refuses_non_utf8_filename() {
         "openspec/changes/archive/legacy-feature/proposal.md",
         "# legacy-feature\n",
     );
-    let bad_name = OsString::from_vec(vec![0xff, 0xfe, b'_', b'd', b'a', b't', b'a']);
+    let bad_name =
+        OsString::from_vec(vec![0xff, 0xfe, b'_', b'd', b'a', b't', b'a']);
     let bad_path = root
         .join("openspec/changes/archive/legacy-feature")
         .join(&bad_name);
@@ -325,7 +342,9 @@ fn list_tar_zstd_entries(bytes: &[u8]) -> Vec<String> {
     };
     entries
         .filter_map(|entry| entry.ok())
-        .filter_map(|entry| entry.path().ok().map(|path| path.display().to_string()))
+        .filter_map(|entry| {
+            entry.path().ok().map(|path| path.display().to_string())
+        })
         .collect()
 }
 

@@ -84,7 +84,7 @@
     "nbspec": {
       "type": "local",
       "command": [
-        
+
         "cargo", "run", "--release", "--",
         "serve", "mcp",
         "--notebook", "nbspec"

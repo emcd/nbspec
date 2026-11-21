@@ -86,10 +86,12 @@ pub struct ArchiveTree {
 pub fn rename_no_replace(src: &Path, dst: &Path) -> std::io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
-    let src_c = CString::new(src.as_os_str().as_bytes())
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-    let dst_c = CString::new(dst.as_os_str().as_bytes())
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    let src_c = CString::new(src.as_os_str().as_bytes()).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, error)
+    })?;
+    let dst_c = CString::new(dst.as_os_str().as_bytes()).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, error)
+    })?;
     // Safety: documented `libc::renameat2` invocation with
     // `AT_FDCWD` for both directories and `RENAME_NOREPLACE` to
     // fail with EEXIST if `dst` already exists. The C strings
@@ -136,14 +138,18 @@ pub fn rename_no_replace(_src: &Path, _dst: &Path) -> std::io::Result<()> {
 pub fn rename_no_replace(src: &Path, dst: &Path) -> std::io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
-    let src_c = CString::new(src.as_os_str().as_bytes())
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
-    let dst_c = CString::new(dst.as_os_str().as_bytes())
-        .map_err(|error| std::io::Error::new(std::io::ErrorKind::InvalidInput, error))?;
+    let src_c = CString::new(src.as_os_str().as_bytes()).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, error)
+    })?;
+    let dst_c = CString::new(dst.as_os_str().as_bytes()).map_err(|error| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, error)
+    })?;
     // Safety: documented `renamex_np` invocation with `RENAME_EXCL`
     // to fail with EEXIST if `dst` already exists. The C strings are
     // constructed from valid Rust paths with no interior NULs.
-    let result = unsafe { libc::renamex_np(src_c.as_ptr(), dst_c.as_ptr(), libc::RENAME_EXCL) };
+    let result = unsafe {
+        libc::renamex_np(src_c.as_ptr(), dst_c.as_ptr(), libc::RENAME_EXCL)
+    };
     if result < 0 {
         Err(std::io::Error::last_os_error())
     } else {
@@ -179,13 +185,16 @@ pub fn quarantine_path_for(
     let parent = source.parent().ok_or_else(|| {
         crate::interchange::plan::InterchangeError::LayoutAnomaly {
             path: source.to_path_buf(),
-            message: "source path has no parent; cannot derive a quarantine".to_string(),
+            message: "source path has no parent; cannot derive a quarantine"
+                .to_string(),
         }
     })?;
     let file_name = source.file_name().ok_or_else(|| {
         crate::interchange::plan::InterchangeError::LayoutAnomaly {
             path: source.to_path_buf(),
-            message: "source path has no file name; cannot derive a quarantine".to_string(),
+            message:
+                "source path has no file name; cannot derive a quarantine"
+                    .to_string(),
         }
     })?;
     let nanos = std::time::SystemTime::now()

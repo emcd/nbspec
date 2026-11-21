@@ -28,7 +28,11 @@ pub async fn render(
     diff: bool,
 ) -> OperationResult {
     let context = load_change_context(client, notebook, change_id).await?;
-    let destination = render_destination(&context.configuration, &context.notebook_name, change_id);
+    let destination = render_destination(
+        &context.configuration,
+        &context.notebook_name,
+        change_id,
+    );
     write_tree(&context.documents, &destination)?;
     if diff {
         let text = review_diff(&context.documents, &context.root)?;

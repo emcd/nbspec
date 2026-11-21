@@ -2,8 +2,8 @@ use nb_api::NbClient;
 use serde_json::json;
 
 use crate::changes::{
-    ChangeMetadata, META_NOTE, PROPOSALS_FOLDER, WORK_NOTE, change_folder, namespace_folders,
-    namespace_notes, render_meta_note, validate_change_id,
+    ChangeMetadata, META_NOTE, PROPOSALS_FOLDER, WORK_NOTE, change_folder,
+    namespace_folders, namespace_notes, render_meta_note, validate_change_id,
 };
 use crate::configuration::load_configuration;
 use crate::schemata::resolve_schema;
@@ -49,18 +49,18 @@ pub async fn create(
         .join(&configuration.archive_directory)
         .join(format!("{change_id}.tar.zst"));
     match crate::retirement::read_archive_occupant(&tarball_path)? {
-        crate::retirement::ArchiveOccupant::Absent => {}
+        crate::retirement::ArchiveOccupant::Absent => {},
         crate::retirement::ArchiveOccupant::File(_) => {
             return Err(OperationError::AlreadyExists(
                 tarball_path.display().to_string(),
             ));
-        }
+        },
         crate::retirement::ArchiveOccupant::Invalid(detail) => {
             return Err(crate::retirement::refuse_invalid_occupant(
                 &tarball_path,
                 &detail,
             ));
-        }
+        },
     }
 
     // One transaction materializes the whole namespace under a single
@@ -75,8 +75,10 @@ pub async fn create(
     // keeps first-create atomic: a transaction failure rolls back the
     // parent root too, so no durable partial folder or checkpoint
     // survives.
-    let proposals_missing = !folder_exists(client, PROPOSALS_FOLDER, notebook).await;
-    let metadata = ChangeMetadata::new(change_id, title, &schema.name, &notebook_name)?;
+    let proposals_missing =
+        !folder_exists(client, PROPOSALS_FOLDER, notebook).await;
+    let metadata =
+        ChangeMetadata::new(change_id, title, &schema.name, &notebook_name)?;
     let mut tx = client.transaction(notebook).await?;
     if proposals_missing {
         tx.add_folder(PROPOSALS_FOLDER)?;

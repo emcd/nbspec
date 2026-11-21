@@ -3,9 +3,10 @@ use std::path::{Path, PathBuf};
 
 use jiff::Timestamp;
 use nbspec::reviews::{
-    GateEvaluation, VerdictError, VerdictRecord, VerdictValue, evaluate_gate, is_verdict_note_id,
-    read_verdicts, render_verdict_note, reviewer_positions,
-    verdict_id_has_compact_timestamp_prefix, verdict_note_name,
+    GateEvaluation, VerdictError, VerdictRecord, VerdictValue, evaluate_gate,
+    is_verdict_note_id, read_verdicts, render_verdict_note,
+    reviewer_positions, verdict_id_has_compact_timestamp_prefix,
+    verdict_note_name,
 };
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -83,7 +84,8 @@ fn skips_dotfiles_and_non_markdown() {
         "2026-07-11T02:00:00Z",
     );
     write_verdict(&root, "20260711020000-1-000001", &payload);
-    fs::write(root.join("verdicts/.index"), "20260711020000-1-000001.md\n").unwrap();
+    fs::write(root.join("verdicts/.index"), "20260711020000-1-000001.md\n")
+        .unwrap();
     fs::write(root.join("verdicts/notes.txt"), "not a verdict\n").unwrap();
     let verdicts = read_verdicts(&root).unwrap();
     assert_eq!(verdicts.len(), 1);
@@ -94,13 +96,18 @@ fn skips_dotfiles_and_non_markdown() {
 fn malformed_note_fails_loudly_naming_the_note() {
     let root = unique_temp_root("reviews-malformed");
     fs::create_dir_all(root.join("verdicts")).unwrap();
-    fs::write(root.join("verdicts/bogus.md"), "# bogus\n\nno fence here\n").unwrap();
-    let error = read_verdicts(&root).expect_err("malformed note must fail the read");
+    fs::write(root.join("verdicts/bogus.md"), "# bogus\n\nno fence here\n")
+        .unwrap();
+    let error =
+        read_verdicts(&root).expect_err("malformed note must fail the read");
     match error {
         VerdictError::Malformed { note, reason } => {
             assert_eq!(note, "verdicts/bogus.md");
-            assert!(reason.contains("no fenced JSON block"), "reason: {reason}");
-        }
+            assert!(
+                reason.contains("no fenced JSON block"),
+                "reason: {reason}"
+            );
+        },
         other => panic!("expected Malformed, got {other:?}"),
     }
     fs::remove_dir_all(&root).unwrap();
@@ -146,7 +153,8 @@ fn crlf_note_parses_identically() {
         "abc",
         "2026-07-11T02:00:00Z",
     );
-    let body = render_verdict_note("20260711020000-1-000002", &payload).unwrap();
+    let body =
+        render_verdict_note("20260711020000-1-000002", &payload).unwrap();
     let crlf = body.replace('\n', "\r\n");
     fs::create_dir_all(root.join("verdicts")).unwrap();
     fs::write(root.join("verdicts/20260711020000-1-000002.md"), crlf).unwrap();
@@ -414,7 +422,8 @@ fn gate_refusal_state_describes_each_unsatisfied_kind() {
     );
 
     let positions = reviewer_positions(&verdicts, "merge", "current-hash");
-    let state = gate_refusal_state(&evaluate_gate(&positions), "current-hash").unwrap();
+    let state = gate_refusal_state(&evaluate_gate(&positions), "current-hash")
+        .unwrap();
     assert!(
         state.contains("stale approval by advisor"),
         "state: {state}"
@@ -423,7 +432,8 @@ fn gate_refusal_state_describes_each_unsatisfied_kind() {
     assert!(state.contains("current-hash"), "names the current hash");
 
     let positions = reviewer_positions(&verdicts, "publish", "current-hash");
-    let state = gate_refusal_state(&evaluate_gate(&positions), "current-hash").unwrap();
+    let state = gate_refusal_state(&evaluate_gate(&positions), "current-hash")
+        .unwrap();
     assert!(state.contains("no verdict"), "state: {state}");
 
     let mut revise = record(
@@ -443,7 +453,9 @@ fn gate_refusal_state_describes_each_unsatisfied_kind() {
         .into_iter()
         .filter(|p| p.verdict.record.reviewer == "owner")
         .collect();
-    let state = gate_refusal_state(&evaluate_gate(&owner_only), "current-hash").unwrap();
+    let state =
+        gate_refusal_state(&evaluate_gate(&owner_only), "current-hash")
+            .unwrap();
     assert!(
         state.contains("revise by owner (findings at reviews/9)"),
         "state: {state}"

@@ -14,7 +14,8 @@ use std::fmt;
 use serde::Serialize;
 
 use crate::changes::{
-    ArtifactLayout, artifact_layout, first_h1_title, has_h2_section, note_has_authored_content,
+    ArtifactLayout, artifact_layout, first_h1_title, has_h2_section,
+    note_has_authored_content,
 };
 use crate::grammar::{Requirement, parse_delta_specification};
 use crate::rendering::RenderedDocument;
@@ -117,7 +118,9 @@ pub fn validate_change(
         let authored = documents.iter().any(|document| {
             document.artifact_id == artifact.id
                 && match layout {
-                    ArtifactLayout::Note(_) => note_has_authored_content(&document.content),
+                    ArtifactLayout::Note(_) => {
+                        note_has_authored_content(&document.content)
+                    },
                     ArtifactLayout::Folder(_) => true,
                 }
         });
@@ -126,7 +129,9 @@ pub fn validate_change(
         }
         let note = match layout {
             ArtifactLayout::Note(stem) => format!("{change_folder}/{stem}.md"),
-            ArtifactLayout::Folder(folder) => format!("{change_folder}/{folder}/"),
+            ArtifactLayout::Folder(folder) => {
+                format!("{change_folder}/{folder}/")
+            },
         };
         diagnostics.push(Diagnostic {
             note,
@@ -147,7 +152,9 @@ pub fn validate_change(
         // exists only because someone authored it, so it always faces
         // the grammar.
         let authored = match artifact_layout(artifact) {
-            ArtifactLayout::Note(_) => note_has_authored_content(&document.content),
+            ArtifactLayout::Note(_) => {
+                note_has_authored_content(&document.content)
+            },
             ArtifactLayout::Folder(_) => true,
         };
         if !authored {
@@ -162,7 +169,9 @@ pub fn validate_change(
             continue;
         };
         let authored = match artifact_layout(artifact) {
-            ArtifactLayout::Note(_) => note_has_authored_content(&document.content),
+            ArtifactLayout::Note(_) => {
+                note_has_authored_content(&document.content)
+            },
             ArtifactLayout::Folder(_) => true,
         };
         if !authored {
@@ -190,10 +199,17 @@ pub fn validate_change(
 }
 
 /// Applies the delta-specification grammar rules to one document.
-fn validate_delta_document(document: &RenderedDocument, diagnostics: &mut Vec<Diagnostic>) {
+fn validate_delta_document(
+    document: &RenderedDocument,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
     let delta = parse_delta_specification(&document.content);
     let presence = delta.presence;
-    if !(presence.added || presence.modified || presence.removed || presence.renamed) {
+    if !(presence.added
+        || presence.modified
+        || presence.removed
+        || presence.renamed)
+    {
         diagnostics.push(document_diagnostic(
             document,
             None,
@@ -212,7 +228,8 @@ fn validate_delta_document(document: &RenderedDocument, diagnostics: &mut Vec<Di
         diagnostics.push(document_diagnostic(
             document,
             None,
-            "MODIFIED Requirements section declares no requirements".to_string(),
+            "MODIFIED Requirements section declares no requirements"
+                .to_string(),
         ));
     }
     if presence.removed && delta.removed.is_empty() {
@@ -226,7 +243,8 @@ fn validate_delta_document(document: &RenderedDocument, diagnostics: &mut Vec<Di
         diagnostics.push(document_diagnostic(
             document,
             None,
-            "RENAMED Requirements section contains no FROM:/TO: pairs".to_string(),
+            "RENAMED Requirements section contains no FROM:/TO: pairs"
+                .to_string(),
         ));
     }
     validate_requirements(&delta.added, "ADDED", document, diagnostics);
@@ -257,7 +275,10 @@ fn validate_requirements(
             diagnostics.push(document_diagnostic(
                 document,
                 Some(requirement.line),
-                format!("requirement {} has no normative text", requirement.name),
+                format!(
+                    "requirement {} has no normative text",
+                    requirement.name
+                ),
             ));
         }
         if requirement.scenarios.is_empty() {
@@ -275,7 +296,10 @@ fn validate_requirements(
                 diagnostics.push(document_diagnostic(
                     document,
                     Some(scenario.line),
-                    format!("scenario {} has no WHEN/THEN content", scenario.name),
+                    format!(
+                        "scenario {} has no WHEN/THEN content",
+                        scenario.name
+                    ),
                 ));
             }
         }

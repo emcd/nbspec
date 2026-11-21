@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use nbspec::archives::{ArchiveEntry, build_archive, gitattributes_covers_lfs};
+use nbspec::archives::{
+    ArchiveEntry, build_archive, gitattributes_covers_lfs,
+};
 use nbspec::git_env::scrub_git_env;
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -152,7 +154,8 @@ fn rule_scoped_to_other_directory_does_not_cover() {
     let root = git_project("gitattributes-scoped");
     let other_dir = root.join("documentation/datasets");
     fs::create_dir_all(&other_dir).unwrap();
-    fs::write(other_dir.join(".gitattributes"), "*.tar.zst filter=lfs\n").unwrap();
+    fs::write(other_dir.join(".gitattributes"), "*.tar.zst filter=lfs\n")
+        .unwrap();
     assert!(!gitattributes_covers_lfs(&root, Path::new(ARCHIVE)));
     fs::remove_dir_all(&root).unwrap();
 }

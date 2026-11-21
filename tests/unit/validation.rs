@@ -65,7 +65,9 @@ fn missing_required_artifacts_are_reported_in_schema_order() {
     let diagnostics = validate(&[]);
     let summary: Vec<(&str, &str)> = diagnostics
         .iter()
-        .map(|diagnostic| (diagnostic.artifact_id.as_str(), diagnostic.note.as_str()))
+        .map(|diagnostic| {
+            (diagnostic.artifact_id.as_str(), diagnostic.note.as_str())
+        })
         .collect();
     assert_eq!(
         summary,
@@ -84,7 +86,8 @@ fn missing_required_artifacts_are_reported_in_schema_order() {
 #[test]
 fn scaffolded_placeholder_proposal_counts_as_unauthored() {
     let mut proposal = proposal_document();
-    proposal.content = "# proposal\n\n<!-- Draft the proposal here. -->\n".to_string();
+    proposal.content =
+        "# proposal\n\n<!-- Draft the proposal here. -->\n".to_string();
     let documents = vec![
         proposal,
         specification_document("user-auth", VALID_SPECIFICATION),
@@ -280,13 +283,15 @@ fn removed_and_renamed_sections_validate_without_scenarios() {
 
 #[test]
 fn conformance_delta_fixtures_pass_native_validation() {
-    let entries = std::fs::read_dir("tests/fixtures/conformance/deltas").unwrap();
+    let entries =
+        std::fs::read_dir("tests/fixtures/conformance/deltas").unwrap();
     let mut checked = 0;
     for entry in entries {
         let path = entry.unwrap().path();
         let content = std::fs::read_to_string(&path).unwrap();
         let name = path.file_stem().unwrap().to_string_lossy().into_owned();
-        let documents = vec![proposal_document(), specification_document(&name, &content)];
+        let documents =
+            vec![proposal_document(), specification_document(&name, &content)];
         assert_eq!(validate(&documents), Vec::new(), "fixture {name}");
         checked += 1;
     }
@@ -299,7 +304,8 @@ fn diagnostic_display_includes_note_line_and_artifact() {
         note: "proposals/add-demo/specifications/user-auth.md".to_string(),
         artifact_id: "specifications".to_string(),
         line: Some(5),
-        message: "requirement User authentication has no #### Scenario: block".to_string(),
+        message: "requirement User authentication has no #### Scenario: block"
+            .to_string(),
     };
     assert_eq!(
         with_line.to_string(),
@@ -334,7 +340,8 @@ fn failure_display_lists_one_diagnostic_per_line() {
 #[test]
 fn proposal_missing_why_section_is_reported() {
     let mut proposal = proposal_document();
-    proposal.content = "# proposal\n\n## What Changes\n\nSome change.\n".to_string();
+    proposal.content =
+        "# proposal\n\n## What Changes\n\nSome change.\n".to_string();
     let documents = vec![
         proposal,
         specification_document("user-auth", VALID_SPECIFICATION),
@@ -376,7 +383,8 @@ The system SHALL authenticate users.
 #[test]
 fn required_sections_matched_case_insensitively() {
     let mut proposal = proposal_document();
-    proposal.content = "# proposal\n\n## why\n\nLowercase heading.\n".to_string();
+    proposal.content =
+        "# proposal\n\n## why\n\nLowercase heading.\n".to_string();
     let documents = vec![
         proposal,
         specification_document("user-auth", VALID_SPECIFICATION),
@@ -483,7 +491,11 @@ required_sections = ["Why", "Impact"]
         source_note: format!("{CHANGE_FOLDER}/proposal.md"),
         content: "# proposal\n\n## Why\n\nReasons.\n".to_string(),
     };
-    let diagnostics = validate_change(std::slice::from_ref(&only_why), &schema, CHANGE_FOLDER);
+    let diagnostics = validate_change(
+        std::slice::from_ref(&only_why),
+        &schema,
+        CHANGE_FOLDER,
+    );
     assert_eq!(diagnostics.len(), 1);
     assert!(
         diagnostics[0]
@@ -494,7 +506,8 @@ required_sections = ["Why", "Impact"]
     );
 
     let both = RenderedDocument {
-        content: "# proposal\n\n## Why\n\nReasons.\n\n## Impact\n\nWide.\n".to_string(),
+        content: "# proposal\n\n## Why\n\nReasons.\n\n## Impact\n\nWide.\n"
+            .to_string(),
         ..only_why.clone()
     };
     assert_eq!(

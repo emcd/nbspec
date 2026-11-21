@@ -33,7 +33,10 @@ pub enum MergeError {
         source: std::io::Error,
     },
 
-    #[error("merge refused; no files were written:\n{}", format_refusals(refusals))]
+    #[error(
+        "merge refused; no files were written:\n{}",
+        format_refusals(refusals)
+    )]
     Refused { refusals: Vec<Refusal> },
 }
 
@@ -99,7 +102,10 @@ pub enum RefusalReason {
 }
 
 impl std::fmt::Display for RefusalReason {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         match self {
             RefusalReason::IncoherentDelta(message) => write!(
                 formatter,
@@ -187,40 +193,43 @@ pub enum TargetStatus {
 }
 
 impl std::fmt::Display for TargetStatus {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         match self {
             TargetStatus::NotMerged => write!(formatter, "not merged"),
             TargetStatus::Current => write!(formatter, "merged, current"),
             TargetStatus::UpdatePending => {
                 write!(formatter, "merged, notebook update pending")
-            }
+            },
             TargetStatus::Drifted => {
                 write!(formatter, "drifted (hand edits since last merge)")
-            }
+            },
             TargetStatus::Unmanaged => {
                 write!(
                     formatter,
                     "unmanaged file at target (not written by nbspec)"
                 )
-            }
+            },
             TargetStatus::OwnedByOtherChange(change_id) => {
                 write!(
                     formatter,
                     "owned by change {change_id}; clean succession available"
                 )
-            }
+            },
             TargetStatus::ForeignDrifted(change_id) => {
                 write!(
                     formatter,
                     "owned by change {change_id}, drifted since its materialization"
                 )
-            }
+            },
             TargetStatus::NonFile => {
                 write!(formatter, "blocked: a non-file occupies the target")
-            }
+            },
             TargetStatus::Unmergeable(reason) => {
                 write!(formatter, "unmergeable delta: {reason}")
-            }
+            },
         }
     }
 }
@@ -277,14 +286,17 @@ enum TargetRead {
 
 /// Reads one merge target under confinement: absent targets,
 /// non-file occupants, and real-file bodies without parsing.
-fn read_target_body(project_root: &Path, target_path: &str) -> Result<TargetRead, MergeError> {
+fn read_target_body(
+    project_root: &Path,
+    target_path: &str,
+) -> Result<TargetRead, MergeError> {
     let absolute = match inspect_confined_target(project_root, target_path)? {
         ConfinedTarget::Absent { .. } => return Ok(TargetRead::Absent),
         ConfinedTarget::NonFile { .. } => return Ok(TargetRead::NonFile),
         ConfinedTarget::RealFile { absolute } => absolute,
     };
-    let content =
-        std::fs::read_to_string(&absolute).map_err(|error| MergeError::io(&absolute, error))?;
+    let content = std::fs::read_to_string(&absolute)
+        .map_err(|error| MergeError::io(&absolute, error))?;
     Ok(TargetRead::Body(content))
 }
 
@@ -325,7 +337,9 @@ fn plan_document_body(
         // the provenance header: the rebuilt body is re-stamped on
         // write, so planning over the header would double-stamp and
         // misalign every span. Unmanaged content splits to itself.
-        TargetRead::Body(content) => Some(provenance::split_document(content).1),
+        TargetRead::Body(content) => {
+            Some(provenance::split_document(content).1)
+        },
         TargetRead::Absent | TargetRead::NonFile => None,
     };
     let fallback = target_path
@@ -357,7 +371,11 @@ fn plan_document_body(
 /// test compares the target's CURRENT content against the hash in
 /// its OWN provenance header — never the proposed new content
 /// against the old header.
-fn classify_target_body(content: &str, new_body: &str, change_id: &str) -> TargetStatus {
+fn classify_target_body(
+    content: &str,
+    new_body: &str,
+    change_id: &str,
+) -> TargetStatus {
     match ownership_state(content, change_id) {
         // Refine the clean-proceed placeholder against the PLANNED
         // body (rebuilt for surgical documents), never the raw delta
@@ -370,7 +388,7 @@ fn classify_target_body(content: &str, new_body: &str, change_id: &str) -> Targe
             } else {
                 TargetStatus::UpdatePending
             }
-        }
+        },
         state => state,
     }
 }
@@ -426,7 +444,8 @@ pub fn target_status(
     // Coherence before state: target-independent authoring errors
     // surface even when the target itself would also refuse.
     if is_surgical_document(document)
-        && let Err(failure) = crate::delta_apply::check_delta_coherence(&document.content)
+        && let Err(failure) =
+            crate::delta_apply::check_delta_coherence(&document.content)
     {
         return Ok(TargetStatus::Unmergeable(failure.message));
     }
@@ -440,12 +459,12 @@ pub fn target_status(
                 Err(RefusalReason::IncoherentDelta(message))
                 | Err(RefusalReason::DanglingDelta(message)) => {
                     Ok(TargetStatus::Unmergeable(message))
-                }
+                },
                 Err(_) => Ok(TargetStatus::Unmergeable(
                     "delta planning failed".to_string(),
                 )),
             }
-        }
+        },
         TargetRead::NonFile => Ok(TargetStatus::NonFile),
         TargetRead::Body(ref body) => {
             let state = ownership_state(body, change_id);
@@ -457,17 +476,21 @@ pub fn target_status(
                     if planned.skipped {
                         return Ok(TargetStatus::NotMerged);
                     }
-                    Ok(classify_target_body(body, &planned.new_body, change_id))
-                }
+                    Ok(classify_target_body(
+                        body,
+                        &planned.new_body,
+                        change_id,
+                    ))
+                },
                 Err(RefusalReason::IncoherentDelta(message))
                 | Err(RefusalReason::DanglingDelta(message)) => {
                     Ok(TargetStatus::Unmergeable(message))
-                }
+                },
                 Err(_) => Ok(TargetStatus::Unmergeable(
                     "delta planning failed".to_string(),
                 )),
             }
-        }
+        },
     }
 }
 
@@ -532,7 +555,8 @@ pub fn merge_documents(
         // errors refuse before drift, succession, or force are
         // consulted, so authors fix the note first.
         if is_surgical_document(document)
-            && let Err(failure) = crate::delta_apply::check_delta_coherence(&document.content)
+            && let Err(failure) =
+                crate::delta_apply::check_delta_coherence(&document.content)
         {
             refusals.push(Refusal {
                 target: target_path.clone(),
@@ -560,9 +584,13 @@ pub fn merge_documents(
         // heading: adopt populated targets under `--force`, refuse
         // block-less ones even then (there is nothing to apply
         // onto, and whole-writing a sparse delta note would corrupt).
-        if is_surgical_document(document) && matches!(state, TargetStatus::Unmanaged) {
+        if is_surgical_document(document)
+            && matches!(state, TargetStatus::Unmanaged)
+        {
             let populated = match &target {
-                TargetRead::Body(body) => !parse_target_blocks(body).is_empty(),
+                TargetRead::Body(body) => {
+                    !parse_target_blocks(body).is_empty()
+                },
                 _ => false,
             };
             if !force || !populated {
@@ -585,7 +613,7 @@ pub fn merge_documents(
             TargetStatus::Unmanaged => Some(RefusalReason::Unmanaged),
             TargetStatus::ForeignDrifted(other) => {
                 Some(RefusalReason::ForeignDrifted(other.clone()))
-            }
+            },
             TargetStatus::NotMerged
             | TargetStatus::Current
             | TargetStatus::UpdatePending
@@ -619,8 +647,12 @@ pub fn merge_documents(
                 state,
                 TargetStatus::Drifted | TargetStatus::ForeignDrifted(_)
             );
-        let planned = match plan_document_body(document, target_path, &target, overwrite_collisions)
-        {
+        let planned = match plan_document_body(
+            document,
+            target_path,
+            &target,
+            overwrite_collisions,
+        ) {
             Ok(planned) => planned,
             Err(reason) => {
                 refusals.push(Refusal {
@@ -628,7 +660,7 @@ pub fn merge_documents(
                     reason,
                 });
                 continue;
-            }
+            },
         };
         if planned.skipped {
             report.warnings.extend(planned.warnings);
@@ -638,7 +670,9 @@ pub fn merge_documents(
         // body for the write/unchanged decision.
         let status = match &target {
             TargetRead::Absent => TargetStatus::NotMerged,
-            TargetRead::Body(body) => classify_target_body(body, &planned.new_body, change_id),
+            TargetRead::Body(body) => {
+                classify_target_body(body, &planned.new_body, change_id)
+            },
             TargetRead::NonFile => TargetStatus::NonFile,
         };
         if let TargetStatus::OwnedByOtherChange(previous_owner) = &status {
@@ -669,22 +703,26 @@ pub fn merge_documents(
     for (target_path, content) in writes {
         // Re-validate confinement immediately before effects so a
         // race that introduces a symlink cannot open an escape.
-        let absolute = match inspect_confined_target(project_root, &target_path)? {
-            ConfinedTarget::Absent { absolute } | ConfinedTarget::RealFile { absolute } => absolute,
-            ConfinedTarget::NonFile { absolute } => {
-                return Err(MergeError::io(
-                    &absolute,
-                    std::io::Error::new(
-                        std::io::ErrorKind::AlreadyExists,
-                        "non-file occupies target at write time",
-                    ),
-                ));
-            }
-        };
+        let absolute =
+            match inspect_confined_target(project_root, &target_path)? {
+                ConfinedTarget::Absent { absolute }
+                | ConfinedTarget::RealFile { absolute } => absolute,
+                ConfinedTarget::NonFile { absolute } => {
+                    return Err(MergeError::io(
+                        &absolute,
+                        std::io::Error::new(
+                            std::io::ErrorKind::AlreadyExists,
+                            "non-file occupies target at write time",
+                        ),
+                    ));
+                },
+            };
         if let Some(parent) = absolute.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| MergeError::io(parent, error))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| MergeError::io(parent, error))?;
         }
-        std::fs::write(&absolute, content).map_err(|error| MergeError::io(&absolute, error))?;
+        std::fs::write(&absolute, content)
+            .map_err(|error| MergeError::io(&absolute, error))?;
         report.written.push(target_path);
     }
     Ok(report)
@@ -723,10 +761,12 @@ fn detect_stale_targets(
     }
     let mut refusals = Vec::new();
     for dir in target_dirs.keys() {
-        let Some(abs_dir) = probe_confined_directory(project_root, dir)? else {
+        let Some(abs_dir) = probe_confined_directory(project_root, dir)?
+        else {
             continue;
         };
-        let entries = std::fs::read_dir(&abs_dir).map_err(|e| MergeError::io(&abs_dir, e))?;
+        let entries = std::fs::read_dir(&abs_dir)
+            .map_err(|e| MergeError::io(&abs_dir, e))?;
         for entry in entries {
             let entry = entry.map_err(|e| MergeError::io(&abs_dir, e))?;
             let file_type = entry
@@ -745,7 +785,8 @@ fn detect_stale_targets(
             } else {
                 format!("{dir}/{filename}")
             };
-            let content = std::fs::read_to_string(&path).map_err(|e| MergeError::io(&path, e))?;
+            let content = std::fs::read_to_string(&path)
+                .map_err(|e| MergeError::io(&path, e))?;
             let (header, _) = provenance::split_document(&content);
             let Some(header) = header else {
                 continue;
@@ -753,7 +794,8 @@ fn detect_stale_targets(
             if header.change_id != change_id {
                 continue;
             }
-            if let Some(&expected_target) = source_to_target.get(header.note.as_str())
+            if let Some(&expected_target) =
+                source_to_target.get(header.note.as_str())
                 && rel_path != expected_target
             {
                 refusals.push(Refusal {
@@ -814,7 +856,7 @@ fn inspect_confined_target(
                 return Ok(ConfinedTarget::Absent {
                     absolute: project_root.join(relative_path),
                 });
-            }
+            },
             Err(error) => return Err(MergeError::io(&absolute, error)),
             Ok(metadata) => metadata,
         };
@@ -855,7 +897,8 @@ fn probe_confined_directory(
     }
     match inspect_confined_target(project_root, relative)? {
         ConfinedTarget::Absent { .. } => Ok(None),
-        ConfinedTarget::RealFile { absolute } | ConfinedTarget::NonFile { absolute } => {
+        ConfinedTarget::RealFile { absolute }
+        | ConfinedTarget::NonFile { absolute } => {
             // For a directory probe the final component must be a real
             // directory. RealFile and non-dir NonFile are failures;
             // a real directory arrives as NonFile (not is_file).
@@ -875,7 +918,7 @@ fn probe_confined_directory(
                     ),
                 ))
             }
-        }
+        },
     }
 }
 

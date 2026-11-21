@@ -9,11 +9,12 @@ use crate::interchange::active::{
 use crate::interchange::archive::archive_fidelity_proof;
 use crate::interchange::archive::{import_archive_tree, write_archive_file};
 use crate::interchange::detect::{
-    ArchiveTree, DetectedTree, detect_trees, quarantine_path_for, rename_no_replace,
+    ArchiveTree, DetectedTree, detect_trees, quarantine_path_for,
+    rename_no_replace,
 };
 use crate::interchange::plan::{
-    ImportOptions, InterchangeError, InterchangePlan, InterchangePlanStructured, PlanEntry,
-    render_plan_text, resolve_notebook,
+    ImportOptions, InterchangeError, InterchangePlan,
+    InterchangePlanStructured, PlanEntry, render_plan_text, resolve_notebook,
 };
 
 /// Placeholder for the eventual `import` operation. Wired in tasks
@@ -25,9 +26,13 @@ pub async fn import(
     notebook: Option<&str>,
     root: &std::path::Path,
     options: ImportOptions,
-) -> Result<crate::operations::OperationOutcome, crate::operations::OperationError> {
+) -> Result<
+    crate::operations::OperationOutcome,
+    crate::operations::OperationError,
+> {
     let notebook_name = resolve_notebook(notebook)?;
-    let plan = build_import_plan(client, root, &notebook_name, &options).await?;
+    let plan =
+        build_import_plan(client, root, &notebook_name, &options).await?;
     let plan_text = render_plan_text(&plan, root);
 
     if plan.dry_run {
@@ -78,7 +83,8 @@ pub async fn build_import_plan(
                 if options.no_active {
                     entries.push(PlanEntry::Skip {
                         source_path: active.root.clone(),
-                        reason: "--no-active excludes active change ingestion".to_string(),
+                        reason: "--no-active excludes active change ingestion"
+                            .to_string(),
                     });
                     continue;
                 }
@@ -92,22 +98,26 @@ pub async fn build_import_plan(
                     change_id: active.change_id.clone(),
                     source_path: active.root.clone(),
                 });
-            }
+            },
             DetectedTree::Archive(archive) => {
                 if options.no_archives {
                     entries.push(PlanEntry::Skip {
                         source_path: archive.root.clone(),
-                        reason: "--no-archives excludes archive ingestion".to_string(),
+                        reason: "--no-archives excludes archive ingestion"
+                            .to_string(),
                     });
                     continue;
                 }
-                let target_path = format!("documentation/archives/{}.tar.zst", archive.change_id);
+                let target_path = format!(
+                    "documentation/archives/{}.tar.zst",
+                    archive.change_id
+                );
                 entries.push(PlanEntry::ArchiveWrite {
                     change_id: archive.change_id.clone(),
                     source_path: archive.root.clone(),
                     target_path: PathBuf::from(target_path),
                 });
-            }
+            },
         }
     }
 
@@ -115,8 +125,12 @@ pub async fn build_import_plan(
         entries
             .iter()
             .filter_map(|entry| match entry {
-                PlanEntry::ActiveWrite { source_path, .. } => Some(source_path.clone()),
-                PlanEntry::ArchiveWrite { source_path, .. } => Some(source_path.clone()),
+                PlanEntry::ActiveWrite { source_path, .. } => {
+                    Some(source_path.clone())
+                },
+                PlanEntry::ArchiveWrite { source_path, .. } => {
+                    Some(source_path.clone())
+                },
                 _ => None,
             })
             .collect()
@@ -154,12 +168,13 @@ pub async fn list_existing_change_ids(
     if !proposals_root.is_dir() {
         return Ok(Vec::new());
     }
-    let entries =
-        std::fs::read_dir(&proposals_root).map_err(|source| InterchangeError::ListingFailed {
+    let entries = std::fs::read_dir(&proposals_root).map_err(|source| {
+        InterchangeError::ListingFailed {
             notebook: notebook_name.to_string(),
             folder: "proposals".to_string(),
             message: source.to_string(),
-        })?;
+        }
+    })?;
     let mut ids: Vec<String> = Vec::new();
     for entry in entries.flatten() {
         let name = match entry.file_name().into_string() {
@@ -237,7 +252,10 @@ pub async fn execute_import_plan(
     plan: &InterchangePlan,
     root: &Path,
     notebook_name: &str,
-) -> Result<crate::operations::OperationOutcome, crate::operations::OperationError> {
+) -> Result<
+    crate::operations::OperationOutcome,
+    crate::operations::OperationError,
+> {
     let mut output = render_plan_text(plan, root);
     let mut written: Vec<String> = Vec::new();
     let deleted: Vec<String> = Vec::new();
@@ -254,12 +272,19 @@ pub async fn execute_import_plan(
             change_id,
             source_path,
         } = entry
-            && let Err(error) =
-                preflight_active_source(client, notebook_name, change_id, source_path).await
+            && let Err(error) = preflight_active_source(
+                client,
+                notebook_name,
+                change_id,
+                source_path,
+            )
+            .await
         {
             let msg = format!("{error}");
             preflight_failures.push(format!("active:{change_id}:{msg}"));
-            output.push_str(&format!("preflight failure: active {change_id}: {msg}\n"));
+            output.push_str(&format!(
+                "preflight failure: active {change_id}: {msg}\n"
+            ));
         }
     }
     // Phase 1: writes. Track active trees that need a proof
@@ -271,8 +296,10 @@ pub async fn execute_import_plan(
     // archive (not the in-memory bytes). Track the persisted
     // archive path per change id so the proof phase can read it
     // back from disk.
-    let mut archive_target_path_by_id: std::collections::HashMap<String, PathBuf> =
-        std::collections::HashMap::new();
+    let mut archive_target_path_by_id: std::collections::HashMap<
+        String,
+        PathBuf,
+    > = std::collections::HashMap::new();
 
     if preflight_failures.is_empty() {
         for entry in &plan.entries {
@@ -297,16 +324,22 @@ pub async fn execute_import_plan(
                                 source = source_path.display()
                             ));
                             if plan.delete_original {
-                                active_to_prove.push((change_id.clone(), source_path.clone()));
+                                active_to_prove.push((
+                                    change_id.clone(),
+                                    source_path.clone(),
+                                ));
                             }
-                        }
+                        },
                         Err(error) => {
                             let msg = format!("{error}");
-                            write_failures.push(format!("active:{change_id}:{msg}"));
-                            output.push_str(&format!("write failure: active {change_id}: {msg}\n"));
-                        }
+                            write_failures
+                                .push(format!("active:{change_id}:{msg}"));
+                            output.push_str(&format!(
+                                "write failure: active {change_id}: {msg}\n"
+                            ));
+                        },
                     }
-                }
+                },
                 PlanEntry::ArchiveWrite {
                     change_id,
                     source_path,
@@ -321,16 +354,22 @@ pub async fn execute_import_plan(
                     {
                         Ok(bytes) => bytes,
                         Err(error) => {
-                            write_failures.push(format!("archive:{change_id}:{error}"));
+                            write_failures
+                                .push(format!("archive:{change_id}:{error}"));
                             output.push_str(&format!(
                                 "write failure: archive {change_id}: {error}\n"
                             ));
                             continue;
-                        }
+                        },
                     };
-                    if let Err(error) = write_archive_file(change_id, target_path, &bytes) {
-                        write_failures.push(format!("archive:{change_id}:{error}"));
-                        output.push_str(&format!("write failure: archive {change_id}: {error}\n"));
+                    if let Err(error) =
+                        write_archive_file(change_id, target_path, &bytes)
+                    {
+                        write_failures
+                            .push(format!("archive:{change_id}:{error}"));
+                        output.push_str(&format!(
+                            "write failure: archive {change_id}: {error}\n"
+                        ));
                         continue;
                     }
                     written.push(format!("archive:{change_id}"));
@@ -340,13 +379,15 @@ pub async fn execute_import_plan(
                         size = bytes.len()
                     ));
                     if plan.delete_original {
-                        archive_to_delete.push((change_id.clone(), source_path.clone()));
-                        archive_target_path_by_id.insert(change_id.clone(), target_path.clone());
+                        archive_to_delete
+                            .push((change_id.clone(), source_path.clone()));
+                        archive_target_path_by_id
+                            .insert(change_id.clone(), target_path.clone());
                     }
-                }
+                },
                 PlanEntry::Refusal { .. } | PlanEntry::Skip { .. } => {
                     // Already excluded by the gate before we got here.
-                }
+                },
             }
         }
     } else {
@@ -369,7 +410,9 @@ pub async fn execute_import_plan(
         // whose write succeeded).
         let pending: Vec<(String, PathBuf, &'static str)> = active_to_prove
             .iter()
-            .map(|(change_id, source_path)| (change_id.clone(), source_path.clone(), "active"))
+            .map(|(change_id, source_path)| {
+                (change_id.clone(), source_path.clone(), "active")
+            })
             .chain(archive_to_delete.iter().map(|(change_id, source_path)| {
                 (change_id.clone(), source_path.clone(), "archive")
             }))
@@ -388,7 +431,7 @@ pub async fn execute_import_plan(
                     ));
                     staging_failed = true;
                     break;
-                }
+                },
             };
             // R7 fourth re-review 2026-07-25: use `rename_no_replace`
             // (or its refusal fallback on non-Linux) so an existing
@@ -399,8 +442,13 @@ pub async fn execute_import_plan(
             // EEXIST is the residual `Reserved`-style protection.
             match rename_no_replace(source_path, &quarantine) {
                 Ok(()) => {
-                    staged.push((change_id.clone(), source_path.clone(), quarantine, kind));
-                }
+                    staged.push((
+                        change_id.clone(),
+                        source_path.clone(),
+                        quarantine,
+                        kind,
+                    ));
+                },
                 Err(error) => {
                     write_failures.push(format!(
                         "delete-source:{kind}:{change_id}:quarantine-rename:{error}"
@@ -412,7 +460,7 @@ pub async fn execute_import_plan(
                     ));
                     staging_failed = true;
                     break;
-                }
+                },
             }
         }
         if staging_failed {
@@ -420,13 +468,15 @@ pub async fn execute_import_plan(
             // restoration errors are surfaced (not silently dropped)
             // so the operator knows if any source remained
             // quarantined because rollback failed.
-            for (change_id, original_path, quarantine_path, kind) in staged.iter().rev() {
+            for (change_id, original_path, quarantine_path, kind) in
+                staged.iter().rev()
+            {
                 match std::fs::rename(quarantine_path, original_path) {
                     Ok(()) => {
                         output.push_str(&format!(
                             "restored {kind} {change_id} from quarantine after staging failure\n"
                         ));
-                    }
+                    },
                     Err(error) => {
                         rollback_failures.push(format!(
                             "{kind}:{change_id}:cannot restore from quarantine {quarantine}: {error}",
@@ -436,7 +486,7 @@ pub async fn execute_import_plan(
                             "RESTORE FAILURE: {kind} {change_id}: source remains at quarantine {}: {error}\n",
                             quarantine_path.display()
                         ));
-                    }
+                    },
                 }
             }
         }
@@ -446,7 +496,8 @@ pub async fn execute_import_plan(
     // round-trip runs against the quarantine; the archive fidelity
     // proof also runs against the quarantine (and the persisted
     // archive on disk). Both gates must be clean.
-    let mut proofs_clean = write_failures.is_empty() && rollback_failures.is_empty();
+    let mut proofs_clean =
+        write_failures.is_empty() && rollback_failures.is_empty();
     if proofs_clean && plan.delete_original && !staged.is_empty() {
         let scratch = std::env::temp_dir().join(format!(
             "nbspec-roundtrip-{}-{}",
@@ -458,44 +509,66 @@ pub async fn execute_import_plan(
         ));
         for (change_id, _original_path, quarantine_path, kind) in &staged {
             if *kind == "active" {
-                match run_round_trip(client, change_id, quarantine_path, &scratch, notebook_name)
-                    .await
+                match run_round_trip(
+                    client,
+                    change_id,
+                    quarantine_path,
+                    &scratch,
+                    notebook_name,
+                )
+                .await
                 {
-                    Ok(proof) if proof.clean => {}
+                    Ok(proof) if proof.clean => {},
                     Ok(proof) => {
                         proofs_clean = false;
                         for divergence in &proof.divergences {
-                            proof_divergences.push(format!("{change_id}:{divergence}"));
+                            proof_divergences
+                                .push(format!("{change_id}:{divergence}"));
                             output.push_str(&format!(
                                 "round-trip refusal: {change_id}:{divergence}\n"
                             ));
                         }
-                    }
+                    },
                     Err(error) => {
                         proofs_clean = false;
-                        proof_divergences.push(format!("{change_id}:round-trip:{error}"));
-                        output.push_str(&format!("round-trip refusal: {change_id}:{error}\n"));
-                    }
+                        proof_divergences
+                            .push(format!("{change_id}:round-trip:{error}"));
+                        output.push_str(&format!(
+                            "round-trip refusal: {change_id}:{error}\n"
+                        ));
+                    },
                 }
-            } else if let Some(archive_path) = archive_target_path_by_id.get(change_id) {
-                match archive_fidelity_proof(change_id, quarantine_path, archive_path) {
-                    Ok(()) => {}
-                    Err(InterchangeError::ArchiveFidelity { divergences, .. }) => {
+            } else if let Some(archive_path) =
+                archive_target_path_by_id.get(change_id)
+            {
+                match archive_fidelity_proof(
+                    change_id,
+                    quarantine_path,
+                    archive_path,
+                ) {
+                    Ok(()) => {},
+                    Err(InterchangeError::ArchiveFidelity {
+                        divergences,
+                        ..
+                    }) => {
                         proofs_clean = false;
                         for divergence in &divergences {
-                            proof_divergences.push(format!("{change_id}:archive:{divergence}"));
+                            proof_divergences.push(format!(
+                                "{change_id}:archive:{divergence}"
+                            ));
                             output.push_str(&format!(
                                 "archive fidelity proof refused: {change_id}:{divergence}\n"
                             ));
                         }
-                    }
+                    },
                     Err(other) => {
                         proofs_clean = false;
-                        proof_divergences.push(format!("{change_id}:archive:{other}"));
+                        proof_divergences
+                            .push(format!("{change_id}:archive:{other}"));
                         output.push_str(&format!(
                             "archive fidelity proof refused: {change_id}:{other}\n"
                         ));
-                    }
+                    },
                 }
             } else {
                 proofs_clean = false;
@@ -531,13 +604,15 @@ pub async fn execute_import_plan(
                 ));
             }
         } else {
-            for (change_id, original_path, quarantine_path, kind) in staged.iter().rev() {
+            for (change_id, original_path, quarantine_path, kind) in
+                staged.iter().rev()
+            {
                 match std::fs::rename(quarantine_path, original_path) {
                     Ok(()) => {
                         output.push_str(&format!(
                             "restored {kind} {change_id} from quarantine after dirty proof\n"
                         ));
-                    }
+                    },
                     Err(error) => {
                         rollback_failures.push(format!(
                             "{kind}:{change_id}:cannot restore from quarantine {quarantine}: {error}",
@@ -547,7 +622,7 @@ pub async fn execute_import_plan(
                             "RESTORE FAILURE: {kind} {change_id}: source remains at quarantine {}: {error}\n",
                             quarantine_path.display()
                         ));
-                    }
+                    },
                 }
             }
         }
@@ -578,11 +653,12 @@ pub async fn execute_import_plan(
     // structured output, mirroring `from_plan`. MCP Owner bounded
     // correction #4: previously only the dry-run path emitted
     // typed entries; the live execution path is now aligned.
-    let typed_entries: Value = InterchangePlanStructured::from_plan(plan.clone())
-        .structured
-        .get("entries")
-        .cloned()
-        .unwrap_or_else(|| Value::Array(vec![]));
+    let typed_entries: Value =
+        InterchangePlanStructured::from_plan(plan.clone())
+            .structured
+            .get("entries")
+            .cloned()
+            .unwrap_or_else(|| Value::Array(vec![]));
     let structured = serde_json::json!({
         "notebook": plan.notebook,
         "entries": typed_entries,
@@ -596,7 +672,8 @@ pub async fn execute_import_plan(
         "retained_quarantines": retained_serialized,
     });
     if !write_failures.is_empty() || !rollback_failures.is_empty() {
-        let outcome = crate::operations::OperationOutcome::new(output, structured);
+        let outcome =
+            crate::operations::OperationOutcome::new(output, structured);
         return Err(crate::operations::OperationError::ImportFailed {
             outcome: Box::new(outcome),
             failures: write_failures.len() + rollback_failures.len(),

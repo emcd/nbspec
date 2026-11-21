@@ -3,7 +3,9 @@
 //! while the namespace survives.
 
 use super::harness::Fixture;
-use super::lifecycle::{CHANGE_ID, SPECIFICATION, nbspec, stderr_of, stdout_of};
+use super::lifecycle::{
+    CHANGE_ID, SPECIFICATION, nbspec, stderr_of, stdout_of,
+};
 
 /// Merge with `archives = false` materializes, warns loudly, and
 /// retains the namespace as the only record: no tarball, no
@@ -23,11 +25,14 @@ fn archives_disabled_merge_warns_and_retains_namespace() {
 
     let created = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
     assert!(created.status.success(), "{}", stderr_of(&created));
-    let change_directory = fixture.notebook_path().join("proposals").join(CHANGE_ID);
-    let mut proposal = std::fs::read_to_string(change_directory.join("proposal.md")).unwrap();
+    let change_directory =
+        fixture.notebook_path().join("proposals").join(CHANGE_ID);
+    let mut proposal =
+        std::fs::read_to_string(change_directory.join("proposal.md")).unwrap();
     proposal.push_str("\n## Why\n\nProve the archives=false path.\n");
     std::fs::write(change_directory.join("proposal.md"), proposal).unwrap();
-    let specification_note = change_directory.join("specifications/user-auth.md");
+    let specification_note =
+        change_directory.join("specifications/user-auth.md");
     std::fs::write(&specification_note, SPECIFICATION).unwrap();
     let approved = nbspec(
         &fixture,
@@ -47,7 +52,10 @@ fn archives_disabled_merge_warns_and_retains_namespace() {
     let merged = nbspec(&fixture, &["merge", CHANGE_ID]);
     assert!(merged.status.success(), "{}", stderr_of(&merged));
     let merge_output = stdout_of(&merged);
-    assert!(merge_output.contains("wrote documentation/specifications/user-auth.md"));
+    assert!(
+        merge_output
+            .contains("wrote documentation/specifications/user-auth.md")
+    );
     assert!(
         merge_output.contains("archives disabled"),
         "merge warns loudly: {merge_output}"
@@ -76,7 +84,8 @@ fn archives_disabled_merge_warns_and_retains_namespace() {
     let remerged = nbspec(&fixture, &["merge", CHANGE_ID]);
     assert!(remerged.status.success(), "{}", stderr_of(&remerged));
     assert!(
-        stdout_of(&remerged).contains("unchanged documentation/specifications/user-auth.md"),
+        stdout_of(&remerged)
+            .contains("unchanged documentation/specifications/user-auth.md"),
         "{}",
         stdout_of(&remerged)
     );
@@ -136,10 +145,12 @@ fn set_status(fixture: &Fixture, change_id: &str, status: &str) {
 
 fn author_and_approve(fixture: &Fixture, change_id: &str) {
     let dir = fixture.notebook_path().join("proposals").join(change_id);
-    let mut proposal = std::fs::read_to_string(dir.join("proposal.md")).unwrap();
+    let mut proposal =
+        std::fs::read_to_string(dir.join("proposal.md")).unwrap();
     proposal.push_str("\n## Why\n\nProve retirement.\n");
     std::fs::write(dir.join("proposal.md"), proposal).unwrap();
-    std::fs::write(dir.join("specifications/user-auth.md"), SPECIFICATION).unwrap();
+    std::fs::write(dir.join("specifications/user-auth.md"), SPECIFICATION)
+        .unwrap();
     let approved = nbspec(
         fixture,
         &[
@@ -182,9 +193,14 @@ fn restore_namespace_from_tarball(fixture: &Fixture, change_id: &str) {
         .join(format!("{change_id}.tar.zst"));
     let bytes = std::fs::read(&tarball).unwrap();
     let scratch = fixture.project_root().join("restore-scratch");
-    nbspec::archives::extract_archive(&bytes, &scratch, Some(&format!("{change_id}/namespace/")))
-        .unwrap();
-    let destination = fixture.notebook_path().join("proposals").join(change_id);
+    nbspec::archives::extract_archive(
+        &bytes,
+        &scratch,
+        Some(&format!("{change_id}/namespace/")),
+    )
+    .unwrap();
+    let destination =
+        fixture.notebook_path().join("proposals").join(change_id);
     copy_dir_recursive(&scratch, &destination);
     std::fs::remove_dir_all(&scratch).ok();
 }
@@ -195,7 +211,8 @@ fn restore_namespace_from_tarball(fixture: &Fixture, change_id: &str) {
 fn dead_superseded_refuses_with_and_without_force() {
     for status in ["superseded", "abandoned"] {
         let fixture = Fixture::new();
-        let created = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
+        let created =
+            nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
         assert!(created.status.success(), "{}", stderr_of(&created));
         set_status(&fixture, CHANGE_ID, status);
         for extra in [&[][..], &["--force"][..]] {
@@ -415,7 +432,8 @@ fn import_refuses_tarball_claimed_id() {
         "# [ ] Tasks\n- [ ] todo\n",
     )
     .unwrap();
-    let imported = nbspec(&fixture, &["import", &source.display().to_string()]);
+    let imported =
+        nbspec(&fixture, &["import", &source.display().to_string()]);
     assert_eq!(imported.status.code(), Some(1));
     let combined = format!("{}{}", stdout_of(&imported), stderr_of(&imported));
     assert!(

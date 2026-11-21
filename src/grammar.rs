@@ -97,7 +97,9 @@ pub fn parse_target_blocks(content: &str) -> Vec<TargetBlock> {
                 cursor += 1;
             }
             let mut end_index = cursor;
-            while end_index > header_index + 1 && lines[end_index - 1].trim().is_empty() {
+            while end_index > header_index + 1
+                && lines[end_index - 1].trim().is_empty()
+            {
                 end_index -= 1;
             }
             let body = &lines[header_index + 1..cursor];
@@ -110,10 +112,14 @@ pub fn parse_target_blocks(content: &str) -> Vec<TargetBlock> {
             blocks.push(TargetBlock {
                 name,
                 raw,
-                scenarios: parse_scenarios(body, &mask[header_index + 1..cursor], header_index + 1)
-                    .into_iter()
-                    .map(|scenario| scenario.name)
-                    .collect(),
+                scenarios: parse_scenarios(
+                    body,
+                    &mask[header_index + 1..cursor],
+                    header_index + 1,
+                )
+                .into_iter()
+                .map(|scenario| scenario.name)
+                .collect(),
                 start_line: header_index + 1,
                 end_line: end_index,
             });
@@ -236,7 +242,8 @@ pub fn duplicate_section_kinds(content: &str) -> Vec<String> {
     let normalized = normalize_line_endings(content);
     let lines: Vec<&str> = normalized.split('\n').collect();
     let mask = mask_fenced_lines(&lines);
-    let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut counts: std::collections::HashMap<&str, usize> =
+        std::collections::HashMap::new();
     for section in split_top_level_sections(&lines, &mask) {
         if let Some(kind) = DELTA_KINDS
             .iter()
@@ -311,12 +318,22 @@ pub fn parse_delta_specification(content: &str) -> DeltaSpecification {
     DeltaSpecification {
         added: added_section
             .map(|section| {
-                parse_requirement_blocks(&lines, &mask, section.body_start, section.body_end)
+                parse_requirement_blocks(
+                    &lines,
+                    &mask,
+                    section.body_start,
+                    section.body_end,
+                )
             })
             .unwrap_or_default(),
         modified: modified_section
             .map(|section| {
-                parse_requirement_blocks(&lines, &mask, section.body_start, section.body_end)
+                parse_requirement_blocks(
+                    &lines,
+                    &mask,
+                    section.body_start,
+                    section.body_end,
+                )
             })
             .unwrap_or_default(),
         removed: removed_section
@@ -370,22 +387,24 @@ pub(crate) fn mask_fenced_lines(lines: &[&str]) -> Vec<bool> {
                 None => {
                     open = Some((ch, len));
                     mask[index] = true;
-                }
+                },
                 Some((open_ch, open_len))
-                    if ch == open_ch && len >= open_len && rest.trim().is_empty() =>
+                    if ch == open_ch
+                        && len >= open_len
+                        && rest.trim().is_empty() =>
                 {
                     mask[index] = true;
                     open = None;
-                }
+                },
                 _ => {
                     mask[index] = true;
-                }
+                },
             },
             None => {
                 if open.is_some() {
                     mask[index] = true;
                 }
-            }
+            },
         }
     }
     mask
@@ -457,7 +476,10 @@ fn header_name(line: &str, marker: &str, keyword: &str) -> Option<String> {
     Some(rest.trim().to_string())
 }
 
-fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option<&'a str> {
+fn strip_prefix_ignore_ascii_case<'a>(
+    text: &'a str,
+    prefix: &str,
+) -> Option<&'a str> {
     let head = text.get(..prefix.len())?;
     if head.eq_ignore_ascii_case(prefix) {
         Some(&text[prefix.len()..])
@@ -466,7 +488,10 @@ fn strip_prefix_ignore_ascii_case<'a>(text: &'a str, prefix: &str) -> Option<&'a
     }
 }
 
-fn split_top_level_sections(lines: &[&str], mask: &[bool]) -> Vec<SectionSpan> {
+fn split_top_level_sections(
+    lines: &[&str],
+    mask: &[bool],
+) -> Vec<SectionSpan> {
     let mut headers: Vec<(usize, String)> = Vec::new();
     for (index, line) in lines.iter().enumerate() {
         if mask[index] {
@@ -490,7 +515,10 @@ fn split_top_level_sections(lines: &[&str], mask: &[bool]) -> Vec<SectionSpan> {
     sections
 }
 
-fn find_section<'a>(sections: &'a [SectionSpan], title_lowercase: &str) -> Option<&'a SectionSpan> {
+fn find_section<'a>(
+    sections: &'a [SectionSpan],
+    title_lowercase: &str,
+) -> Option<&'a SectionSpan> {
     sections
         .iter()
         .find(|section| section.title_lowercase == title_lowercase)
@@ -536,7 +564,11 @@ fn parse_requirement_blocks(
         requirements.push(Requirement {
             name,
             text: requirement_text(body),
-            scenarios: parse_scenarios(body, &mask[body_start..cursor], body_start),
+            scenarios: parse_scenarios(
+                body,
+                &mask[body_start..cursor],
+                body_start,
+            ),
             raw,
             line: header_index + 1,
         });
@@ -563,7 +595,11 @@ fn requirement_text(body: &[&str]) -> Option<String> {
 /// numbers relative to the full line sequence (`body_start` is 0-indexed).
 /// `mask` parallels `body`: fenced scenario headers never open blocks,
 /// but fenced lines inside a scenario stay part of its body verbatim.
-fn parse_scenarios(body: &[&str], mask: &[bool], body_start: usize) -> Vec<Scenario> {
+fn parse_scenarios(
+    body: &[&str],
+    mask: &[bool],
+    body_start: usize,
+) -> Vec<Scenario> {
     let mut scenarios = Vec::new();
     let mut cursor = 0;
     while cursor < body.len() {
@@ -577,10 +613,13 @@ fn parse_scenarios(body: &[&str], mask: &[bool], body_start: usize) -> Vec<Scena
         let header_index = cursor;
         cursor += 1;
         let content_start = cursor;
-        while cursor < body.len() && (mask[cursor] || !ends_scenario_body(body[cursor])) {
+        while cursor < body.len()
+            && (mask[cursor] || !ends_scenario_body(body[cursor]))
+        {
             cursor += 1;
         }
-        let content = body[content_start..cursor].join("\n").trim().to_string();
+        let content =
+            body[content_start..cursor].join("\n").trim().to_string();
         scenarios.push(Scenario {
             name,
             body: content,
@@ -600,7 +639,8 @@ fn ends_scenario_body(line: &str) -> bool {
         return true;
     }
     let hashes = line.bytes().take_while(|&byte| byte == b'#').count();
-    (1..=4).contains(&hashes) && line[hashes..].starts_with(char::is_whitespace)
+    (1..=4).contains(&hashes)
+        && line[hashes..].starts_with(char::is_whitespace)
 }
 
 /// Parses removed-requirement names: requirement headers, or bullet items of

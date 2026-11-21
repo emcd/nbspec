@@ -3,8 +3,9 @@ use serde_json::{Value, json};
 
 use crate::rendering::{aggregate_content_hash, render_documents};
 use crate::reviews::{
-    KNOWN_GATES, VERDICTS_FOLDER, VerdictError, VerdictRecord, VerdictValue, read_verdicts,
-    render_verdict_note, resolve_reviewer, reviewer_positions, verdict_note_name,
+    KNOWN_GATES, VERDICTS_FOLDER, VerdictError, VerdictRecord, VerdictValue,
+    read_verdicts, render_verdict_note, resolve_reviewer, reviewer_positions,
+    verdict_note_name,
 };
 use crate::schemata::WorkflowSchema;
 
@@ -28,13 +29,13 @@ pub(crate) fn review_report(
                 format!("verdicts unreadable: {note}: {reason}\n"),
                 json!({ "parse_error": { "note": note, "reason": reason } }),
             );
-        }
+        },
         Err(VerdictError::Io { path, source }) => {
             return (
                 format!("verdicts unreadable: {path}: {source}\n"),
                 json!({ "io_error": format!("{path}: {source}") }),
             );
-        }
+        },
     };
     let documents = match render_documents(change_directory, folder, schema) {
         Ok(documents) => documents,
@@ -43,7 +44,7 @@ pub(crate) fn review_report(
                 format!("cannot compute review status: {error}\n"),
                 json!({ "render_error": error.to_string() }),
             );
-        }
+        },
     };
     let current_hash = aggregate_content_hash(&documents);
     let mut text = String::new();
@@ -116,7 +117,8 @@ pub async fn review(
             known: KNOWN_GATES.join(", "),
         });
     }
-    let reviewer = resolve_reviewer(reviewer).ok_or(OperationError::ReviewerUnresolved)?;
+    let reviewer = resolve_reviewer(reviewer)
+        .ok_or(OperationError::ReviewerUnresolved)?;
     let comment = comment.map(str::trim).filter(|text| !text.is_empty());
     if verdict == VerdictValue::Revise && comment.is_none() {
         return Err(OperationError::ReviseCommentMissing);
@@ -149,7 +151,8 @@ pub async fn review(
     // separate `ensure_folder` checkpoint — so a failed verdict
     // transaction rolls the parent root back too and leaves no
     // durable partial folder or checkpoint.
-    let verdicts_missing = !folder_exists(client, &verdicts_folder, notebook).await;
+    let verdicts_missing =
+        !folder_exists(client, &verdicts_folder, notebook).await;
     let mut tx = client.transaction(notebook).await?;
     if verdicts_missing {
         tx.add_folder(&verdicts_folder)?;

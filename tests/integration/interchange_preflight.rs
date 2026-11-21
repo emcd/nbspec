@@ -32,11 +32,14 @@ fn preflight_prevents_partial_writes_with_mixed_valid_malformed_and_archive() {
     )
     .unwrap();
     // Archive: legacy
-    let archive_tree = source_root.join("openspec/changes/archive").join("legacy");
+    let archive_tree =
+        source_root.join("openspec/changes/archive").join("legacy");
     std::fs::create_dir_all(&archive_tree).unwrap();
-    std::fs::write(archive_tree.join("proposal.md"), "# legacy\n\nbody\n").unwrap();
+    std::fs::write(archive_tree.join("proposal.md"), "# legacy\n\nbody\n")
+        .unwrap();
 
-    let imported = nbspec(&fixture, &["import", &source_root.display().to_string()]);
+    let imported =
+        nbspec(&fixture, &["import", &source_root.display().to_string()]);
     assert!(
         !imported.status.success(),
         "mixed valid+malformed+archive must fail preflight; stderr: {} stdout: {}",
@@ -80,7 +83,8 @@ fn preflight_prevents_partial_writes_with_colliding_active_and_archive() {
     std::fs::create_dir_all(&existing_path).unwrap();
     std::fs::write(existing_path.join("proposal.md"), "# existing\n").unwrap();
 
-    let source_root = fixture.project_root().join("scratch-colliding-preflight");
+    let source_root =
+        fixture.project_root().join("scratch-colliding-preflight");
     // Colliding active: same change_id as existing
     std::fs::create_dir_all(source_root.join("existing")).unwrap();
     std::fs::write(
@@ -89,11 +93,14 @@ fn preflight_prevents_partial_writes_with_colliding_active_and_archive() {
     )
     .unwrap();
     // Archive: legacy2
-    let archive_tree = source_root.join("openspec/changes/archive").join("legacy2");
+    let archive_tree =
+        source_root.join("openspec/changes/archive").join("legacy2");
     std::fs::create_dir_all(&archive_tree).unwrap();
-    std::fs::write(archive_tree.join("proposal.md"), "# legacy2\n\nbody\n").unwrap();
+    std::fs::write(archive_tree.join("proposal.md"), "# legacy2\n\nbody\n")
+        .unwrap();
 
-    let imported = nbspec(&fixture, &["import", &source_root.display().to_string()]);
+    let imported =
+        nbspec(&fixture, &["import", &source_root.display().to_string()]);
     assert!(
         !imported.status.success(),
         "colliding active + archive must fail preflight; stderr: {} stdout: {}",
@@ -101,7 +108,8 @@ fn preflight_prevents_partial_writes_with_colliding_active_and_archive() {
         stdout_of(&imported)
     );
     // Existing should remain untouched (no new commit for colliding)
-    let existing_content = std::fs::read_to_string(existing_path.join("proposal.md")).unwrap();
+    let existing_content =
+        std::fs::read_to_string(existing_path.join("proposal.md")).unwrap();
     assert_eq!(existing_content, "# existing\n");
     // Archive must NOT be written.
     let archive = fixture
@@ -121,7 +129,8 @@ fn preflight_prevents_partial_writes_with_colliding_active_and_archive() {
 fn preflight_prevents_partial_writes_with_later_spec_duplicate_title() {
     let fixture = Fixture::new();
 
-    let source_root = fixture.project_root().join("scratch-later-spec-preflight");
+    let source_root =
+        fixture.project_root().join("scratch-later-spec-preflight");
     // Valid active: add-foo
     std::fs::create_dir_all(source_root.join("add-foo")).unwrap();
     std::fs::write(
@@ -144,11 +153,14 @@ fn preflight_prevents_partial_writes_with_later_spec_duplicate_title() {
     )
     .unwrap();
     // Archive: legacy3
-    let archive_tree = source_root.join("openspec/changes/archive").join("legacy3");
+    let archive_tree =
+        source_root.join("openspec/changes/archive").join("legacy3");
     std::fs::create_dir_all(&archive_tree).unwrap();
-    std::fs::write(archive_tree.join("proposal.md"), "# legacy3\n\nbody\n").unwrap();
+    std::fs::write(archive_tree.join("proposal.md"), "# legacy3\n\nbody\n")
+        .unwrap();
 
-    let imported = nbspec(&fixture, &["import", &source_root.display().to_string()]);
+    let imported =
+        nbspec(&fixture, &["import", &source_root.display().to_string()]);
     assert!(
         !imported.status.success(),
         "later spec duplicate must fail preflight; stderr: {} stdout: {}",
@@ -204,7 +216,8 @@ fn import_strips_leading_blank_lines_before_h1() {
     )
     .unwrap();
 
-    let imported = nbspec(&fixture, &["import", &source_root.display().to_string()]);
+    let imported =
+        nbspec(&fixture, &["import", &source_root.display().to_string()]);
     assert!(
         imported.status.success(),
         "spec with leading blank H1 should succeed; stderr: {} stdout: {}",
@@ -212,7 +225,8 @@ fn import_strips_leading_blank_lines_before_h1() {
         stdout_of(&imported)
     );
     let notebook_path = fixture.notebook_path();
-    let spec_path = notebook_path.join("proposals/add-foo/specifications/cap.md");
+    let spec_path =
+        notebook_path.join("proposals/add-foo/specifications/cap.md");
     assert!(spec_path.is_file(), "spec should be imported");
     let content = std::fs::read_to_string(&spec_path).unwrap();
     // The H1 should be stripped from the body, leaving only one H1 (the title).
@@ -245,7 +259,8 @@ fn import_preserves_indented_hash_content() {
     )
     .unwrap();
 
-    let imported = nbspec(&fixture, &["import", &source_root.display().to_string()]);
+    let imported =
+        nbspec(&fixture, &["import", &source_root.display().to_string()]);
     assert!(
         imported.status.success(),
         "indented hash content should succeed; stderr: {} stdout: {}",

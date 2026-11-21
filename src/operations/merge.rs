@@ -4,23 +4,29 @@ use nb_api::{NbClient, NoteTarget};
 use serde_json::{Value, json};
 
 use crate::archives::{ArchiveEntry, build_archive, gitattributes_covers_lfs};
-use crate::changes::{ChangeStatus, META_NOTE, WORK_NOTE, change_folder, validate_change_id};
+use crate::changes::{
+    ChangeStatus, META_NOTE, WORK_NOTE, change_folder, validate_change_id,
+};
 use crate::configuration::load_configuration;
-use crate::interchange::archive::{commit_archive_staging, stage_archive_file};
+use crate::interchange::archive::{
+    commit_archive_staging, stage_archive_file,
+};
 use crate::merging::merge_documents;
 use crate::rendering::aggregate_content_hash;
 use crate::retirement::{
-    ArchiveOccupant, NamespaceSnapshot, capture_notebook_head, capture_snapshot, namespace_entries,
-    read_archive_occupant, refuse_invalid_occupant, validate_archive_identity,
+    ArchiveOccupant, NamespaceSnapshot, capture_notebook_head,
+    capture_snapshot, namespace_entries, read_archive_occupant,
+    refuse_invalid_occupant, validate_archive_identity,
     verify_persisted_archive, verify_snapshot,
 };
 use crate::reviews::{
-    MERGE_GATE, VERDICTS_FOLDER, VerdictError, evaluate_gate, gate_refusal_state, read_verdicts,
-    reviewer_positions,
+    MERGE_GATE, VERDICTS_FOLDER, VerdictError, evaluate_gate,
+    gate_refusal_state, read_verdicts, reviewer_positions,
 };
 
 use super::context::{
-    ChangeContext, load_change_context, project_root, read_metadata, resolve_notebook_name,
+    ChangeContext, load_change_context, project_root, read_metadata,
+    resolve_notebook_name,
 };
 use super::helpers::read_work_note;
 use super::{OperationError, OperationOutcome, OperationResult};
@@ -76,11 +82,14 @@ pub async fn merge(
     if !configuration.archives {
         let context = load_change_context(client, notebook, change_id).await?;
         refuse_dead_status(read_metadata(&context.change_directory)?.status)?;
-        let (mut output, mut structured) = materialize(&context, change_id, force, None)?;
+        let (mut output, mut structured) =
+            materialize(&context, change_id, force, None)?;
         let retention_warning = "warning: archives disabled; the namespace is left in place as \
             the only record; retirement skipped\n";
         output.push_str(retention_warning);
-        if let Some(warnings) = structured.get_mut("warnings").and_then(Value::as_array_mut) {
+        if let Some(warnings) =
+            structured.get_mut("warnings").and_then(Value::as_array_mut)
+        {
             warnings.push(json!(retention_warning.trim()));
         }
         structured["archived"] = Value::Null;
@@ -96,7 +105,7 @@ pub async fn merge(
         ArchiveOccupant::File(bytes) => Some(bytes),
         ArchiveOccupant::Invalid(detail) => {
             return Err(refuse_invalid_occupant(&tarball_relative, &detail));
-        }
+        },
     };
 
     if !change_directory.is_dir() {
@@ -105,9 +114,11 @@ pub async fn merge(
                 notebook: notebook_name,
                 change_id: change_id.to_string(),
             }),
-            Some(bytes) => match validate_archive_identity(&bytes, change_id) {
-                Ok(()) => Ok(already_merged(change_id, &tarball_relative)),
-                Err(error) => Err(error),
+            Some(bytes) => {
+                match validate_archive_identity(&bytes, change_id) {
+                    Ok(()) => Ok(already_merged(change_id, &tarball_relative)),
+                    Err(error) => Err(error),
+                }
             },
         };
     }
@@ -184,7 +195,8 @@ pub async fn merge(
         });
     }
 
-    let (mut output, mut structured) = materialize(&context, change_id, force, Some(&snapshot))?;
+    let (mut output, mut structured) =
+        materialize(&context, change_id, force, Some(&snapshot))?;
 
     // Private test seam for the deterministic post-materialization
     // drift regression. Compiled ONLY with the non-default
@@ -197,16 +209,24 @@ pub async fn merge(
     #[cfg(feature = "test-support")]
     {
         use std::path::Component;
-        if let Ok(marker) = std::env::var("NBSPEC_TEST_DRIFT_AFTER_MATERIALIZE") {
+        if let Ok(marker) =
+            std::env::var("NBSPEC_TEST_DRIFT_AFTER_MATERIALIZE")
+        {
             let relative = Path::new(&marker);
             if relative.is_absolute()
-                || relative
-                    .components()
-                    .any(|component| matches!(component, Component::ParentDir | Component::RootDir))
+                || relative.components().any(|component| {
+                    matches!(
+                        component,
+                        Component::ParentDir | Component::RootDir
+                    )
+                })
             {
                 return Err(OperationError::RetirementFailed {
-                    phases: "materialization complete; archive not published".to_string(),
-                    guidance: format!("test seam path escapes the namespace: {marker}; refusing"),
+                    phases: "materialization complete; archive not published"
+                        .to_string(),
+                    guidance: format!(
+                        "test seam path escapes the namespace: {marker}; refusing"
+                    ),
                 });
             }
             let drift_path = change_directory.join(relative);
@@ -222,15 +242,21 @@ pub async fn merge(
             }
             let mut existing = match std::fs::read(&drift_path) {
                 Ok(bytes) => bytes,
-                Err(source) if source.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+                Err(source)
+                    if source.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    Vec::new()
+                },
                 Err(source) => {
                     return Err(OperationError::RetirementFailed {
-                        phases: "materialization complete; archive not published".to_string(),
+                        phases:
+                            "materialization complete; archive not published"
+                                .to_string(),
                         guidance: format!(
                             "test seam setup failed ({source}); re-run merge without the seam"
                         ),
                     });
-                }
+                },
             };
             existing.extend_from_slice(b"\nUnarchived test drift.\n");
             std::fs::write(&drift_path, existing).map_err(|source| {
@@ -254,7 +280,8 @@ pub async fn merge(
     if let Err(error) = verify_snapshot(&change_directory, &snapshot) {
         let detail = error.to_string();
         return Err(OperationError::RetirementFailed {
-            phases: "materialization complete; archive not published".to_string(),
+            phases: "materialization complete; archive not published"
+                .to_string(),
             guidance: format!(
                 "{detail}; repository outputs may already exist; resolve the drift and re-run \
                  merge"
@@ -313,15 +340,16 @@ fn materialize(
     let aggregate = aggregate_content_hash(&context.documents);
     let review_gate_state = match read_verdicts(&context.change_directory) {
         Ok(verdicts) => {
-            let positions = reviewer_positions(&verdicts, MERGE_GATE, &aggregate);
+            let positions =
+                reviewer_positions(&verdicts, MERGE_GATE, &aggregate);
             gate_refusal_state(&evaluate_gate(&positions), &aggregate)
-        }
+        },
         // An unparseable verdict is a plan-phase POLICY refusal
         // (force-overridable), not a hard error: it blocks the gate
         // while naming the note, but never hides behind an abort.
         Err(VerdictError::Malformed { note, reason }) => {
             Some(format!("verdict unparseable: {note}: {reason}"))
-        }
+        },
         Err(error @ VerdictError::Io { .. }) => return Err(error.into()),
     };
     let report = merge_documents(
@@ -335,7 +363,8 @@ fn materialize(
 
     let mut output = String::new();
     if let Some(state) = &report.review_gate_overridden {
-        output.push_str(&format!("REVIEW GATE OVERRIDDEN (--force): {state}\n"));
+        output
+            .push_str(&format!("REVIEW GATE OVERRIDDEN (--force): {state}\n"));
     }
     for takeover in &report.drift_overrides {
         output.push_str(&format!(
@@ -425,9 +454,11 @@ fn build_full_archive_bytes(
         })
         .collect();
     let meta_path = context.change_directory.join(format!("{META_NOTE}.md"));
-    let meta_content = std::fs::read(&meta_path).map_err(|source| OperationError::NoteRead {
-        path: meta_path,
-        source,
+    let meta_content = std::fs::read(&meta_path).map_err(|source| {
+        OperationError::NoteRead {
+            path: meta_path,
+            source,
+        }
     })?;
     entries.push(ArchiveEntry {
         path: prefix.join(format!("{META_NOTE}.md")),
@@ -459,9 +490,11 @@ fn build_full_archive_bytes(
         names.sort();
         for name in names {
             let path = verdicts_directory.join(&name);
-            let content = std::fs::read(&path).map_err(|source| OperationError::NoteRead {
-                path: path.clone(),
-                source,
+            let content = std::fs::read(&path).map_err(|source| {
+                OperationError::NoteRead {
+                    path: path.clone(),
+                    source,
+                }
             })?;
             entries.push(ArchiveEntry {
                 path: prefix.join(VERDICTS_FOLDER).join(&name),
@@ -492,7 +525,7 @@ fn publish_archive(
     snapshot: &NamespaceSnapshot,
 ) -> Result<(), OperationError> {
     match read_archive_occupant(tarball_path)? {
-        ArchiveOccupant::Absent => {}
+        ArchiveOccupant::Absent => {},
         ArchiveOccupant::File(existing) if existing == *bytes => return Ok(()),
         ArchiveOccupant::File(_) => {
             return Err(OperationError::RetirementRefused {
@@ -504,10 +537,10 @@ fn publish_archive(
                     publish over it, or delete the namespace."
                     .to_string(),
             });
-        }
+        },
         ArchiveOccupant::Invalid(detail) => {
             return Err(refuse_invalid_occupant(tarball_path, &detail));
-        }
+        },
     }
     let staging = stage_archive_file(change_id, tarball_path, bytes)?;
     verify_persisted_archive(&staging.staging_file, change_id, snapshot)?;
@@ -536,7 +569,9 @@ async fn retire_namespace(
         .await
         .map_err(|source| OperationError::RetirementFailed {
             phases: phases.clone(),
-            guidance: format!("retirement not attempted ({source}); re-run merge to resume"),
+            guidance: format!(
+                "retirement not attempted ({source}); re-run merge to resume"
+            ),
         })?;
     transaction
         .assert_revision(expected_head)
@@ -556,7 +591,10 @@ async fn retire_namespace(
             ),
         })?;
     let outcome = transaction.commit().await;
-    match crate::retirement::classify_commit_outcome(outcome.map(|_| ()), &phases) {
+    match crate::retirement::classify_commit_outcome(
+        outcome.map(|_| ()),
+        &phases,
+    ) {
         Ok(()) => Ok(format!("retired {folder}/\n")),
         Err(error) => Err(error),
     }
@@ -568,19 +606,25 @@ fn refuse_dead_status(status: ChangeStatus) -> Result<(), OperationError> {
     match status {
         ChangeStatus::Superseded | ChangeStatus::Abandoned => {
             Err(OperationError::RetirementRefused {
-                reason: format!("change is {status}; dead changes do not merge"),
-                guidance: "A superseded or abandoned change cannot be merged; \
+                reason: format!(
+                    "change is {status}; dead changes do not merge"
+                ),
+                guidance:
+                    "A superseded or abandoned change cannot be merged; \
                     create a successor change instead."
-                    .to_string(),
+                        .to_string(),
             })
-        }
+        },
         _ => Ok(()),
     }
 }
 
 /// Reports an already-retired change: namespace absent, validated
 /// tarball present. No writes, no moves, no deletions.
-fn already_merged(change_id: &str, tarball_relative: &Path) -> OperationOutcome {
+fn already_merged(
+    change_id: &str,
+    tarball_relative: &Path,
+) -> OperationOutcome {
     OperationOutcome::new(
         format!(
             "Change {change_id} already merged (retired; tarball {tarball}).",

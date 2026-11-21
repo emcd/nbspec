@@ -114,20 +114,32 @@ impl InterchangePlanStructured {
                     change_id,
                     source_path,
                 } => {
-                    object.insert("kind".to_string(), Value::String("active-write".into()));
-                    object.insert("change_id".to_string(), Value::String(change_id.clone()));
+                    object.insert(
+                        "kind".to_string(),
+                        Value::String("active-write".into()),
+                    );
+                    object.insert(
+                        "change_id".to_string(),
+                        Value::String(change_id.clone()),
+                    );
                     object.insert(
                         "source_path".to_string(),
                         Value::String(source_path.display().to_string()),
                     );
-                }
+                },
                 PlanEntry::ArchiveWrite {
                     change_id,
                     source_path,
                     target_path,
                 } => {
-                    object.insert("kind".to_string(), Value::String("archive-write".into()));
-                    object.insert("change_id".to_string(), Value::String(change_id.clone()));
+                    object.insert(
+                        "kind".to_string(),
+                        Value::String("archive-write".into()),
+                    );
+                    object.insert(
+                        "change_id".to_string(),
+                        Value::String(change_id.clone()),
+                    );
                     object.insert(
                         "source_path".to_string(),
                         Value::String(source_path.display().to_string()),
@@ -136,29 +148,41 @@ impl InterchangePlanStructured {
                         "target_path".to_string(),
                         Value::String(target_path.display().to_string()),
                     );
-                }
+                },
                 PlanEntry::Refusal {
                     source_path,
                     message,
                 } => {
-                    object.insert("kind".to_string(), Value::String("refusal".into()));
+                    object.insert(
+                        "kind".to_string(),
+                        Value::String("refusal".into()),
+                    );
                     object.insert(
                         "source_path".to_string(),
                         Value::String(source_path.display().to_string()),
                     );
-                    object.insert("message".to_string(), Value::String(message.clone()));
-                }
+                    object.insert(
+                        "message".to_string(),
+                        Value::String(message.clone()),
+                    );
+                },
                 PlanEntry::Skip {
                     source_path,
                     reason,
                 } => {
-                    object.insert("kind".to_string(), Value::String("skip".into()));
+                    object.insert(
+                        "kind".to_string(),
+                        Value::String("skip".into()),
+                    );
                     object.insert(
                         "source_path".to_string(),
                         Value::String(source_path.display().to_string()),
                     );
-                    object.insert("reason".to_string(), Value::String(reason.clone()));
-                }
+                    object.insert(
+                        "reason".to_string(),
+                        Value::String(reason.clone()),
+                    );
+                },
             }
             entries.push(Value::Object(object));
         }
@@ -199,7 +223,7 @@ pub fn render_plan_text(plan: &InterchangePlan, root: &Path) -> String {
                     change_id = change_id,
                     source = source_path.display()
                 ));
-            }
+            },
             PlanEntry::ArchiveWrite {
                 change_id,
                 source_path,
@@ -211,7 +235,7 @@ pub fn render_plan_text(plan: &InterchangePlan, root: &Path) -> String {
                     source = source_path.display(),
                     target = target_path.display()
                 ));
-            }
+            },
             PlanEntry::Refusal {
                 source_path,
                 message,
@@ -221,7 +245,7 @@ pub fn render_plan_text(plan: &InterchangePlan, root: &Path) -> String {
                     source = source_path.display(),
                     message = message
                 ));
-            }
+            },
             PlanEntry::Skip {
                 source_path,
                 reason,
@@ -231,7 +255,7 @@ pub fn render_plan_text(plan: &InterchangePlan, root: &Path) -> String {
                     source = source_path.display(),
                     reason = reason
                 ));
-            }
+            },
         }
     }
     if !plan.pending_deletions.is_empty() {
@@ -347,13 +371,19 @@ pub enum InterchangeError {
     )]
     OverwriteRefused { change_id: String, target: String },
 
-    #[error("refusal: import aborted by {count} refusal(s); see plan output for details")]
+    #[error(
+        "refusal: import aborted by {count} refusal(s); see plan output for details"
+    )]
     ImportRefused { count: usize },
 
-    #[error("invalid change id {0:?}: expected kebab-case (lowercase alphanumerics and hyphens)")]
+    #[error(
+        "invalid change id {0:?}: expected kebab-case (lowercase alphanumerics and hyphens)"
+    )]
     InvalidChangeId(String),
 
-    #[error("notebook read failure for {selector} in notebook {notebook}: {message}")]
+    #[error(
+        "notebook read failure for {selector} in notebook {notebook}: {message}"
+    )]
     NotebookRead {
         notebook: String,
         selector: String,
@@ -369,7 +399,9 @@ pub enum InterchangeError {
     #[error("filesystem layout anomaly at {path}: {message}")]
     LayoutAnomaly { path: PathBuf, message: String },
 
-    #[error("notebook listing failure for {folder} in notebook {notebook}: {message}")]
+    #[error(
+        "notebook listing failure for {folder} in notebook {notebook}: {message}"
+    )]
     ListingFailed {
         notebook: String,
         folder: String,
@@ -388,22 +420,24 @@ impl From<InterchangeError> for crate::operations::OperationError {
         match error {
             InterchangeError::SourceRead { path, source } => {
                 crate::operations::OperationError::NoteRead { path, source }
-            }
+            },
             InterchangeError::TasksParse(error) => {
                 crate::operations::OperationError::WorkNote(error)
-            }
+            },
             InterchangeError::Collision(change_id) => {
                 crate::operations::OperationError::AlreadyExists(change_id)
-            }
+            },
             InterchangeError::OverwriteRefused { .. } => {
                 crate::operations::OperationError::NoteRead {
                     path: PathBuf::from("<export-refusal>"),
                     source: std::io::Error::other(error.to_string()),
                 }
-            }
-            InterchangeError::ImportRefused { .. } => crate::operations::OperationError::NoteRead {
-                path: PathBuf::from("<import-refusal>"),
-                source: std::io::Error::other(error.to_string()),
+            },
+            InterchangeError::ImportRefused { .. } => {
+                crate::operations::OperationError::NoteRead {
+                    path: PathBuf::from("<import-refusal>"),
+                    source: std::io::Error::other(error.to_string()),
+                }
             },
             InterchangeError::InvalidChangeId(_)
             | InterchangeError::NotebookRead { .. }
@@ -415,7 +449,7 @@ impl From<InterchangeError> for crate::operations::OperationError {
                     path: PathBuf::from("<interchange-refusal>"),
                     source: std::io::Error::other(error.to_string()),
                 }
-            }
+            },
         }
     }
 }
