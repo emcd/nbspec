@@ -8,6 +8,7 @@ mod interchange_preflight;
 mod lifecycle;
 #[cfg(unix)]
 mod mcp_client;
+#[cfg(unix)]
 mod mcp_lifecycle;
 #[cfg(unix)]
 mod retirement;
