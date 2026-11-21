@@ -27,7 +27,8 @@ use serde_json::json;
 
 #[test]
 fn create_args_round_trip_minimum_fields() {
-    let args: CreateArgs = serde_json::from_value(json!({"change_id": "add-foo"})).unwrap();
+    let args: CreateArgs =
+        serde_json::from_value(json!({"change_id": "add-foo"})).unwrap();
     assert_eq!(args.change_id, "add-foo");
     assert_eq!(args.title, None);
 }
@@ -39,7 +40,8 @@ fn create_args_rejects_unknown_field() {
         "title": "Add Foo",
         "schemars_field_that_does_not_exist": true,
     }));
-    let error = result.expect_err("deny_unknown_fields must reject unknown field");
+    let error =
+        result.expect_err("deny_unknown_fields must reject unknown field");
     assert!(
         error.to_string().contains("unknown field"),
         "unexpected error message: {error}"
@@ -48,7 +50,8 @@ fn create_args_rejects_unknown_field() {
 
 #[test]
 fn display_args_default_full_is_false() {
-    let args: DisplayArgs = serde_json::from_value(json!({"change_id": "add-foo"})).unwrap();
+    let args: DisplayArgs =
+        serde_json::from_value(json!({"change_id": "add-foo"})).unwrap();
     assert!(!args.full);
 }
 
@@ -66,13 +69,15 @@ fn validate_args_rejects_unknown_field() {
 
 #[test]
 fn render_args_default_diff_is_false() {
-    let args: RenderArgs = serde_json::from_value(json!({"change_id": "add-foo"})).unwrap();
+    let args: RenderArgs =
+        serde_json::from_value(json!({"change_id": "add-foo"})).unwrap();
     assert!(!args.diff);
 }
 
 #[test]
 fn merge_args_default_force_is_false() {
-    let args: MergeArgs = serde_json::from_value(json!({"change_id": "add-foo"})).unwrap();
+    let args: MergeArgs =
+        serde_json::from_value(json!({"change_id": "add-foo"})).unwrap();
     assert!(!args.force);
 }
 
@@ -120,7 +125,8 @@ fn parameters_wrapper_accepts_typed_args() {
 #[test]
 fn resolve_notebook_prefers_explicit_when_non_empty() {
     let (notebook, source) =
-        resolve_notebook(&Some("explicit-name".to_string())).expect("resolution must succeed");
+        resolve_notebook(&Some("explicit-name".to_string()))
+            .expect("resolution must succeed");
     assert_eq!(notebook, "explicit-name");
     assert_eq!(source, NotebookSource::Explicit);
 }
@@ -132,10 +138,10 @@ fn resolve_notebook_uses_git_derived_when_explicit_is_none() {
     // calls (`nb_api::derive_git_notebook_name`), so the assertion
     // holds for any checkout or worktree whose primary repository
     // directory name follows the same derivation rule.
-    let expected =
-        nb_api::derive_git_notebook_name().expect("test must run from within a git repository");
-    let (notebook, source) =
-        resolve_notebook(&None).expect("resolution must succeed in a git repo");
+    let expected = nb_api::derive_git_notebook_name()
+        .expect("test must run from within a git repository");
+    let (notebook, source) = resolve_notebook(&None)
+        .expect("resolution must succeed in a git repo");
     assert_eq!(
         notebook, expected,
         "git-derived name must equal nb_api's derivation"
@@ -160,8 +166,10 @@ fn resolve_notebook_treats_empty_as_explicit_not_as_absence() {
 
 #[test]
 fn review_args_gate_defaults_to_merge() {
-    let args: ReviewArgs =
-        serde_json::from_value(json!({"change_id": "add-foo", "verdict": "approve"})).unwrap();
+    let args: ReviewArgs = serde_json::from_value(
+        json!({"change_id": "add-foo", "verdict": "approve"}),
+    )
+    .unwrap();
     assert_eq!(args.gate, "merge");
     assert_eq!(args.comment, None);
     assert_eq!(args.reviewer, None);

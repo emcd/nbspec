@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use crate::changes::{META_NOTE, change_folder, parse_meta_note, validate_change_id};
+use crate::changes::{
+    META_NOTE, change_folder, parse_meta_note, validate_change_id,
+};
 use crate::configuration::{Configuration, load_configuration};
 use crate::rendering::render_documents;
 use crate::schemata::{WorkflowSchema, resolve_schema};
@@ -71,7 +73,9 @@ pub(crate) async fn load_change_context(
 /// client's configured default, which [`nb_api::NbClient`] does not
 /// expose; an effective-default getter in nb-api would allow deferring
 /// instead.
-pub(crate) fn resolve_notebook_name(notebook: Option<&str>) -> Result<String, OperationError> {
+pub(crate) fn resolve_notebook_name(
+    notebook: Option<&str>,
+) -> Result<String, OperationError> {
     notebook
         .map(String::from)
         .or_else(nb_api::derive_git_notebook_name)
@@ -81,7 +85,8 @@ pub(crate) fn resolve_notebook_name(notebook: Option<&str>) -> Result<String, Op
 /// Resolves the project repository root, falling back to the current
 /// directory outside a Git repository.
 pub(crate) fn project_root() -> PathBuf {
-    nb_api::git_rev_parse(&["--show-toplevel"]).unwrap_or_else(|| PathBuf::from("."))
+    nb_api::git_rev_parse(&["--show-toplevel"])
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Reads and parses a change's meta note from the notebook
@@ -106,7 +111,9 @@ pub(crate) fn render_destination(
     let base = configuration.scratch_directory.clone().unwrap_or_else(|| {
         directories::ProjectDirs::from("", "", "nbspec")
             .map(|dirs| dirs.cache_dir().join("renders"))
-            .unwrap_or_else(|| PathBuf::from(".auxiliary/temporary/nbspec/renders"))
+            .unwrap_or_else(|| {
+                PathBuf::from(".auxiliary/temporary/nbspec/renders")
+            })
     });
     base.join(notebook_name).join(change_id)
 }

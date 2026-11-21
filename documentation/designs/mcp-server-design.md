@@ -70,14 +70,14 @@ Each tool handler is a small function that takes a `&NbClient`
 library entry point the CLI itself dispatches to. The CLI's
 top-level verbs map directly to MCP tools:
 
-- `create` tool → `operations::create(client, notebook, change_id, 
+- `create` tool → `operations::create(client, notebook, change_id,
 title)`
-- `display` tool → `operations::display(client, notebook, change_id, 
+- `display` tool → `operations::display(client, notebook, change_id,
 full)`
 - `validate` tool → `operations::validate(client, notebook, change_id)`
-- `render` tool → `operations::render(client, notebook, change_id, 
+- `render` tool → `operations::render(client, notebook, change_id,
 diff)`
-- `merge` tool → `operations::merge(client, notebook, change_id, 
+- `merge` tool → `operations::merge(client, notebook, change_id,
 force)`
 
 These five entry points (operations.rs:106/171/275/314/436) are

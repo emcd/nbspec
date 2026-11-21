@@ -11,7 +11,13 @@ pub async fn execute_active_via_transaction(
     change_id: &str,
     source_path: &Path,
 ) -> Result<(), crate::operations::OperationError> {
-    let tx = build_active_transaction(client, notebook_name, change_id, source_path).await?;
+    let tx = build_active_transaction(
+        client,
+        notebook_name,
+        change_id,
+        source_path,
+    )
+    .await?;
     let _outcome = tx.commit().await.map_err(|e| match &e {
         nb_api::NbError::DirtyBaseline { .. }
         | nb_api::NbError::PathCollision { .. }
@@ -19,7 +25,7 @@ pub async fn execute_active_via_transaction(
         | nb_api::NbError::UnsupportedStructure { .. }
         | nb_api::NbError::DuplicateTitleHeading { .. } => {
             crate::operations::OperationError::from(e)
-        }
+        },
         _ => crate::operations::OperationError::from(e),
     })?;
     Ok(())
@@ -32,8 +38,8 @@ async fn build_active_transaction(
     source_path: &Path,
 ) -> Result<nb_api::Transaction, crate::operations::OperationError> {
     use crate::interchange::detect::{
-        ACTIVE_DECISIONS_DIR, ACTIVE_DESIGN_FILE, ACTIVE_PROPOSAL_FILE, ACTIVE_SPECS_DIR,
-        ACTIVE_TASKS_FILE,
+        ACTIVE_DECISIONS_DIR, ACTIVE_DESIGN_FILE, ACTIVE_PROPOSAL_FILE,
+        ACTIVE_SPECS_DIR, ACTIVE_TASKS_FILE,
     };
     use nb_api::NoteTarget;
 
@@ -44,14 +50,15 @@ async fn build_active_transaction(
 
     // proposal.md
     let proposal_path = source_path.join(ACTIVE_PROPOSAL_FILE);
-    let proposal_raw = std::fs::read_to_string(&proposal_path).map_err(|source| {
-        crate::operations::OperationError::from(
-            crate::interchange::plan::InterchangeError::SourceRead {
-                path: proposal_path.clone(),
-                source,
-            },
-        )
-    })?;
+    let proposal_raw =
+        std::fs::read_to_string(&proposal_path).map_err(|source| {
+            crate::operations::OperationError::from(
+                crate::interchange::plan::InterchangeError::SourceRead {
+                    path: proposal_path.clone(),
+                    source,
+                },
+            )
+        })?;
     let proposal_content = {
         let expected = format!("# {change_id}");
         let mut lines = proposal_raw.lines();
@@ -69,7 +76,7 @@ async fn build_active_transaction(
                     out.push('\n');
                 }
                 out
-            }
+            },
         }
     };
     tx.add_folder(&format!("proposals/{change_id}"))
@@ -119,14 +126,15 @@ async fn build_active_transaction(
             if !spec_file.is_file() {
                 continue;
             }
-            let content = std::fs::read_to_string(&spec_file).map_err(|source| {
-                crate::operations::OperationError::from(
+            let content =
+                std::fs::read_to_string(&spec_file).map_err(|source| {
+                    crate::operations::OperationError::from(
                     crate::interchange::plan::InterchangeError::SourceRead {
                         path: spec_file.clone(),
                         source,
                     },
                 )
-            })?;
+                })?;
             let stripped = strip_leading_h1(&content);
             tx.add_note(
                 &format!("proposals/{change_id}/specifications/{cap}.md"),
@@ -141,14 +149,15 @@ async fn build_active_transaction(
     // design
     let design_path = source_path.join(ACTIVE_DESIGN_FILE);
     if design_path.is_file() {
-        let design_raw = std::fs::read_to_string(&design_path).map_err(|source| {
-            crate::operations::OperationError::from(
-                crate::interchange::plan::InterchangeError::SourceRead {
-                    path: design_path.clone(),
-                    source,
-                },
-            )
-        })?;
+        let design_raw =
+            std::fs::read_to_string(&design_path).map_err(|source| {
+                crate::operations::OperationError::from(
+                    crate::interchange::plan::InterchangeError::SourceRead {
+                        path: design_path.clone(),
+                        source,
+                    },
+                )
+            })?;
         let stripped = strip_leading_h1(&design_raw);
         tx.add_folder(&format!("proposals/{change_id}/designs"))
             .map_err(crate::operations::OperationError::from)?;
@@ -182,7 +191,9 @@ async fn build_active_transaction(
                 )
             })?;
             let path = entry.path();
-            if !path.is_file() || path.extension().and_then(|e| e.to_str()) != Some("md") {
+            if !path.is_file()
+                || path.extension().and_then(|e| e.to_str()) != Some("md")
+            {
                 continue;
             }
             if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
@@ -195,14 +206,15 @@ async fn build_active_transaction(
                 .map_err(crate::operations::OperationError::from)?;
         }
         for (name, path) in names {
-            let content = std::fs::read_to_string(&path).map_err(|source| {
-                crate::operations::OperationError::from(
+            let content =
+                std::fs::read_to_string(&path).map_err(|source| {
+                    crate::operations::OperationError::from(
                     crate::interchange::plan::InterchangeError::SourceRead {
                         path: path.clone(),
                         source,
                     },
                 )
-            })?;
+                })?;
             let stripped = strip_leading_h1(&content);
             tx.add_note(
                 &format!("proposals/{change_id}/decisions/{name}.md"),
@@ -217,21 +229,22 @@ async fn build_active_transaction(
     // tasks → work.todo.md
     let tasks_path = source_path.join(ACTIVE_TASKS_FILE);
     if tasks_path.is_file() {
-        let tasks_raw = std::fs::read_to_string(&tasks_path).map_err(|source| {
-            crate::operations::OperationError::from(
-                crate::interchange::plan::InterchangeError::SourceRead {
-                    path: tasks_path.clone(),
-                    source,
-                },
-            )
-        })?;
-        let checklist =
-            parse_work_note(&tasks_raw).map_err(crate::operations::OperationError::WorkNote)?;
-        let todo_title = checklist
-            .title
-            .clone()
-            .unwrap_or_else(|| format!("Execution checklist for {change_id}."));
-        let task_texts: Vec<String> = checklist.items.iter().map(|it| it.text.clone()).collect();
+        let tasks_raw =
+            std::fs::read_to_string(&tasks_path).map_err(|source| {
+                crate::operations::OperationError::from(
+                    crate::interchange::plan::InterchangeError::SourceRead {
+                        path: tasks_path.clone(),
+                        source,
+                    },
+                )
+            })?;
+        let checklist = parse_work_note(&tasks_raw)
+            .map_err(crate::operations::OperationError::WorkNote)?;
+        let todo_title = checklist.title.clone().unwrap_or_else(|| {
+            format!("Execution checklist for {change_id}.")
+        });
+        let task_texts: Vec<String> =
+            checklist.items.iter().map(|it| it.text.clone()).collect();
         let todo_path = format!("proposals/{change_id}/work.todo.md");
         tx.add_todo(&todo_path, &todo_title, None, &task_texts, &[])
             .map_err(crate::operations::OperationError::from)?;
@@ -322,7 +335,9 @@ pub async fn preflight_active_source(
     // Validate change_id shape.
     validate_change_id(change_id).map_err(|_| {
         crate::operations::OperationError::from(
-            crate::interchange::plan::InterchangeError::InvalidChangeId(change_id.to_string()),
+            crate::interchange::plan::InterchangeError::InvalidChangeId(
+                change_id.to_string(),
+            ),
         )
     })?;
 
@@ -339,7 +354,9 @@ pub async fn preflight_active_source(
                 && entry.path().is_dir()
             {
                 return Err(crate::operations::OperationError::from(
-                    crate::interchange::plan::InterchangeError::Collision(change_id.to_string()),
+                    crate::interchange::plan::InterchangeError::Collision(
+                        change_id.to_string(),
+                    ),
                 ));
             }
         }
@@ -353,25 +370,29 @@ pub async fn preflight_active_source(
     {
         use crate::configuration::load_configuration;
         use crate::operations::context::project_root;
-        use crate::retirement::{ArchiveOccupant, read_archive_occupant, refuse_invalid_occupant};
+        use crate::retirement::{
+            ArchiveOccupant, read_archive_occupant, refuse_invalid_occupant,
+        };
         let root = project_root();
         if let Ok(configuration) = load_configuration(&root) {
             let tarball = root
                 .join(&configuration.archive_directory)
                 .join(format!("{change_id}.tar.zst"));
             match read_archive_occupant(&tarball) {
-                Ok(ArchiveOccupant::Absent) => {}
+                Ok(ArchiveOccupant::Absent) => {},
                 Ok(ArchiveOccupant::File(_)) => {
                     return Err(crate::operations::OperationError::from(
-                        crate::interchange::plan::InterchangeError::Collision(format!(
-                            "{change_id} (retired tarball: {})",
-                            tarball.display()
-                        )),
+                        crate::interchange::plan::InterchangeError::Collision(
+                            format!(
+                                "{change_id} (retired tarball: {})",
+                                tarball.display()
+                            ),
+                        ),
                     ));
-                }
+                },
                 Ok(ArchiveOccupant::Invalid(detail)) => {
                     return Err(refuse_invalid_occupant(&tarball, &detail));
-                }
+                },
                 Err(error) => return Err(error),
             }
         }
@@ -380,7 +401,13 @@ pub async fn preflight_active_source(
     // Build the full Transaction plan without committing — this validates
     // every spec/decision read and every add_note/add_todo path (including
     // DuplicateTitleHeading, PathCollision, etc.). Drop without commit.
-    let _tx = build_active_transaction(client, notebook_name, change_id, source_path).await?;
+    let _tx = build_active_transaction(
+        client,
+        notebook_name,
+        change_id,
+        source_path,
+    )
+    .await?;
     Ok(())
 }
 

@@ -1,0 +1,35 @@
+name: init
+
+on:
+  workflow_call:
+    outputs:
+      platforms:
+        description: 'Array of OS by CPU platform objects in JSON format.'
+        value: '${{ jobs.define-constants.outputs.platforms }}'
+
+jobs:
+
+  define-constants:
+    runs-on: ubuntu-latest
+    permissions: {}
+    outputs:
+      platforms: '${{ steps.platforms.outputs.platforms }}'
+    steps:
+
+      - name: Declare Platforms
+        id: platforms
+        run: |
+          set -eu
+          platforms="$(jq --compact-output --slurp '.' <<'EOF'
+
+
+          {"os": "linux", "cpu": "x86_64", "runner": "ubuntu-24.04", "target": "x86_64-unknown-linux-gnu"}
+          {"os": "linux", "cpu": "arm64", "runner": "ubuntu-24.04-arm", "target": "aarch64-unknown-linux-gnu"}
+          {"os": "macos", "cpu": "x86_64", "runner": "macos-26-intel", "target": "x86_64-apple-darwin"}
+          {"os": "macos", "cpu": "arm64", "runner": "macos-26", "target": "aarch64-apple-darwin"}
+          {"os": "windows", "cpu": "x86_64", "runner": "windows-2025", "target": "x86_64-pc-windows-msvc"}
+          {"os": "windows", "cpu": "arm64", "runner": "windows-11-arm", "target": "aarch64-pc-windows-msvc"}
+          EOF
+          )"
+          echo "platforms=${platforms}" >>${GITHUB_OUTPUT}
+          cat ${GITHUB_OUTPUT}

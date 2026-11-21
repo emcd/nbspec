@@ -18,7 +18,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 /// Default repository-relative directory holding nbspec configuration.
-pub const PROJECT_CONFIGURATION_DIR_DEFAULT: &str = ".auxiliary/configuration/nbspec";
+pub const PROJECT_CONFIGURATION_DIR_DEFAULT: &str =
+    ".auxiliary/configuration/nbspec";
 
 /// Environment variable relocating the per-project configuration
 /// directory.
@@ -61,16 +62,17 @@ pub(crate) fn confinement_violation(path: &str) -> Option<&'static str> {
     }
     for component in parsed.components() {
         match component {
-            std::path::Component::Normal(_) => {}
+            std::path::Component::Normal(_) => {},
             std::path::Component::ParentDir => {
                 return Some("contains a parent-directory component");
-            }
+            },
             std::path::Component::CurDir => {
                 return Some("contains a current-directory component");
-            }
-            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+            },
+            std::path::Component::RootDir
+            | std::path::Component::Prefix(_) => {
                 return Some("is absolute; paths must stay inside their root");
-            }
+            },
         }
     }
     // Reject Windows drive prefixes even when parsing on Unix, where
@@ -142,12 +144,15 @@ pub struct Configuration {
 ///
 /// Returns [`ConfigurationError::Parse`] for malformed TOML and
 /// [`ConfigurationError::Io`] for unreadable files.
-pub fn load_configuration(project_root: &Path) -> Result<Configuration, ConfigurationError> {
+pub fn load_configuration(
+    project_root: &Path,
+) -> Result<Configuration, ConfigurationError> {
     let global = match global_settings_path() {
         Some(path) => load_settings_document(&path)?,
         None => SettingsDocument::default(),
     };
-    let environment_directory = std::env::var_os(CONFIGURATION_DIR_ENV).map(PathBuf::from);
+    let environment_directory =
+        std::env::var_os(CONFIGURATION_DIR_ENV).map(PathBuf::from);
     resolve_configuration(project_root, global, environment_directory)
 }
 
@@ -194,7 +199,9 @@ pub fn resolve_configuration(
     // the same confinement schema paths receive. The scratch
     // directory is exempt by design: its default already lives
     // outside the repository, in the platform cache.
-    if let Some(detail) = confinement_violation(&archive_directory.to_string_lossy()) {
+    if let Some(detail) =
+        confinement_violation(&archive_directory.to_string_lossy())
+    {
         return Err(ConfigurationError::Invalid(format!(
             "archive_directory {archive_directory:?} {detail}"
         )));
@@ -213,7 +220,9 @@ fn global_settings_path() -> Option<PathBuf> {
         .map(|dirs| dirs.config_dir().join(SETTINGS_FILE))
 }
 
-fn load_settings_document(path: &Path) -> Result<SettingsDocument, ConfigurationError> {
+fn load_settings_document(
+    path: &Path,
+) -> Result<SettingsDocument, ConfigurationError> {
     if !path.is_file() {
         return Ok(SettingsDocument::default());
     }

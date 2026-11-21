@@ -1,7 +1,9 @@
 use std::path::{Path, PathBuf};
 
 use crate::archives::{ArchiveEntry, ArchiveError, build_archive};
-use crate::interchange::detect::{ArchiveTree, STAGING_COUNTER, rename_no_replace};
+use crate::interchange::detect::{
+    ArchiveTree, STAGING_COUNTER, rename_no_replace,
+};
 use crate::interchange::plan::InterchangeError;
 use crate::interchange::proof::walk_for_proof;
 
@@ -36,7 +38,8 @@ pub fn stage_archive_file(
             }
         })?;
     }
-    let counter = STAGING_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let counter =
+        STAGING_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -52,9 +55,11 @@ pub fn stage_archive_file(
         None => {
             return Err(crate::operations::OperationError::ArchiveWrite {
                 path: target.to_path_buf(),
-                source: std::io::Error::other("archive target has no file name"),
+                source: std::io::Error::other(
+                    "archive target has no file name",
+                ),
             });
-        }
+        },
     };
     use std::io::Write;
     {
@@ -62,9 +67,11 @@ pub fn stage_archive_file(
             .write(true)
             .create_new(true)
             .open(&staging)
-            .map_err(|source| crate::operations::OperationError::ArchiveWrite {
-                path: target.to_path_buf(),
-                source,
+            .map_err(|source| {
+                crate::operations::OperationError::ArchiveWrite {
+                    path: target.to_path_buf(),
+                    source,
+                }
             })?;
         file.write_all(bytes).map_err(|source| {
             let _ = std::fs::remove_file(&staging);
@@ -144,7 +151,9 @@ fn render_archive_meta(change_id: &str, source_root: &Path) -> Vec<u8> {
 /// entry type. The archive conversion (and the source deletion
 /// that follows) refuses unless the source inventory is
 /// completely enumerable.
-pub fn collect_archive_entries(tree: &ArchiveTree) -> Result<Vec<ArchiveEntry>, InterchangeError> {
+pub fn collect_archive_entries(
+    tree: &ArchiveTree,
+) -> Result<Vec<ArchiveEntry>, InterchangeError> {
     // R2'''' / F2 second re-review 2026-07-25: the deterministic
     // archive layout stores regular files only; empty source
     // directories would not round-trip through the archive. We
@@ -165,7 +174,10 @@ pub fn refuse_empty_directories(root: &Path) -> Result<(), InterchangeError> {
     walk_for_empty_directories(root, root)
 }
 
-fn walk_for_empty_directories(root: &Path, current: &Path) -> Result<(), InterchangeError> {
+fn walk_for_empty_directories(
+    root: &Path,
+    current: &Path,
+) -> Result<(), InterchangeError> {
     let entries = match std::fs::read_dir(current) {
         Ok(entries) => entries,
         Err(error) => {
@@ -173,29 +185,29 @@ fn walk_for_empty_directories(root: &Path, current: &Path) -> Result<(), Interch
                 path: current.to_path_buf(),
                 source: error,
             });
-        }
+        },
     };
     let mut children: Vec<PathBuf> = Vec::new();
     let mut has_file = false;
     for entry_result in entries {
-        let entry = entry_result.map_err(|source| InterchangeError::SourceRead {
-            path: current.to_path_buf(),
-            source,
-        })?;
-        let name =
-            entry
-                .file_name()
-                .into_string()
-                .map_err(|os_str| InterchangeError::LayoutAnomaly {
-                    path: current.to_path_buf(),
-                    message: format!("non-UTF-8 archive filename: {os_str:?}"),
-                })?;
-        let path = current.join(&name);
-        let metadata =
-            std::fs::symlink_metadata(&path).map_err(|source| InterchangeError::SourceRead {
-                path: path.clone(),
+        let entry =
+            entry_result.map_err(|source| InterchangeError::SourceRead {
+                path: current.to_path_buf(),
                 source,
             })?;
+        let name = entry.file_name().into_string().map_err(|os_str| {
+            InterchangeError::LayoutAnomaly {
+                path: current.to_path_buf(),
+                message: format!("non-UTF-8 archive filename: {os_str:?}"),
+            }
+        })?;
+        let path = current.join(&name);
+        let metadata = std::fs::symlink_metadata(&path).map_err(|source| {
+            InterchangeError::SourceRead {
+                path: path.clone(),
+                source,
+            }
+        })?;
         if metadata.file_type().is_symlink() {
             return Err(InterchangeError::LayoutAnomaly {
                 path: path.clone(),
@@ -210,7 +222,10 @@ fn walk_for_empty_directories(root: &Path, current: &Path) -> Result<(), Interch
         } else {
             return Err(InterchangeError::LayoutAnomaly {
                 path: path.clone(),
-                message: format!("unsupported archive entry type: {:?}", metadata.file_type()),
+                message: format!(
+                    "unsupported archive entry type: {:?}",
+                    metadata.file_type()
+                ),
             });
         }
     }
@@ -231,17 +246,19 @@ pub fn walk_archive_tree(
     current: &Path,
     entries: &mut Vec<ArchiveEntry>,
 ) -> Result<(), InterchangeError> {
-    let dir_entries =
-        std::fs::read_dir(current).map_err(|source| InterchangeError::SourceRead {
+    let dir_entries = std::fs::read_dir(current).map_err(|source| {
+        InterchangeError::SourceRead {
             path: current.to_path_buf(),
             source,
-        })?;
+        }
+    })?;
     let mut names: Vec<String> = Vec::new();
     for entry_result in dir_entries {
-        let entry = entry_result.map_err(|source| InterchangeError::SourceRead {
-            path: current.to_path_buf(),
-            source,
-        })?;
+        let entry =
+            entry_result.map_err(|source| InterchangeError::SourceRead {
+                path: current.to_path_buf(),
+                source,
+            })?;
         match entry.file_name().into_string() {
             Ok(name) => names.push(name),
             Err(os_str) => {
@@ -249,17 +266,18 @@ pub fn walk_archive_tree(
                     path: current.to_path_buf(),
                     message: format!("non-UTF-8 archive filename: {os_str:?}"),
                 });
-            }
+            },
         }
     }
     names.sort();
     for name in names {
         let path = current.join(&name);
-        let metadata =
-            std::fs::symlink_metadata(&path).map_err(|source| InterchangeError::SourceRead {
+        let metadata = std::fs::symlink_metadata(&path).map_err(|source| {
+            InterchangeError::SourceRead {
                 path: path.clone(),
                 source,
-            })?;
+            }
+        })?;
         if metadata.file_type().is_symlink() {
             return Err(InterchangeError::LayoutAnomaly {
                 path: path.clone(),
@@ -271,32 +289,35 @@ pub fn walk_archive_tree(
         if metadata.is_dir() {
             walk_archive_tree(root, &path, entries)?;
         } else if metadata.is_file() {
-            let relative =
-                path.strip_prefix(root)
-                    .map_err(|error| InterchangeError::SourceRead {
-                        path: path.clone(),
-                        source: std::io::Error::other(error),
-                    })?;
+            let relative = path.strip_prefix(root).map_err(|error| {
+                InterchangeError::SourceRead {
+                    path: path.clone(),
+                    source: std::io::Error::other(error),
+                }
+            })?;
             // Use forward slashes so paths are stable across
             // platforms; tar entries are conventionally posix-style.
             let mut posix = PathBuf::from("tree");
             for component in relative.components() {
-                let component_str = component.as_os_str().to_str().ok_or_else(|| {
-                    InterchangeError::LayoutAnomaly {
+                let component_str = component
+                    .as_os_str()
+                    .to_str()
+                    .ok_or_else(|| InterchangeError::LayoutAnomaly {
                         path: path.clone(),
                         message: format!(
                             "non-UTF-8 archive path component: {:?}",
                             component.as_os_str()
                         ),
-                    }
-                })?;
+                    })?;
                 posix.push(component_str);
             }
             // R2 (F2): bytes, not text. Binary files round-trip
             // verbatim per the spec.
-            let content = std::fs::read(&path).map_err(|source| InterchangeError::SourceRead {
-                path: path.clone(),
-                source,
+            let content = std::fs::read(&path).map_err(|source| {
+                InterchangeError::SourceRead {
+                    path: path.clone(),
+                    source,
+                }
             })?;
             entries.push(ArchiveEntry {
                 path: posix,
@@ -305,7 +326,10 @@ pub fn walk_archive_tree(
         } else {
             return Err(InterchangeError::LayoutAnomaly {
                 path: path.clone(),
-                message: format!("unsupported archive entry type: {:?}", metadata.file_type()),
+                message: format!(
+                    "unsupported archive entry type: {:?}",
+                    metadata.file_type()
+                ),
             });
         }
     }
@@ -324,7 +348,9 @@ pub fn walk_archive_tree(
 /// Returns [`InterchangeError::SourceRead`] on filesystem failures
 /// during the walk and [`InterchangeError::Archive`] on archive
 /// construction failures.
-pub fn import_archive_tree(tree: &ArchiveTree) -> Result<Vec<u8>, InterchangeError> {
+pub fn import_archive_tree(
+    tree: &ArchiveTree,
+) -> Result<Vec<u8>, InterchangeError> {
     let mut entries = collect_archive_entries(tree)?;
     let meta = render_archive_meta(&tree.change_id, &tree.root);
     entries.push(ArchiveEntry {
@@ -380,11 +406,12 @@ pub fn archive_fidelity_proof(
     source_change_root: &Path,
     archive_path: &Path,
 ) -> Result<(), InterchangeError> {
-    let archive_bytes =
-        std::fs::read(archive_path).map_err(|source| InterchangeError::SourceRead {
+    let archive_bytes = std::fs::read(archive_path).map_err(|source| {
+        InterchangeError::SourceRead {
             path: archive_path.to_path_buf(),
             source,
-        })?;
+        }
+    })?;
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
@@ -408,7 +435,9 @@ pub fn archive_fidelity_proof(
         let _ = std::fs::remove_dir_all(&scratch);
         return Err(InterchangeError::ArchiveFidelity {
             change_id: change_id.to_string(),
-            divergences: vec![format!("cannot extract persisted archive: {error}")],
+            divergences: vec![format!(
+                "cannot extract persisted archive: {error}"
+            )],
         });
     }
     // R2''''' third re-review: re-run the empty-dir refusal at
@@ -420,7 +449,9 @@ pub fn archive_fidelity_proof(
         let _ = std::fs::remove_dir_all(&scratch);
         return Err(InterchangeError::ArchiveFidelity {
             change_id: change_id.to_string(),
-            divergences: vec![format!("source rejected at proof time: {error}")],
+            divergences: vec![format!(
+                "source rejected at proof time: {error}"
+            )],
         });
     }
     // Build exact file inventories (path + bytes, no canonicalization).
@@ -451,12 +482,14 @@ pub fn archive_fidelity_proof(
         extracted_files.iter().cloned().collect();
     for (relative, bytes) in &source_files {
         match extracted_map.get(relative) {
-            None => divergences.push(format!("{relative}: missing from archive")),
+            None => {
+                divergences.push(format!("{relative}: missing from archive"))
+            },
             Some(extracted) => {
                 if bytes != extracted {
                     divergences.push(format!("{relative}: byte divergence"));
                 }
-            }
+            },
         }
     }
     for (relative, _) in &extracted_files {

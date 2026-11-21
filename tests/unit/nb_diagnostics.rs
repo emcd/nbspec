@@ -56,11 +56,11 @@ mod live_nb {
                                 break;
                             }
                         }
-                    }
+                    },
                     Some(_) => {
                         chars.next();
-                    }
-                    None => {}
+                    },
+                    None => {},
                 }
             } else {
                 out.push(c);

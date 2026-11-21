@@ -13,117 +13,108 @@ env:
 jobs:
 
   initialize:
-    uses: ./.github/workflows/core--initializer.yaml
+    uses: ./.github/workflows/common-initializer.yaml
+    permissions: {}
 
-  lint:
+  gates-dev:
+    needs: [initialize, hygiene]
+    permissions:
+      contents: read
+    uses: emcd/rust-project-common/.github/workflows/xrepo--tester.yaml@gha-1
+    with:
+      platforms: ${{ needs.initialize.outputs.platforms }}
+      cargo-profile: dev
+      has-library: true
+
+  gates-release:
+    needs: [initialize, hygiene]
+    permissions:
+      contents: read
+    uses: emcd/rust-project-common/.github/workflows/xrepo--tester.yaml@gha-1
+    with:
+      platforms: ${{ needs.initialize.outputs.platforms }}
+      cargo-profile: release
+      has-library: true
+
+  # Dedicated file-hygiene runner: the single sanctioned exception to running
+  # no pre-commit in CI. Hook IDs are enumerated explicitly; copiertv keeps
+  # this list identical to the template pre-commit configuration.
+  hygiene:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Install pre-commit
+        run: pipx install pre-commit==4.6.2
+
+      - name: Check Large Files
+        run: pre-commit run check-added-large-files --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Check Filename Case Conflict
+        run: pre-commit run check-case-conflict --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Check Merge Conflict Markers
+        run: pre-commit run check-merge-conflict --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Check Dangling Symlinks
+        run: pre-commit run check-symlinks --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Check VCS Permalinks
+        run: pre-commit run check-vcs-permalinks --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Check Destroyed Symlinks
+        run: pre-commit run destroyed-symlinks --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Check Private Keys
+        run: pre-commit run detect-private-key --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Check Mixed Line Endings
+        run: pre-commit run mixed-line-ending --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Validate JSON Files
+        run: pre-commit run check-json --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Validate TOML Files
+        run: pre-commit run check-toml --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Validate YAML Files
+        run: pre-commit run check-yaml --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Fix End of Files
+        run: pre-commit run end-of-file-fixer --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+      - name: Fix Trailing Whitespace
+        run: pre-commit run trailing-whitespace --config .auxiliary/configuration/pre-commit.yaml --hook-stage pre-commit --all-files --show-diff-on-failure
+
+  # Consumer-owned gates live in ./.github/workflows/local--tester.yaml
+  # (authored by the consumer, never rendered by the template). This job
+  # calls it as an independent gate alongside the template gates. Job-level
+  # uses: reusable workflows cannot be invoked from a step.
+  custom:
     needs: [initialize]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/local--tester.yaml
+    with:
+      platforms: ${{ needs.initialize.outputs.platforms }}
+      cargo-profile: dev
+
+  final-gate:
+    needs: [gates-dev, gates-release, hygiene, custom]
+    if: always()
     runs-on: ubuntu-latest
+    permissions: {}
     steps:
 
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-
-      - name: Check Formatting
-        run: cargo fmt --all -- --check
-
-      - name: Run Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
-
-  test:
-    needs: [initialize, lint]
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: ${{ fromJSON(needs.initialize.outputs.platforms) }}
-        exclude: ${{ fromJSON(needs.initialize.outputs.matrix-exclusions) }}
-    runs-on: ${{ matrix.platform }}
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install nb
-        # Cross-platform install (Git Bash .cmd launcher on Windows,
-        # symlink on Unix) pinned to the version we develop against,
-        # from nb-api's reusable action. Exposes nb-exec for
-        # NB_API_TEST_NB so NbTestEnv resolves nb deterministically.
-        # Live-nb probes stay #[cfg(unix)] for now: nb 7.24.0 itself
-        # misbehaves under Git Bash on Windows (qualified-selector
-        # path-in-regex; background auto-checkpoint race), independent
-        # of install method. See nb-api:artifacts/2.
-        id: setup-nb
-        uses: emcd/nb-api/.github/actions/setup-nb@v0.3.1
-        with:
-          version: '7.24.0'
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Build
-        run: cargo build --release
+      - name: Evaluate Gate Results
         env:
-          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
-
-      - name: Test
-        run: cargo test --release
-        env:
-          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
-
-  package:
-    needs: [initialize, lint, test]
-    runs-on: ubuntu-latest
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Verify Package
-        run: cargo package --no-verify --list
-
-      - name: Dry-Run Publish
-        run: cargo publish --dry-run --locked
-
-  conformance:
-    needs: [initialize, test]
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: ${{ fromJSON(needs.initialize.outputs.platforms) }}
-        exclude: ${{ fromJSON(needs.initialize.outputs.matrix-exclusions) }}
-    runs-on: ${{ matrix.platform }}
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-
-      - name: Run Conformance Oracle
-        run: bash tests/conformance/oracle.sh
-
-  openspec-gate:
-    needs: [initialize]
-    runs-on: ubuntu-latest
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Node.js
-        uses: actions/setup-node@v6
-        with:
-          node-version: '20'
-
-      - name: Validate OpenSpec Tree
-        run: npx --yes "@fission-ai/openspec@1.5.0" validate --all --strict
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: |
+          python3 -c 'import json, os, sys; needs = json.loads(os.environ["NEEDS_JSON"]); bad = {k: v.get("result") for k, v in needs.items() if v.get("result") != "success"}; sys.exit("failing gates: %s" % bad if bad else print("all gate jobs succeeded"))'
+        shell: bash

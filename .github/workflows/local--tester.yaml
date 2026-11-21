@@ -1,0 +1,115 @@
+name: local-tester
+
+# Consumer-owned gates for the template `custom` job. Adapted from the
+# pre-retrofit tester: nb-provisioned matrix tests (live-nb coverage the
+# shared gates cannot provide), the per-platform conformance oracle, and
+# the openspec gate. Bound to the adopted cartesian cells; no has-library
+# input (this crate's shape is known). Never overwritten by template
+# updates (_skip_if_exists).
+on:
+  workflow_call:
+    inputs:
+      platforms:
+        description: 'JSON array of {os, cpu, runner, target} platform objects.'
+        required: true
+        type: string
+      cargo-profile:
+        description: 'Cargo profile to gate: dev or release.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+
+  matrix-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platforms) }}
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Install nb
+        # Cross-platform install (Git Bash .cmd launcher on Windows,
+        # symlink on Unix) pinned to the version we develop against,
+        # from nb-api's reusable action. Exposes nb-exec for
+        # NB_API_TEST_NB so NbTestEnv resolves nb deterministically.
+        # Live-nb probes stay #[cfg(unix)] for now: nb 7.24.0 itself
+        # misbehaves under Git Bash on Windows (qualified-selector
+        # path-in-regex; background auto-checkpoint race), independent
+        # of install method. See nb-api:artifacts/2.
+        id: setup-nb
+        uses: emcd/nb-api/.github/actions/setup-nb@v0.3.1
+        with:
+          version: '7.24.0'
+
+      - name: Set Up Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Build
+        run: cargo build --locked --profile ${{ inputs.cargo-profile }}
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
+
+      - name: Test
+        run: cargo test --locked --profile ${{ inputs.cargo-profile }}
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
+
+  clippy-all-features:
+    # Wider local clippy: the shared gates run --no-default-features by
+    # design, so the test-support feature gate stays covered here.
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Set Up Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Run Clippy (all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  conformance:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platforms) }}
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Run Conformance Oracle
+        run: bash tests/conformance/oracle.sh
+
+  openspec-gate:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Validate OpenSpec Tree
+        run: npx --yes "@fission-ai/openspec@1.5.0" validate --all --strict

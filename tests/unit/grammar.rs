@@ -1,7 +1,7 @@
 use nbspec::grammar::{
-    Rename, UnpairedSide, duplicate_section_kinds, extract_purpose_section, find_unpaired_renames,
-    fold_requirement_name, has_requirements_section, parse_delta_specification,
-    parse_target_blocks,
+    Rename, UnpairedSide, duplicate_section_kinds, extract_purpose_section,
+    find_unpaired_renames, fold_requirement_name, has_requirements_section,
+    parse_delta_specification, parse_target_blocks,
 };
 
 const ADDED_DELTA: &str = "\
@@ -389,7 +389,8 @@ fn tilde_and_long_fences_mask() {
 
 #[test]
 fn unclosed_fence_masks_to_eof() {
-    let content = "# T\n\n## ADDED Requirements\n\n```\n### Requirement: Ghost\n";
+    let content =
+        "# T\n\n## ADDED Requirements\n\n```\n### Requirement: Ghost\n";
     assert!(
         parse_target_blocks(content).is_empty(),
         "unclosed fence stays inert"
@@ -400,5 +401,7 @@ fn unclosed_fence_masks_to_eof() {
 fn duplicate_delta_sections_detected() {
     let content = "# T\n\n## ADDED Requirements\n\n## ADDED Requirements\n";
     assert_eq!(duplicate_section_kinds(content), vec!["added requirements"]);
-    assert!(duplicate_section_kinds("# T\n\n## ADDED Requirements\n").is_empty());
+    assert!(
+        duplicate_section_kinds("# T\n\n## ADDED Requirements\n").is_empty()
+    );
 }

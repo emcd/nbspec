@@ -21,11 +21,11 @@ async fn main() -> ExitCode {
             // other failure carries an `Error:` banner.
             eprintln!("{}", failure_report(&error));
             ExitCode::FAILURE
-        }
+        },
         Err(DispatchError::Service(error)) => {
             eprintln!("Error: {error:#}");
             ExitCode::FAILURE
-        }
+        },
     }
 }
 
@@ -40,21 +40,26 @@ enum DispatchError {
 
 async fn dispatch(arguments: Cli) -> Result<(), DispatchError> {
     match &arguments.command {
-        Command::Serve { service } => run_service(service, arguments.notebook.as_deref())
-            .await
-            .map_err(DispatchError::Service),
+        Command::Serve { service } => {
+            run_service(service, arguments.notebook.as_deref())
+                .await
+                .map_err(DispatchError::Service)
+        },
         verb => run_change_verb(&arguments, verb).await,
     }
 }
 
-async fn run_service(service: &ServeService, notebook: Option<&str>) -> anyhow::Result<()> {
+async fn run_service(
+    service: &ServeService,
+    notebook: Option<&str>,
+) -> anyhow::Result<()> {
     match service {
         ServeService::Mcp => {
             let configuration = McpConfiguration {
                 notebook: notebook.map(String::from),
             };
             mcp::run(configuration).await
-        }
+        },
     }
 }
 
@@ -76,40 +81,49 @@ fn resolve_comment(
         std::io::Read::read_to_string(&mut std::io::stdin(), &mut buffer)
             .map(|_| buffer)
             .map_err(|error| {
-                anyhow::Error::new(error)
-                    .context("cannot read the review comment from standard input")
+                anyhow::Error::new(error).context(
+                    "cannot read the review comment from standard input",
+                )
             })
     } else {
         std::fs::read_to_string(path).map_err(|error| {
-            anyhow::Error::new(error).context(format!("cannot read the review comment file {path}"))
+            anyhow::Error::new(error)
+                .context(format!("cannot read the review comment file {path}"))
         })
     }
     .map_err(DispatchError::Service)?;
     Ok(Some(content))
 }
 
-async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), DispatchError> {
+async fn run_change_verb(
+    arguments: &Cli,
+    command: &Command,
+) -> Result<(), DispatchError> {
     let config = nb_api::Config {
         notebook: arguments.notebook.clone(),
         ..nb_api::Config::default()
     };
-    let client = nb_api::NbClient::new(&config)
-        .map_err(|e| DispatchError::Service(anyhow::Error::msg(e.to_string())))?;
+    let client = nb_api::NbClient::new(&config).map_err(|e| {
+        DispatchError::Service(anyhow::Error::msg(e.to_string()))
+    })?;
     let notebook = arguments.notebook.as_deref();
     let output = match command {
         Command::Create { change_id, title } => {
-            operations::create(&client, notebook, change_id, title.as_deref()).await
-        }
+            operations::create(&client, notebook, change_id, title.as_deref())
+                .await
+        },
         Command::Display { change_id, full } => {
             operations::display(&client, notebook, change_id, *full).await
-        }
+        },
         Command::Render { change_id, diff } => {
             operations::render(&client, notebook, change_id, *diff).await
-        }
+        },
         Command::Merge { change_id, force } => {
             operations::merge(&client, notebook, change_id, *force).await
-        }
-        Command::Validate { change_id } => operations::validate(&client, notebook, change_id).await,
+        },
+        Command::Validate { change_id } => {
+            operations::validate(&client, notebook, change_id).await
+        },
         Command::Review {
             change_id,
             gate,
@@ -118,7 +132,8 @@ async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), Dispa
             comment_file,
             reviewer,
         } => {
-            let comment = resolve_comment(comment.as_deref(), comment_file.as_deref())?;
+            let comment =
+                resolve_comment(comment.as_deref(), comment_file.as_deref())?;
             operations::review(
                 &client,
                 notebook,
@@ -129,7 +144,7 @@ async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), Dispa
                 comment.as_deref(),
             )
             .await
-        }
+        },
         Command::Import {
             root,
             dry_run,
@@ -149,7 +164,7 @@ async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), Dispa
                 },
             )
             .await
-        }
+        },
         Command::Export {
             change_id,
             target,
@@ -167,14 +182,16 @@ async fn run_change_verb(arguments: &Cli, command: &Command) -> Result<(), Dispa
                 },
             )
             .await
-        }
-        Command::Serve { .. } => unreachable!("serve dispatched in dispatch()"),
+        },
+        Command::Serve { .. } => {
+            unreachable!("serve dispatched in dispatch()")
+        },
     };
     match output {
         Ok(outcome) => {
             println!("{}", outcome.text);
             Ok(())
-        }
+        },
         Err(error) => Err(DispatchError::ChangeVerb(error)),
     }
 }

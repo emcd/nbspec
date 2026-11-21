@@ -102,7 +102,7 @@ pub fn render_documents(
                     tree_path,
                     content,
                 });
-            }
+            },
             ArtifactLayout::Folder(name) => {
                 let directory = change_directory.join(&name);
                 if !directory.is_dir() {
@@ -112,7 +112,8 @@ pub fn render_documents(
                     let file = directory.join(&relative);
                     let content = std::fs::read_to_string(&file)
                         .map_err(|error| RenderError::io(&file, error))?;
-                    let materialization = materialization_filename(&relative, &content);
+                    let materialization =
+                        materialization_filename(&relative, &content);
                     let tree_path = join_logical(&name, &materialization);
                     let target_path = artifact
                         .target
@@ -121,12 +122,14 @@ pub fn render_documents(
                     documents.push(RenderedDocument {
                         artifact_id: artifact.id.clone(),
                         target_path,
-                        source_note: format!("{change_folder}/{name}/{relative}"),
+                        source_note: format!(
+                            "{change_folder}/{name}/{relative}"
+                        ),
                         tree_path,
                         content,
                     });
                 }
-            }
+            },
         }
     }
     detect_collisions(&documents)?;
@@ -138,9 +141,19 @@ pub fn render_documents(
 /// with the same H1, a timestamp note whose slug matches a named
 /// note, or distinct artifacts whose targets map to the same durable
 /// destination, would silently overwrite each other.
-fn detect_collisions(documents: &[RenderedDocument]) -> Result<(), RenderError> {
-    check_duplicates(documents, |d| Some(d.tree_path.as_str()), "rendered path")?;
-    check_duplicates(documents, |d| d.target_path.as_deref(), "durable target")?;
+fn detect_collisions(
+    documents: &[RenderedDocument],
+) -> Result<(), RenderError> {
+    check_duplicates(
+        documents,
+        |d| Some(d.tree_path.as_str()),
+        "rendered path",
+    )?;
+    check_duplicates(
+        documents,
+        |d| d.target_path.as_deref(),
+        "durable target",
+    )?;
     Ok(())
 }
 
@@ -181,7 +194,9 @@ fn check_duplicates(
 pub fn aggregate_content_hash(documents: &[RenderedDocument]) -> String {
     let mut pairs: Vec<(&str, String)> = documents
         .iter()
-        .map(|document| (document.tree_path.as_str(), content_hash(&document.content)))
+        .map(|document| {
+            (document.tree_path.as_str(), content_hash(&document.content))
+        })
         .collect();
     pairs.sort();
     let mut digest = Sha256::new();
@@ -202,18 +217,24 @@ pub fn aggregate_content_hash(documents: &[RenderedDocument]) -> String {
 ///
 /// Returns [`RenderError::Io`] when the destination cannot be
 /// (re)created or written.
-pub fn write_tree(documents: &[RenderedDocument], destination: &Path) -> Result<(), RenderError> {
+pub fn write_tree(
+    documents: &[RenderedDocument],
+    destination: &Path,
+) -> Result<(), RenderError> {
     if destination.exists() {
         std::fs::remove_dir_all(destination)
             .map_err(|error| RenderError::io(destination, error))?;
     }
-    std::fs::create_dir_all(destination).map_err(|error| RenderError::io(destination, error))?;
+    std::fs::create_dir_all(destination)
+        .map_err(|error| RenderError::io(destination, error))?;
     for document in documents {
         let path = destination.join(Path::new(&document.tree_path));
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| RenderError::io(parent, error))?;
+            std::fs::create_dir_all(parent)
+                .map_err(|error| RenderError::io(parent, error))?;
         }
-        std::fs::write(&path, &document.content).map_err(|error| RenderError::io(&path, error))?;
+        std::fs::write(&path, &document.content)
+            .map_err(|error| RenderError::io(&path, error))?;
     }
     Ok(())
 }
@@ -251,15 +272,20 @@ pub fn review_diff(
         if current.as_deref() == Some(document.content.as_str()) {
             continue;
         }
-        output.push_str(&format!("diff --git a/{target_path} b/{target_path}\n"));
+        output.push_str(&format!(
+            "diff --git a/{target_path} b/{target_path}\n"
+        ));
         let (old_content, old_header) = match &current {
             Some(content) => (content.as_str(), format!("a/{target_path}")),
             None => {
                 output.push_str("new file mode 100644\n");
                 ("", "/dev/null".to_string())
-            }
+            },
         };
-        let text_diff = similar::TextDiff::from_lines(old_content, document.content.as_str());
+        let text_diff = similar::TextDiff::from_lines(
+            old_content,
+            document.content.as_str(),
+        );
         output.push_str(&format!(
             "{}",
             text_diff
@@ -287,10 +313,11 @@ fn collect_markdown(
     prefix: &str,
     files: &mut Vec<String>,
 ) -> Result<(), RenderError> {
-    let entries =
-        std::fs::read_dir(directory).map_err(|error| RenderError::io(directory, error))?;
+    let entries = std::fs::read_dir(directory)
+        .map_err(|error| RenderError::io(directory, error))?;
     for entry in entries {
-        let entry = entry.map_err(|error| RenderError::io(directory, error))?;
+        let entry =
+            entry.map_err(|error| RenderError::io(directory, error))?;
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if name.starts_with('.') {
@@ -361,7 +388,9 @@ fn materialization_filename(relative: &str, content: &str) -> String {
         && let Some(slug) = kebab_slug_from_h1(content)
     {
         return match path.parent().and_then(|p| p.to_str()) {
-            Some(parent) if !parent.is_empty() => format!("{parent}/{slug}.md"),
+            Some(parent) if !parent.is_empty() => {
+                format!("{parent}/{slug}.md")
+            },
             _ => format!("{slug}.md"),
         };
     }

@@ -8,9 +8,12 @@ use nbspec::interchange::ActiveTree;
 #[cfg(any())]
 use nbspec::interchange::import_active_tree;
 use nbspec::interchange::{
-    ArchiveTree, DetectedTree, detect_trees, import_archive_tree, round_trip_proof,
+    ArchiveTree, DetectedTree, detect_trees, import_archive_tree,
+    round_trip_proof,
 };
-use nbspec::interchange::{InterchangePlan, InterchangePlanStructured, PlanEntry};
+use nbspec::interchange::{
+    InterchangePlan, InterchangePlanStructured, PlanEntry,
+};
 
 /// Writes `content` at `<base>/<relative>`, creating intermediate
 /// directories. Panics on IO failure so the test's setup failure is
@@ -60,7 +63,7 @@ fn detects_active_tree_with_proposal_md() {
         DetectedTree::Active(tree) => {
             assert_eq!(tree.change_id, "add-foo");
             assert!(tree.root.ends_with("add-foo"));
-        }
+        },
         other => panic!("expected Active, got {other:?}"),
     }
     std::fs::remove_dir_all(&root).ok();
@@ -98,7 +101,7 @@ fn detects_archive_tree_under_openspec_changes_archive() {
         DetectedTree::Archive(tree) => {
             assert_eq!(tree.change_id, "legacy-feature");
             assert!(tree.root.ends_with("legacy-feature"));
-        }
+        },
         other => panic!("expected Archive, got {other:?}"),
     }
     std::fs::remove_dir_all(&root).ok();
@@ -182,7 +185,8 @@ fn rename_no_replace_refuses_occupied_destination() {
     let target = root.join("payload.tar.zst");
     write_bytes(&root, "payload.tar.zst.staging-1", b"staged-bytes");
     write_bytes(&root, "payload.tar.zst", b"shipped-history");
-    let refused = nbspec::interchange::detect::rename_no_replace(&staging, &target);
+    let refused =
+        nbspec::interchange::detect::rename_no_replace(&staging, &target);
     assert!(refused.is_err(), "occupied destination must refuse");
     assert_eq!(
         std::fs::read(&target).unwrap(),

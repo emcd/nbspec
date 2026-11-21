@@ -55,4 +55,3 @@ Clean succession MUST relax only the ownership refusal. Review-gate refusals and
 - **WHEN** a change without a current approving merge verdict merges onto a cleanly successible target
 - **THEN** the plan reports the review-gate refusal and nothing is written
 - **AND THEN** the clean-succession recognition does not bypass the review gate
-

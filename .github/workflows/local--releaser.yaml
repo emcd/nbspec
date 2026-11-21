@@ -1,0 +1,78 @@
+name: local-releaser
+
+# Consumer-owned release gates for the template `custom-release` job:
+# nb-provisioned release test matrix (live-nb coverage the shared
+# release gates cannot provide) plus package verification and publish
+# dry-run. Never overwritten by template updates (_skip_if_exists).
+on:
+  workflow_call:
+    inputs:
+      platforms:
+        description: 'JSON array of {os, cpu, runner, target} platform objects.'
+        required: true
+        type: string
+      cargo-profile:
+        description: 'Cargo profile to gate: dev or release.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+
+  matrix-test-release:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platforms) }}
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Configure git for nb
+        # Mirrors the tester setup so live-nb tests have nb installed
+        # and git identity pre-set before `cargo test --release`.
+        run: |
+          git config --global user.name "nbspec CI"
+          git config --global user.email "nbspec-ci@users.noreply.github.com"
+          git config --global init.defaultBranch master
+
+      - name: Install nb
+        id: setup-nb
+        uses: emcd/nb-api/.github/actions/setup-nb@v0.3.1
+        with:
+          version: '7.24.0'
+
+      - name: Set Up Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Build
+        run: cargo build --release --locked
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
+
+      - name: Test
+        run: cargo test --release --locked
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
+
+  package-verify:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Set Up Toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify Package
+        run: cargo package --no-verify --list
+
+      - name: Dry-Run Publish
+        run: cargo publish --dry-run --locked

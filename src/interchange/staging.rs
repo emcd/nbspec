@@ -6,11 +6,13 @@ use crate::changes::validate_change_id;
 use crate::grammar::{SectionPresence, parse_delta_specification};
 #[allow(unused_imports)]
 use crate::interchange::detect::{
-    ACTIVE_DECISIONS_DIR, ACTIVE_DESIGN_FILE, ACTIVE_PROPOSAL_FILE, ACTIVE_SPECS_DIR,
-    ACTIVE_TASKS_FILE, STAGING_COUNTER, rename_no_replace,
+    ACTIVE_DECISIONS_DIR, ACTIVE_DESIGN_FILE, ACTIVE_PROPOSAL_FILE,
+    ACTIVE_SPECS_DIR, ACTIVE_TASKS_FILE, STAGING_COUNTER, rename_no_replace,
 };
 #[allow(unused_imports)]
-use crate::interchange::plan::{DeltaWarning, DeltaWarningKind, InterchangeError, NoteWrite};
+use crate::interchange::plan::{
+    DeltaWarning, DeltaWarningKind, InterchangeError, NoteWrite,
+};
 #[allow(unused_imports)]
 use crate::interchange::proof::strip_leading_h1;
 #[allow(unused_imports)]
@@ -60,7 +62,8 @@ pub async fn stage_active_notes(
     notebook_name: &str,
 ) -> Result<ActiveStaging, crate::operations::OperationError> {
     let notebook = Some(notebook_name);
-    let staging_counter = STAGING_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let staging_counter =
+        STAGING_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let staging_change_id = format!("{change_id}.staging-{staging_counter}");
     let real_root = format!("proposals/{change_id}");
     let staging_root = format!("proposals/{staging_change_id}");
@@ -85,7 +88,14 @@ pub async fn stage_active_notes(
             format!("{staging_root}/{}", write.folder)
         };
         let write_result = if write.is_todo {
-            write_todo_note(client, change_id, &folder, &write.content, notebook_name).await
+            write_todo_note(
+                client,
+                change_id,
+                &folder,
+                &write.content,
+                notebook_name,
+            )
+            .await
         } else {
             client
                 .add_note(
@@ -175,7 +185,8 @@ pub async fn write_active_notes(
     writes: &[NoteWrite],
     notebook_name: &str,
 ) -> Result<(), crate::operations::OperationError> {
-    let staging = stage_active_notes(client, change_id, writes, notebook_name).await?;
+    let staging =
+        stage_active_notes(client, change_id, writes, notebook_name).await?;
     commit_active_staging(client, staging).await
 }
 
@@ -274,8 +285,10 @@ pub fn import_active_tree(
     if existing_namespaces.iter().any(|id| id == &tree.change_id) {
         return Err(InterchangeError::Collision(tree.change_id.clone()));
     }
-    let proposal_source = read_source_file(&tree.root.join(ACTIVE_PROPOSAL_FILE))?;
-    let proposal_content = normalize_proposal_h1(&proposal_source, &tree.change_id);
+    let proposal_source =
+        read_source_file(&tree.root.join(ACTIVE_PROPOSAL_FILE))?;
+    let proposal_content =
+        normalize_proposal_h1(&proposal_source, &tree.change_id);
     let mut writes: Vec<NoteWrite> = Vec::new();
     writes.push(NoteWrite {
         folder: String::new(),
@@ -339,7 +352,8 @@ pub fn import_active_tree(
         });
     }
 
-    let meta_content = render_meta_with_provenance(&tree.change_id, &tree.root)?;
+    let meta_content =
+        render_meta_with_provenance(&tree.change_id, &tree.root)?;
     writes.push(NoteWrite {
         folder: String::new(),
         title: "meta".to_string(),
@@ -354,10 +368,14 @@ pub fn import_active_tree(
 /// surfacing a typed `InterchangeError::SourceRead` on failure.
 #[cfg(any())] // v0.3.0-pause: restored by the 0.3.0-resume cycle
 #[allow(dead_code)]
-fn read_source_file(path: &std::path::Path) -> Result<String, InterchangeError> {
-    std::fs::read_to_string(path).map_err(|source| InterchangeError::SourceRead {
-        path: path.to_path_buf(),
-        source,
+fn read_source_file(
+    path: &std::path::Path,
+) -> Result<String, InterchangeError> {
+    std::fs::read_to_string(path).map_err(|source| {
+        InterchangeError::SourceRead {
+            path: path.to_path_buf(),
+            source,
+        }
     })
 }
 
@@ -386,7 +404,7 @@ fn normalize_proposal_h1(content: &str, change_id: &str) -> String {
                 output.push('\n');
             }
             output
-        }
+        },
     }
 }
 
@@ -429,9 +447,11 @@ fn collect_capability_specs(
     specs_root: &std::path::Path,
 ) -> Result<Vec<(String, String)>, InterchangeError> {
     let mut capabilities: Vec<(String, String)> = Vec::new();
-    let entries = std::fs::read_dir(specs_root).map_err(|source| InterchangeError::SourceRead {
-        path: specs_root.to_path_buf(),
-        source,
+    let entries = std::fs::read_dir(specs_root).map_err(|source| {
+        InterchangeError::SourceRead {
+            path: specs_root.to_path_buf(),
+            source,
+        }
     })?;
     let mut names: Vec<String> = Vec::new();
     for entry in entries.flatten() {
@@ -470,11 +490,12 @@ fn collect_decisions(
     decisions_root: &std::path::Path,
 ) -> Result<Vec<(String, String)>, InterchangeError> {
     let mut decisions: Vec<(String, String)> = Vec::new();
-    let entries =
-        std::fs::read_dir(decisions_root).map_err(|source| InterchangeError::SourceRead {
+    let entries = std::fs::read_dir(decisions_root).map_err(|source| {
+        InterchangeError::SourceRead {
             path: decisions_root.to_path_buf(),
             source,
-        })?;
+        }
+    })?;
     let mut names: Vec<(String, PathBuf)> = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
@@ -503,7 +524,10 @@ fn collect_decisions(
 /// knows they will fail to materialise downstream.
 #[cfg(any())] // v0.3.0-pause: restored by the 0.3.0-resume cycle
 #[allow(dead_code)]
-fn delta_warnings_for_spec(note_path: &str, content: &str) -> Vec<DeltaWarning> {
+fn delta_warnings_for_spec(
+    note_path: &str,
+    content: &str,
+) -> Vec<DeltaWarning> {
     let delta = parse_delta_specification(content);
     if delta.presence == SectionPresence::default() {
         return Vec::new();
@@ -536,7 +560,10 @@ fn delta_warnings_for_spec(note_path: &str, content: &str) -> Vec<DeltaWarning> 
 /// emitted in their original order with checkbox state preserved.
 #[cfg(any())] // v0.3.0-pause: restored by the 0.3.0-resume cycle
 #[allow(dead_code)]
-fn render_work_note_body(change_id: &str, checklist: &WorkChecklist) -> String {
+fn render_work_note_body(
+    change_id: &str,
+    checklist: &WorkChecklist,
+) -> String {
     let title_marker = if checklist.complete { "[x]" } else { "[ ]" };
     let title = checklist
         .title

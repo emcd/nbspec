@@ -2,7 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use nbspec::rendering::{
-    RenderedDocument, aggregate_content_hash, render_documents, review_diff, write_tree,
+    RenderedDocument, aggregate_content_hash, render_documents, review_diff,
+    write_tree,
 };
 use nbspec::schemata::{default_schema, parse_schema};
 
@@ -27,7 +28,8 @@ fn fixture_change(root: &Path) -> PathBuf {
     fs::create_dir_all(change.join("specifications/nested")).unwrap();
     fs::create_dir_all(change.join("designs")).unwrap();
     fs::create_dir_all(change.join("decisions")).unwrap();
-    fs::write(change.join("proposal.md"), "# proposal\n\nWhy: reasons.\n").unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\nWhy: reasons.\n")
+        .unwrap();
     fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
     fs::write(
         change.join("20260101000000.todo.md"),
@@ -44,7 +46,8 @@ fn fixture_change(root: &Path) -> PathBuf {
         "# beta\n\n## ADDED Requirements\n",
     )
     .unwrap();
-    fs::write(change.join("designs/gamma.md"), "# gamma\n\nDesign.\n").unwrap();
+    fs::write(change.join("designs/gamma.md"), "# gamma\n\nDesign.\n")
+        .unwrap();
     change
 }
 
@@ -52,7 +55,9 @@ fn fixture_change(root: &Path) -> PathBuf {
 fn renders_documents_in_schema_and_path_order() {
     let root = unique_temp_root("rendering-order");
     let change = fixture_change(&root);
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let paths: Vec<String> = documents
         .iter()
         .map(|document| document.tree_path.clone())
@@ -73,7 +78,9 @@ fn renders_documents_in_schema_and_path_order() {
 fn excludes_control_plane_files() {
     let root = unique_temp_root("rendering-control-plane");
     let change = fixture_change(&root);
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     assert!(
         documents
             .iter()
@@ -91,7 +98,9 @@ fn excludes_control_plane_files() {
 fn copies_content_verbatim_with_provenance_paths() {
     let root = unique_temp_root("rendering-content");
     let change = fixture_change(&root);
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let alpha = documents
         .iter()
         .find(|document| document.tree_path == "specifications/alpha.md")
@@ -113,7 +122,9 @@ fn copies_content_verbatim_with_provenance_paths() {
 fn proposal_renders_without_merge_target() {
     let root = unique_temp_root("rendering-proposal");
     let change = fixture_change(&root);
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let proposal = documents
         .iter()
         .find(|document| document.artifact_id == "proposal")
@@ -127,7 +138,9 @@ fn skips_unauthored_artifacts() {
     let root = unique_temp_root("rendering-unauthored");
     let change = root.join("notebook/proposals/add-bare");
     fs::create_dir_all(change.join("specifications")).unwrap();
-    let documents = render_documents(&change, "proposals/add-bare", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-bare", &default_schema())
+            .unwrap();
     assert!(documents.is_empty());
     fs::remove_dir_all(&root).unwrap();
 }
@@ -136,8 +149,12 @@ fn skips_unauthored_artifacts() {
 fn rendering_is_deterministic() {
     let root = unique_temp_root("rendering-deterministic");
     let change = fixture_change(&root);
-    let first = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
-    let second = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let first =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
+    let second =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     assert_eq!(first, second);
     fs::remove_dir_all(&root).unwrap();
 }
@@ -146,7 +163,9 @@ fn rendering_is_deterministic() {
 fn write_tree_replaces_stale_contents() {
     let root = unique_temp_root("rendering-write");
     let change = fixture_change(&root);
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let destination = root.join("render");
     fs::create_dir_all(&destination).unwrap();
     fs::write(destination.join("stale.md"), "left over\n").unwrap();
@@ -164,7 +183,9 @@ fn write_tree_replaces_stale_contents() {
 fn diff_reports_new_documents_from_dev_null() {
     let root = unique_temp_root("rendering-diff-new");
     let change = fixture_change(&root);
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let project = root.join("project");
     fs::create_dir_all(&project).unwrap();
     let diff = review_diff(&documents, &project).unwrap();
@@ -183,7 +204,9 @@ fn diff_reports_new_documents_from_dev_null() {
 fn diff_omits_unchanged_targets() {
     let root = unique_temp_root("rendering-diff-unchanged");
     let change = fixture_change(&root);
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let project = root.join("project");
     fs::create_dir_all(project.join("documentation/specifications")).unwrap();
     fs::write(
@@ -201,7 +224,9 @@ fn diff_omits_unchanged_targets() {
 fn diff_shows_changed_targets() {
     let root = unique_temp_root("rendering-diff-changed");
     let change = fixture_change(&root);
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let project = root.join("project");
     fs::create_dir_all(project.join("documentation/designs")).unwrap();
     fs::write(
@@ -213,7 +238,9 @@ fn diff_shows_changed_targets() {
     assert!(diff.contains("a/documentation/designs/gamma.md"));
     assert!(diff.contains("-Old design."));
     assert!(diff.contains("+Design."));
-    assert!(!diff.contains("new file mode 100644\n--- a/documentation/designs"));
+    assert!(
+        !diff.contains("new file mode 100644\n--- a/documentation/designs")
+    );
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -243,8 +270,12 @@ fn aggregate_hash_is_deterministic_and_order_independent() {
 
 #[test]
 fn aggregate_hash_changes_on_body_edit() {
-    let original = hash_fixture_document("proposal.md", "# proposal\n\nWhy: reasons.\n");
-    let edited = hash_fixture_document("proposal.md", "# proposal\n\nWhy: better reasons.\n");
+    let original =
+        hash_fixture_document("proposal.md", "# proposal\n\nWhy: reasons.\n");
+    let edited = hash_fixture_document(
+        "proposal.md",
+        "# proposal\n\nWhy: better reasons.\n",
+    );
     assert_ne!(
         aggregate_content_hash(&[original]),
         aggregate_content_hash(&[edited]),
@@ -265,8 +296,10 @@ fn aggregate_hash_changes_on_added_document() {
 
 #[test]
 fn aggregate_hash_changes_on_rename_without_body_edit() {
-    let original = hash_fixture_document("specifications/alpha.md", "# alpha\n");
-    let renamed = hash_fixture_document("specifications/renamed.md", "# alpha\n");
+    let original =
+        hash_fixture_document("specifications/alpha.md", "# alpha\n");
+    let renamed =
+        hash_fixture_document("specifications/renamed.md", "# alpha\n");
     assert_ne!(
         aggregate_content_hash(&[original]),
         aggregate_content_hash(&[renamed]),
@@ -301,7 +334,9 @@ fn timestamp_filename_replaced_by_h1_slug_in_tree_path() {
     )
     .unwrap();
 
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let spec = documents
         .iter()
         .find(|d| d.artifact_id == "specifications")
@@ -316,7 +351,8 @@ fn timestamp_filename_replaced_by_h1_slug_in_tree_path() {
         "target path must use the slug"
     );
     assert_eq!(
-        spec.source_note, "proposals/add-demo/specifications/20260710175830.md",
+        spec.source_note,
+        "proposals/add-demo/specifications/20260710175830.md",
         "source note must preserve the original notebook filename"
     );
     fs::remove_dir_all(&root).unwrap();
@@ -340,7 +376,9 @@ fn non_timestamp_filename_preserved_in_tree_path() {
     )
     .unwrap();
 
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let spec = documents
         .iter()
         .find(|d| d.artifact_id == "specifications")
@@ -370,7 +408,9 @@ fn timestamp_filename_without_h1_falls_back_to_original() {
     )
     .unwrap();
 
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let spec = documents
         .iter()
         .find(|d| d.artifact_id == "specifications")
@@ -387,7 +427,8 @@ fn duplicate_h1_slugs_across_timestamp_notes_collide() {
     let root = unique_temp_root("rendering-collision-duplicate-h1");
     let change = root.join("notebook/proposals/add-demo");
     fs::create_dir_all(change.join("specifications")).unwrap();
-    fs::write(change.join("proposal.md"), "# proposal\n\n## Why\n\nWhy.\n").unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\n## Why\n\nWhy.\n")
+        .unwrap();
     fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
     fs::write(
         change.join("20260101000000.todo.md"),
@@ -405,7 +446,8 @@ fn duplicate_h1_slugs_across_timestamp_notes_collide() {
     )
     .unwrap();
 
-    let result = render_documents(&change, "proposals/add-demo", &default_schema());
+    let result =
+        render_documents(&change, "proposals/add-demo", &default_schema());
     let err = result.unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("duplicate"), "{msg}");
@@ -418,7 +460,8 @@ fn timestamp_slug_colliding_with_named_note_is_rejected() {
     let root = unique_temp_root("rendering-collision-named");
     let change = root.join("notebook/proposals/add-demo");
     fs::create_dir_all(change.join("specifications")).unwrap();
-    fs::write(change.join("proposal.md"), "# proposal\n\n## Why\n\nWhy.\n").unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\n## Why\n\nWhy.\n")
+        .unwrap();
     fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
     fs::write(
         change.join("20260101000000.todo.md"),
@@ -436,7 +479,8 @@ fn timestamp_slug_colliding_with_named_note_is_rejected() {
     )
     .unwrap();
 
-    let result = render_documents(&change, "proposals/add-demo", &default_schema());
+    let result =
+        render_documents(&change, "proposals/add-demo", &default_schema());
     assert!(
         result.is_err(),
         "timestamp slug colliding with named note must error"
@@ -450,7 +494,8 @@ fn distinct_tree_paths_sharing_durable_target_collide() {
     let change = root.join("notebook/proposals/add-demo");
     fs::create_dir_all(change.join("alpha")).unwrap();
     fs::create_dir_all(change.join("beta")).unwrap();
-    fs::write(change.join("alpha/same.md"), "# Alpha same\n\nBody.\n").unwrap();
+    fs::write(change.join("alpha/same.md"), "# Alpha same\n\nBody.\n")
+        .unwrap();
     fs::write(change.join("beta/same.md"), "# Beta same\n\nBody.\n").unwrap();
 
     let schema = parse_schema(
@@ -472,7 +517,9 @@ target = "documentation/shared"
     .unwrap();
 
     let result = render_documents(&change, "proposals/add-demo", &schema);
-    let err = result.expect_err("distinct tree paths sharing one durable target must collide");
+    let err = result.expect_err(
+        "distinct tree paths sharing one durable target must collide",
+    );
     let msg = err.to_string();
     assert!(msg.contains("durable target"), "{msg}");
     assert!(msg.contains("documentation/shared/same.md"), "{msg}");
@@ -486,7 +533,8 @@ fn timestamp_filename_with_fenced_h1_falls_back_to_original() {
     let root = unique_temp_root("rendering-timestamp-fenced-h1");
     let change = root.join("notebook/proposals/add-demo");
     fs::create_dir_all(change.join("specifications")).unwrap();
-    fs::write(change.join("proposal.md"), "# proposal\n\n## Why\n\nWhy.\n").unwrap();
+    fs::write(change.join("proposal.md"), "# proposal\n\n## Why\n\nWhy.\n")
+        .unwrap();
     fs::write(change.join("meta.md"), "# meta\n\n```json\n{}\n```\n").unwrap();
     fs::write(
         change.join("20260101000000.todo.md"),
@@ -499,7 +547,9 @@ fn timestamp_filename_with_fenced_h1_falls_back_to_original() {
     )
     .unwrap();
 
-    let documents = render_documents(&change, "proposals/add-demo", &default_schema()).unwrap();
+    let documents =
+        render_documents(&change, "proposals/add-demo", &default_schema())
+            .unwrap();
     let spec = documents
         .iter()
         .find(|d| d.artifact_id == "specifications")

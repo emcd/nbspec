@@ -33,7 +33,9 @@ pub const META_FORMAT_VERSION: u32 = 1;
 /// Errors from namespace and meta note handling.
 #[derive(Debug, Error)]
 pub enum ChangeError {
-    #[error("invalid change id: {0} (expected kebab-case: lowercase alphanumerics and hyphens)")]
+    #[error(
+        "invalid change id: {0} (expected kebab-case: lowercase alphanumerics and hyphens)"
+    )]
     InvalidChangeId(String),
 
     #[error("invalid status transition: {0} -> {1}")]
@@ -99,7 +101,8 @@ pub fn first_h1_title(content: &str) -> Option<String> {
 /// case-insensitively. Scans every H2 so a required section that
 /// follows another H2 still validates.
 pub fn has_h2_section(content: &str, section: &str) -> bool {
-    scan_for_heading(content, 2, |title| title.eq_ignore_ascii_case(section)).is_some()
+    scan_for_heading(content, 2, |title| title.eq_ignore_ascii_case(section))
+        .is_some()
 }
 
 /// Markdown context state for heading scanning.
@@ -175,38 +178,40 @@ fn scan_for_heading(
     for line in content.lines() {
         match ctx {
             MdContext::InBacktickFence(open_len) => {
-                if let FenceLine::Closing(close_len) = classify_fence(line, '`')
+                if let FenceLine::Closing(close_len) =
+                    classify_fence(line, '`')
                     && close_len >= open_len
                 {
                     ctx = MdContext::Normal;
                 }
-            }
+            },
             MdContext::InTildeFence(open_len) => {
-                if let FenceLine::Closing(close_len) = classify_fence(line, '~')
+                if let FenceLine::Closing(close_len) =
+                    classify_fence(line, '~')
                     && close_len >= open_len
                 {
                     ctx = MdContext::Normal;
                 }
-            }
+            },
             MdContext::InHtmlComment => {
                 if line.contains("-->") {
                     ctx = MdContext::Normal;
                 }
-            }
+            },
             MdContext::Normal => {
                 match classify_fence(line, '`') {
                     FenceLine::Opening(len) | FenceLine::Closing(len) => {
                         ctx = MdContext::InBacktickFence(len);
                         continue;
-                    }
-                    FenceLine::NotFence => {}
+                    },
+                    FenceLine::NotFence => {},
                 }
                 match classify_fence(line, '~') {
                     FenceLine::Opening(len) | FenceLine::Closing(len) => {
                         ctx = MdContext::InTildeFence(len);
                         continue;
-                    }
-                    FenceLine::NotFence => {}
+                    },
+                    FenceLine::NotFence => {},
                 }
                 let trimmed = line.trim_start();
                 if trimmed.starts_with("<!--") {
@@ -220,7 +225,7 @@ fn scan_for_heading(
                 {
                     return Some(title);
                 }
-            }
+            },
         }
     }
     None
@@ -248,7 +253,7 @@ pub fn artifact_layout(artifact: &Artifact) -> ArtifactLayout {
                 .strip_suffix(".md")
                 .unwrap_or(&artifact.generates);
             ArtifactLayout::Note(stem.to_string())
-        }
+        },
     }
 }
 
@@ -305,17 +310,28 @@ impl ChangeStatus {
             return false;
         }
         match self {
-            Draft => matches!(next, Approved | Blocked | Superseded | Abandoned),
-            Approved => matches!(next, Implemented | Blocked | Superseded | Abandoned),
-            Implemented => matches!(next, Archived | Blocked | Superseded | Abandoned),
-            Blocked => matches!(next, Draft | Approved | Implemented | Archived),
+            Draft => {
+                matches!(next, Approved | Blocked | Superseded | Abandoned)
+            },
+            Approved => {
+                matches!(next, Implemented | Blocked | Superseded | Abandoned)
+            },
+            Implemented => {
+                matches!(next, Archived | Blocked | Superseded | Abandoned)
+            },
+            Blocked => {
+                matches!(next, Draft | Approved | Implemented | Archived)
+            },
             Archived | Superseded | Abandoned => false,
         }
     }
 }
 
 impl std::fmt::Display for ChangeStatus {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         let name = match self {
             ChangeStatus::Draft => "draft",
             ChangeStatus::Approved => "approved",
@@ -398,7 +414,10 @@ impl ChangeMetadata {
     ///
     /// Returns [`ChangeError::InvalidTransition`] when the lifecycle
     /// does not permit the move.
-    pub fn transition(&mut self, next: ChangeStatus) -> Result<(), ChangeError> {
+    pub fn transition(
+        &mut self,
+        next: ChangeStatus,
+    ) -> Result<(), ChangeError> {
         if !self.status.permits_transition(next) {
             return Err(ChangeError::InvalidTransition(self.status, next));
         }
@@ -426,7 +445,9 @@ impl ChangeMetadata {
 /// # Errors
 ///
 /// Returns [`ChangeError::Json`] when serialization fails.
-pub fn render_meta_note(metadata: &ChangeMetadata) -> Result<String, ChangeError> {
+pub fn render_meta_note(
+    metadata: &ChangeMetadata,
+) -> Result<String, ChangeError> {
     let json = serde_json::to_string_pretty(metadata)?;
     Ok(format!("```json\n{json}\n```\n"))
 }
@@ -443,8 +464,9 @@ pub fn parse_meta_note(content: &str) -> Result<ChangeMetadata, ChangeError> {
     if trimmed.starts_with('{') {
         return Ok(serde_json::from_str(trimmed)?);
     }
-    let json = extract_fenced_json(content)
-        .ok_or_else(|| ChangeError::MetaParse("no JSON object found in meta note".to_string()))?;
+    let json = extract_fenced_json(content).ok_or_else(|| {
+        ChangeError::MetaParse("no JSON object found in meta note".to_string())
+    })?;
     Ok(serde_json::from_str(json)?)
 }
 
@@ -456,16 +478,17 @@ fn extract_fenced_json(content: &str) -> Option<&str> {
         match fence_body_start {
             None => {
                 if let Some(language) = trimmed.strip_prefix("```")
-                    && (language.trim().is_empty() || language.trim() == "json")
+                    && (language.trim().is_empty()
+                        || language.trim() == "json")
                 {
                     fence_body_start = Some(offset + line.len());
                 }
-            }
+            },
             Some(start) => {
                 if trimmed == "```" {
                     return Some(&content[start..offset]);
                 }
-            }
+            },
         }
         offset += line.len();
     }

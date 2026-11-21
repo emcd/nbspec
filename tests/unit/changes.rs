@@ -1,7 +1,8 @@
 use nbspec::changes::{
-    ArtifactLayout, ChangeError, ChangeMetadata, ChangeStatus, artifact_layout, change_folder,
-    first_h1_title, has_h2_section, namespace_folders, namespace_notes, parse_meta_note,
-    render_meta_note, validate_change_id,
+    ArtifactLayout, ChangeError, ChangeMetadata, ChangeStatus,
+    artifact_layout, change_folder, first_h1_title, has_h2_section,
+    namespace_folders, namespace_notes, parse_meta_note, render_meta_note,
+    validate_change_id,
 };
 use nbspec::schemata::default_schema;
 
@@ -11,7 +12,8 @@ fn change_ids_must_be_kebab_case() {
         assert!(validate_change_id(valid).is_ok(), "{valid} should be valid");
     }
     for invalid in [
-        "", "Add-Foo", "add_foo", "add foo", "-add-foo", "add-foo-", "add--foo",
+        "", "Add-Foo", "add_foo", "add foo", "-add-foo", "add-foo-",
+        "add--foo",
     ] {
         assert!(
             matches!(
@@ -81,8 +83,13 @@ fn lifecycle_refuses_skips_and_terminal_exits() {
 
 #[test]
 fn transition_updates_status_and_timestamp() {
-    let mut metadata =
-        ChangeMetadata::new("add-foo", Some("Add foo"), "nbspec-default", "nbspec").unwrap();
+    let mut metadata = ChangeMetadata::new(
+        "add-foo",
+        Some("Add foo"),
+        "nbspec-default",
+        "nbspec",
+    )
+    .unwrap();
     let created = metadata.created_at;
     metadata.transition(ChangeStatus::Approved).unwrap();
     assert_eq!(metadata.status, ChangeStatus::Approved);
@@ -96,7 +103,9 @@ fn transition_updates_status_and_timestamp() {
 
 #[test]
 fn record_commit_captures_status_and_sha() {
-    let mut metadata = ChangeMetadata::new("add-foo", None, "nbspec-default", "nbspec").unwrap();
+    let mut metadata =
+        ChangeMetadata::new("add-foo", None, "nbspec-default", "nbspec")
+            .unwrap();
     metadata.transition(ChangeStatus::Approved).unwrap();
     metadata.record_commit("abc1234");
     assert_eq!(metadata.repository_commits.len(), 1);
@@ -109,8 +118,13 @@ fn record_commit_captures_status_and_sha() {
 
 #[test]
 fn meta_note_round_trips_through_fenced_json() {
-    let metadata =
-        ChangeMetadata::new("add-foo", Some("Add foo"), "nbspec-default", "nbspec").unwrap();
+    let metadata = ChangeMetadata::new(
+        "add-foo",
+        Some("Add foo"),
+        "nbspec-default",
+        "nbspec",
+    )
+    .unwrap();
     let rendered = render_meta_note(&metadata).unwrap();
     assert!(rendered.starts_with("```json\n"));
     assert!(rendered.ends_with("```\n"));
@@ -120,7 +134,9 @@ fn meta_note_round_trips_through_fenced_json() {
 
 #[test]
 fn meta_note_parses_with_leading_title_heading() {
-    let metadata = ChangeMetadata::new("add-foo", None, "nbspec-default", "nbspec").unwrap();
+    let metadata =
+        ChangeMetadata::new("add-foo", None, "nbspec-default", "nbspec")
+            .unwrap();
     let rendered = render_meta_note(&metadata).unwrap();
     let with_heading = format!("# meta\n\n{rendered}");
     let parsed = parse_meta_note(&with_heading).unwrap();
@@ -129,7 +145,9 @@ fn meta_note_parses_with_leading_title_heading() {
 
 #[test]
 fn meta_note_parses_bare_json() {
-    let metadata = ChangeMetadata::new("add-foo", None, "nbspec-default", "nbspec").unwrap();
+    let metadata =
+        ChangeMetadata::new("add-foo", None, "nbspec-default", "nbspec")
+            .unwrap();
     let json = serde_json::to_string_pretty(&metadata).unwrap();
     let parsed = parse_meta_note(&json).unwrap();
     assert_eq!(parsed, metadata);
@@ -143,7 +161,9 @@ fn meta_note_without_json_reports_parse_failure() {
 
 #[test]
 fn status_serializes_lowercase() {
-    let metadata = ChangeMetadata::new("add-foo", None, "nbspec-default", "nbspec").unwrap();
+    let metadata =
+        ChangeMetadata::new("add-foo", None, "nbspec-default", "nbspec")
+            .unwrap();
     let json = serde_json::to_string(&metadata).unwrap();
     assert!(json.contains("\"status\":\"draft\""));
     assert!(json.contains("\"meta_version\":1"));

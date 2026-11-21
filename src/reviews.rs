@@ -39,7 +39,16 @@ pub enum VerdictError {
 }
 
 /// Verdict value a reviewer records for a gate.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize, schemars::JsonSchema)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    Deserialize,
+    Eq,
+    PartialEq,
+    Serialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum VerdictValue {
     Approve,
@@ -47,7 +56,10 @@ pub enum VerdictValue {
 }
 
 impl std::fmt::Display for VerdictValue {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         match self {
             VerdictValue::Approve => formatter.write_str("approve"),
             VerdictValue::Revise => formatter.write_str("revise"),
@@ -116,10 +128,15 @@ pub const KNOWN_GATES: &[&str] = &[MERGE_GATE];
 /// or `None` when the gate is satisfied. Wording per kind matches
 /// the review-gating specification's refusal distinctions; the stale
 /// arm names both the bound and the current hash.
-pub fn gate_refusal_state(evaluation: &GateEvaluation<'_>, current_hash: &str) -> Option<String> {
+pub fn gate_refusal_state(
+    evaluation: &GateEvaluation<'_>,
+    current_hash: &str,
+) -> Option<String> {
     match evaluation {
         GateEvaluation::Satisfied(_) => None,
-        GateEvaluation::NoVerdict => Some("no verdict recorded for the merge gate".to_string()),
+        GateEvaluation::NoVerdict => {
+            Some("no verdict recorded for the merge gate".to_string())
+        },
         GateEvaluation::StaleApproval(verdict) => Some(format!(
             "stale approval by {reviewer} (bound sha256:{bound}, current sha256:{current_hash})",
             reviewer = verdict.record.reviewer,
@@ -169,7 +186,8 @@ pub fn resolve_reviewer(explicit: Option<&str>) -> Option<String> {
 ///
 /// Format: `<YYYYMMDDHHMMSS>-<pid-hex>-<6-hex-entropy>-<seq-hex>`.
 pub fn verdict_note_name(timestamp: &Timestamp) -> String {
-    static SEQUENCE: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    static SEQUENCE: std::sync::atomic::AtomicU32 =
+        std::sync::atomic::AtomicU32::new(0);
     let compact = timestamp.strftime("%Y%m%d%H%M%S");
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -190,7 +208,9 @@ pub fn verdict_note_name(timestamp: &Timestamp) -> String {
 /// that would accept all-dash or ISO-like prefixes.
 pub fn verdict_id_has_compact_timestamp_prefix(id: &str) -> bool {
     let bytes = id.as_bytes();
-    bytes.len() > 14 && bytes[..14].iter().all(u8::is_ascii_digit) && bytes[14] == b'-'
+    bytes.len() > 14
+        && bytes[..14].iter().all(u8::is_ascii_digit)
+        && bytes[14] == b'-'
 }
 
 /// Reports whether `id` matches the full collision-resistant verdict
@@ -222,7 +242,8 @@ pub fn is_verdict_note_id(id: &str) -> bool {
     let Some(sequence) = parts.next() else {
         return false;
     };
-    if sequence.is_empty() || !sequence.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if sequence.is_empty() || !sequence.bytes().all(|b| b.is_ascii_hexdigit())
+    {
         return false;
     }
     parts.next().is_none()
@@ -261,15 +282,18 @@ pub fn render_verdict_note(
 ///
 /// Returns [`VerdictError::Malformed`] for the first unparseable
 /// candidate and [`VerdictError::Io`] for filesystem failures.
-pub fn read_verdicts(change_directory: &Path) -> Result<Vec<Verdict>, VerdictError> {
+pub fn read_verdicts(
+    change_directory: &Path,
+) -> Result<Vec<Verdict>, VerdictError> {
     let directory = change_directory.join(VERDICTS_FOLDER);
     if !directory.is_dir() {
         return Ok(Vec::new());
     }
-    let entries = std::fs::read_dir(&directory).map_err(|source| VerdictError::Io {
-        path: directory.display().to_string(),
-        source,
-    })?;
+    let entries =
+        std::fs::read_dir(&directory).map_err(|source| VerdictError::Io {
+            path: directory.display().to_string(),
+            source,
+        })?;
     let mut names: Vec<String> = Vec::new();
     for entry in entries {
         let entry = entry.map_err(|source| VerdictError::Io {
@@ -286,13 +310,17 @@ pub fn read_verdicts(change_directory: &Path) -> Result<Vec<Verdict>, VerdictErr
     let mut verdicts = Vec::new();
     for name in names {
         let path = directory.join(&name);
-        let content = std::fs::read_to_string(&path).map_err(|source| VerdictError::Io {
-            path: path.display().to_string(),
-            source,
+        let content = std::fs::read_to_string(&path).map_err(|source| {
+            VerdictError::Io {
+                path: path.display().to_string(),
+                source,
+            }
         })?;
-        let record = parse_verdict_note(&content).map_err(|reason| VerdictError::Malformed {
-            note: format!("{VERDICTS_FOLDER}/{name}"),
-            reason,
+        let record = parse_verdict_note(&content).map_err(|reason| {
+            VerdictError::Malformed {
+                note: format!("{VERDICTS_FOLDER}/{name}"),
+                reason,
+            }
         })?;
         verdicts.push(Verdict { record, note: name });
     }
@@ -330,11 +358,12 @@ pub fn reviewer_positions<'a>(
 }
 
 /// Evaluates the slice-1 gate policy over reviewer positions.
-pub fn evaluate_gate<'a>(positions: &[ReviewerPosition<'a>]) -> GateEvaluation<'a> {
-    if let Some(position) = positions
-        .iter()
-        .find(|p| p.current && p.verdict.record.verdict == VerdictValue::Approve)
-    {
+pub fn evaluate_gate<'a>(
+    positions: &[ReviewerPosition<'a>],
+) -> GateEvaluation<'a> {
+    if let Some(position) = positions.iter().find(|p| {
+        p.current && p.verdict.record.verdict == VerdictValue::Approve
+    }) {
         return GateEvaluation::Satisfied(position.verdict);
     }
     if let Some(position) = positions
@@ -369,8 +398,8 @@ fn supersedes(candidate: &Verdict, incumbent: &Verdict) -> bool {
 /// reviewer, gate, and aggregate hash.
 fn parse_verdict_note(content: &str) -> Result<VerdictRecord, String> {
     let json = extract_single_fenced_json(content)?;
-    let record: VerdictRecord =
-        serde_json::from_str(json).map_err(|error| format!("payload is not a verdict: {error}"))?;
+    let record: VerdictRecord = serde_json::from_str(json)
+        .map_err(|error| format!("payload is not a verdict: {error}"))?;
     if record.reviewer.trim().is_empty() {
         return Err("reviewer is empty".to_string());
     }
@@ -395,18 +424,20 @@ fn extract_single_fenced_json(content: &str) -> Result<&str, String> {
                     let language = language.trim();
                     if language.is_empty() || language == "json" {
                         if block.is_some() {
-                            return Err("more than one fenced block".to_string());
+                            return Err(
+                                "more than one fenced block".to_string()
+                            );
                         }
                         open_start = Some(offset + line.len());
                     }
                 }
-            }
+            },
             Some(start) => {
                 if trimmed == "```" {
                     block = Some((start, offset));
                     open_start = None;
                 }
-            }
+            },
         }
         offset += line.len();
     }

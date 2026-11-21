@@ -2,12 +2,12 @@ use std::fs;
 use std::path::PathBuf;
 
 use nbspec::configuration::{
-    Configuration, PROJECT_CONFIGURATION_DIR_DEFAULT, SETTINGS_FILE, SettingsDocument,
-    resolve_configuration,
+    Configuration, PROJECT_CONFIGURATION_DIR_DEFAULT, SETTINGS_FILE,
+    SettingsDocument, resolve_configuration,
 };
 use nbspec::schemata::{
-    ArtifactGrammar, SCHEMA_FILE, SCHEMA_NAME_DEFAULT, SchemaError, default_schema, parse_schema,
-    resolve_schema,
+    ArtifactGrammar, SCHEMA_FILE, SCHEMA_NAME_DEFAULT, SchemaError,
+    default_schema, parse_schema, resolve_schema,
 };
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -89,7 +89,8 @@ fn default_schema_marks_required_artifacts_and_grammars() {
 
 #[test]
 fn artifact_extensions_default_to_optional_free_form() {
-    let schema = parse_schema(&single_artifact_schema("artifact.md", None)).unwrap();
+    let schema =
+        parse_schema(&single_artifact_schema("artifact.md", None)).unwrap();
     let artifact = schema.artifact("artifact").unwrap();
     assert!(!artifact.required);
     assert_eq!(artifact.grammar, None);
@@ -117,7 +118,8 @@ fn authoring_order_respects_dependencies() {
         .iter()
         .map(|artifact| artifact.id.as_str())
         .collect();
-    let proposal_position = order.iter().position(|id| *id == "proposal").unwrap();
+    let proposal_position =
+        order.iter().position(|id| *id == "proposal").unwrap();
     for id in ["specifications", "designs", "decisions"] {
         let position = order.iter().position(|other| other == &id).unwrap();
         assert!(proposal_position < position);
@@ -201,29 +203,38 @@ generates = \"{generates}\"
 
 #[test]
 fn absolute_generates_path_is_invalid() {
-    let error = parse_schema(&single_artifact_schema("/tmp/escape.md", None)).unwrap_err();
+    let error = parse_schema(&single_artifact_schema("/tmp/escape.md", None))
+        .unwrap_err();
     assert!(matches!(error, SchemaError::Invalid(_)));
     assert!(error.to_string().contains("absolute"));
 }
 
 #[test]
 fn parent_directory_target_is_invalid() {
-    let error =
-        parse_schema(&single_artifact_schema("artifact.md", Some("../outside"))).unwrap_err();
+    let error = parse_schema(&single_artifact_schema(
+        "artifact.md",
+        Some("../outside"),
+    ))
+    .unwrap_err();
     assert!(matches!(error, SchemaError::Invalid(_)));
     assert!(error.to_string().contains("parent-directory"));
 }
 
 #[test]
 fn absolute_target_is_invalid() {
-    let error =
-        parse_schema(&single_artifact_schema("artifact.md", Some("/etc/nbspec"))).unwrap_err();
+    let error = parse_schema(&single_artifact_schema(
+        "artifact.md",
+        Some("/etc/nbspec"),
+    ))
+    .unwrap_err();
     assert!(matches!(error, SchemaError::Invalid(_)));
 }
 
 #[test]
 fn nested_parent_directory_generates_is_invalid() {
-    let error = parse_schema(&single_artifact_schema("docs/../../escape.md", None)).unwrap_err();
+    let error =
+        parse_schema(&single_artifact_schema("docs/../../escape.md", None))
+            .unwrap_err();
     assert!(matches!(error, SchemaError::Invalid(_)));
 }
 
@@ -232,7 +243,8 @@ fn backslash_and_drive_prefix_paths_are_invalid() {
     // TOML escaping: "docs\\\\escape.md" in the document parses to a
     // value containing one literal backslash.
     for path in ["docs\\\\escape.md", "c:/escape.md"] {
-        let error = parse_schema(&single_artifact_schema(path, None)).unwrap_err();
+        let error =
+            parse_schema(&single_artifact_schema(path, None)).unwrap_err();
         assert!(matches!(error, SchemaError::Invalid(_)), "path: {path}");
     }
 }
@@ -288,7 +300,8 @@ fn resolution_prefers_explicit_name_over_configuration() {
         archives: true,
         archive_directory: PathBuf::from("documentation/archives"),
     };
-    let schema = resolve_schema(Some(SCHEMA_NAME_DEFAULT), &configuration).unwrap();
+    let schema =
+        resolve_schema(Some(SCHEMA_NAME_DEFAULT), &configuration).unwrap();
     assert_eq!(schema.name, SCHEMA_NAME_DEFAULT);
     fs::remove_dir_all(&root).unwrap();
 }
@@ -321,7 +334,8 @@ generates = \"proposal.md\"
 fn resolution_reports_missing_named_schema() {
     let root = unique_temp_root("schemata-missing");
     fs::create_dir_all(&root).unwrap();
-    let error = resolve_schema(Some("phantom"), &default_configuration(&root)).unwrap_err();
+    let error = resolve_schema(Some("phantom"), &default_configuration(&root))
+        .unwrap_err();
     assert!(matches!(error, SchemaError::NotFound(_)));
     fs::remove_dir_all(&root).unwrap();
 }
@@ -330,7 +344,9 @@ fn resolution_reports_missing_named_schema() {
 fn configuration_defaults_when_no_files_present() {
     let root = unique_temp_root("configuration-defaults");
     fs::create_dir_all(&root).unwrap();
-    let configuration = resolve_configuration(&root, SettingsDocument::default(), None).unwrap();
+    let configuration =
+        resolve_configuration(&root, SettingsDocument::default(), None)
+            .unwrap();
     assert_eq!(configuration.schema, None);
     assert_eq!(
         configuration.project_directory,
@@ -375,7 +391,9 @@ fn global_settings_apply_when_project_is_silent() {
 fn archives_default_enabled_at_default_directory() {
     let root = unique_temp_root("configuration-archives-default");
     fs::create_dir_all(&root).unwrap();
-    let configuration = resolve_configuration(&root, SettingsDocument::default(), None).unwrap();
+    let configuration =
+        resolve_configuration(&root, SettingsDocument::default(), None)
+            .unwrap();
     assert!(configuration.archives);
     assert_eq!(
         configuration.archive_directory,
@@ -394,7 +412,9 @@ fn project_settings_disable_and_relocate_archives() {
         "archives = false\narchive_directory = \"records/archives\"\n",
     )
     .unwrap();
-    let configuration = resolve_configuration(&root, SettingsDocument::default(), None).unwrap();
+    let configuration =
+        resolve_configuration(&root, SettingsDocument::default(), None)
+            .unwrap();
     assert!(!configuration.archives);
     assert_eq!(
         configuration.archive_directory,
@@ -415,7 +435,9 @@ fn escaping_archive_directory_is_invalid() {
             format!("archive_directory = \"{directory}\"\n"),
         )
         .unwrap();
-        let error = resolve_configuration(&root, SettingsDocument::default(), None).unwrap_err();
+        let error =
+            resolve_configuration(&root, SettingsDocument::default(), None)
+                .unwrap_err();
         assert!(
             matches!(error, ConfigurationError::Invalid(_)),
             "directory: {directory}"
@@ -444,7 +466,8 @@ fn environment_override_relocates_project_directory() {
     let root = unique_temp_root("configuration-env");
     let relocated = root.join("elsewhere/nbspec");
     fs::create_dir_all(&relocated).unwrap();
-    fs::write(relocated.join(SETTINGS_FILE), "schema = \"relocated\"\n").unwrap();
+    fs::write(relocated.join(SETTINGS_FILE), "schema = \"relocated\"\n")
+        .unwrap();
     let configuration = resolve_configuration(
         &root,
         SettingsDocument::default(),
@@ -466,17 +489,24 @@ fn global_setting_relocates_project_directory_below_environment() {
     let from_env = root.join("env-choice");
     fs::create_dir_all(&from_global).unwrap();
     fs::create_dir_all(&from_env).unwrap();
-    fs::write(from_global.join(SETTINGS_FILE), "schema = \"global-dir\"\n").unwrap();
+    fs::write(from_global.join(SETTINGS_FILE), "schema = \"global-dir\"\n")
+        .unwrap();
     fs::write(from_env.join(SETTINGS_FILE), "schema = \"env-dir\"\n").unwrap();
     let global = SettingsDocument {
         project_configuration_directory: Some(PathBuf::from("global-choice")),
         ..SettingsDocument::default()
     };
 
-    let without_env = resolve_configuration(&root, global.clone(), None).unwrap();
+    let without_env =
+        resolve_configuration(&root, global.clone(), None).unwrap();
     assert_eq!(without_env.schema.as_deref(), Some("global-dir"));
 
-    let with_env = resolve_configuration(&root, global, Some(PathBuf::from("env-choice"))).unwrap();
+    let with_env = resolve_configuration(
+        &root,
+        global,
+        Some(PathBuf::from("env-choice")),
+    )
+    .unwrap();
     assert_eq!(with_env.schema.as_deref(), Some("env-dir"));
 
     fs::remove_dir_all(&root).unwrap();

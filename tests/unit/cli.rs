@@ -49,7 +49,13 @@ fn other_failures_carry_the_error_banner() {
 fn review_verb_parses_with_gate_default() {
     use clap::Parser;
     use nbspec::cli::{Cli, Command, VerdictArg};
-    let cli = Cli::parse_from(["nbspec", "review", "add-demo", "--verdict", "approve"]);
+    let cli = Cli::parse_from([
+        "nbspec",
+        "review",
+        "add-demo",
+        "--verdict",
+        "approve",
+    ]);
     match cli.command {
         Command::Review {
             change_id,
@@ -65,7 +71,7 @@ fn review_verb_parses_with_gate_default() {
             assert_eq!(comment, None);
             assert_eq!(comment_file, None);
             assert_eq!(reviewer, None);
-        }
+        },
         other => panic!("expected Review, got {other:?}"),
     }
 }
@@ -98,7 +104,7 @@ fn review_verb_takes_dash_comment_literally() {
                 Some("-"),
                 "--comment never interprets a value as a stdin marker"
             );
-        }
+        },
         other => panic!("expected Review, got {other:?}"),
     }
 }
@@ -124,7 +130,7 @@ fn review_verb_accepts_comment_file() {
         } => {
             assert_eq!(comment, None);
             assert_eq!(comment_file.as_deref(), Some("findings.md"));
-        }
+        },
         other => panic!("expected Review, got {other:?}"),
     }
 }
@@ -175,7 +181,7 @@ fn review_verb_accepts_comment_and_reviewer() {
             assert_eq!(verdict, VerdictArg::Revise);
             assert_eq!(comment.as_deref(), Some("findings at reviews/9"));
             assert_eq!(reviewer.as_deref(), Some("Advisor"));
-        }
+        },
         other => panic!("expected Review, got {other:?}"),
     }
 }

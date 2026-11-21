@@ -44,7 +44,12 @@ pub fn render_header(provenance: &Provenance) -> String {
 
 /// Stamps a document body with a provenance header for `change_id`,
 /// hashing the body as given.
-pub fn stamp(body: &str, change_id: &str, notebook: &str, note: &str) -> String {
+pub fn stamp(
+    body: &str,
+    change_id: &str,
+    notebook: &str,
+    note: &str,
+) -> String {
     let provenance = Provenance {
         change_id: change_id.to_string(),
         notebook: notebook.to_string(),
@@ -90,7 +95,7 @@ fn parse_header(line: &str) -> Option<Provenance> {
             "notebook" => notebook = Some(value.to_string()),
             "note" => note = Some(value.to_string()),
             "hash" => hash = Some(value.strip_prefix("sha256:")?.to_string()),
-            _ => {}
+            _ => {},
         }
     }
     Some(Provenance {

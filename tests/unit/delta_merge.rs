@@ -4,7 +4,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use nbspec::merging::{MergeError, RefusalReason, TargetStatus, merge_documents, target_status};
+use nbspec::merging::{
+    MergeError, RefusalReason, TargetStatus, merge_documents, target_status,
+};
 use nbspec::provenance;
 use nbspec::rendering::RenderedDocument;
 
@@ -40,7 +42,12 @@ fn seed_target(root: &Path, name: &str, change: &str, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
         &path,
-        provenance::stamp(body, change, "home", &format!("proposals/{change}/x.md")),
+        provenance::stamp(
+            body,
+            change,
+            "home",
+            &format!("proposals/{change}/x.md"),
+        ),
     )
     .unwrap();
 }
@@ -128,10 +135,14 @@ The system SHALL gamma.
 ### Requirement: Beta
 ";
     let documents = vec![document("alpha", delta)];
-    let first = merge_documents(&documents, &root, "add-demo", "home", None, false).unwrap();
+    let first =
+        merge_documents(&documents, &root, "add-demo", "home", None, false)
+            .unwrap();
     assert_eq!(first.written.len(), 1);
     let stamped = fs::read_to_string(target_of(&root, "alpha")).unwrap();
-    let second = merge_documents(&documents, &root, "add-demo", "home", None, false).unwrap();
+    let second =
+        merge_documents(&documents, &root, "add-demo", "home", None, false)
+            .unwrap();
     assert!(second.written.is_empty(), "no rewrite on remerge");
     assert_eq!(
         second.unchanged,
@@ -392,7 +403,8 @@ fn unmanaged_parseable_target_adopts_under_force() {
         1,
         "parseable base adopted under force"
     );
-    let (header, _) = provenance::split_document(&fs::read_to_string(&path).unwrap());
+    let (header, _) =
+        provenance::split_document(&fs::read_to_string(&path).unwrap());
     assert_eq!(
         header.unwrap().change_id,
         "add-demo",
@@ -496,7 +508,8 @@ Text.
 
 ### Requirement: Alpha
 ";
-    let status = target_status(&document("alpha", delta), &root, "add-demo").unwrap();
+    let status =
+        target_status(&document("alpha", delta), &root, "add-demo").unwrap();
     assert!(
         matches!(status, TargetStatus::Unmergeable(_)),
         "planning failure surfaces as status, keeping display total"

@@ -11,6 +11,7 @@ mod interchange_plan;
 mod interchange_proof;
 mod mcp;
 mod merging;
+mod merging_stale;
 mod nb_diagnostics;
 mod operations;
 mod rendering;
