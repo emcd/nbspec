@@ -58,7 +58,8 @@ pub(crate) fn stdout_of(output: &Output) -> String {
 /// resumed `import` would produce; tests that need a different
 /// shape can write additional files after calling this.
 fn seed_notebook_change(fixture: &Fixture, change_id: &str) {
-    let change_path = fixture.notebook_path().join("proposals").join(change_id);
+    let change_path =
+        fixture.notebook_path().join("proposals").join(change_id);
     std::fs::create_dir_all(&change_path).unwrap();
     std::fs::write(
         change_path.join("proposal.md"),
@@ -77,13 +78,18 @@ fn seed_notebook_change(fixture: &Fixture, change_id: &str) {
     )
     .unwrap();
     std::fs::create_dir_all(change_path.join("designs")).unwrap();
-    std::fs::write(change_path.join("designs/main.md"), "design body\n").unwrap();
+    std::fs::write(change_path.join("designs/main.md"), "design body\n")
+        .unwrap();
     // The export reads `work.todo.md` and renders it as
     // `tasks.md` ONLY when the file carries the canonical
     // `# [ ] work` or `# [x] work` title line. Match that shape
     // so the work-note-to-tasks round-trip reconstructs
     // `tasks.md` in the export.
-    std::fs::write(change_path.join("work.todo.md"), "# [ ] work\n- [ ] item\n").unwrap();
+    std::fs::write(
+        change_path.join("work.todo.md"),
+        "# [ ] work\n- [ ] item\n",
+    )
+    .unwrap();
     std::fs::create_dir_all(change_path.join("decisions")).unwrap();
     std::fs::write(
         change_path
@@ -109,7 +115,8 @@ fn walk_dir(root: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(root) else {
         return files;
     };
-    let mut names: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+    let mut names: Vec<PathBuf> =
+        entries.flatten().map(|e| e.path()).collect();
     names.sort();
     for path in names {
         let Ok(metadata) = std::fs::symlink_metadata(&path) else {
@@ -129,7 +136,8 @@ fn import_defers_active_tree_and_writes_archive() {
     let fixture = Fixture::new();
     let fixture_link = link_fixture(&fixture);
 
-    let imported = nbspec(&fixture, &["import", &fixture_link.display().to_string()]);
+    let imported =
+        nbspec(&fixture, &["import", &fixture_link.display().to_string()]);
     assert!(
         imported.status.success(),
         "stderr: {}",
@@ -175,14 +183,16 @@ fn import_preserves_checked_tasks() {
     let fixture = Fixture::new();
     let source = fixture.project_root().join("scratch-checked");
     std::fs::create_dir_all(source.join("add-foo")).unwrap();
-    std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n\nbody\n").unwrap();
+    std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n\nbody\n")
+        .unwrap();
     std::fs::write(
         source.join("add-foo/tasks.md"),
         "# [ ] Tasks\n- [x] done task\n- [ ] todo task\n",
     )
     .unwrap();
 
-    let imported = nbspec(&fixture, &["import", &source.display().to_string()]);
+    let imported =
+        nbspec(&fixture, &["import", &source.display().to_string()]);
     assert!(
         imported.status.success(),
         "import with checked tasks must succeed; stderr: {} stdout: {}",
@@ -251,7 +261,8 @@ fn refusal_aborts_partial_writes() {
     )
     .unwrap();
 
-    let imported = nbspec(&fixture, &["import", &source.display().to_string()]);
+    let imported =
+        nbspec(&fixture, &["import", &source.display().to_string()]);
     assert!(
         !imported.status.success(),
         "import must fail on malformed tasks.md (write failure); stderr: {} stdout: {}",
@@ -402,7 +413,8 @@ fn export_refuses_change_id_traversal() {
         stderr_of(&bad)
     );
     assert!(
-        sentinel.exists() && std::fs::read_to_string(&sentinel).unwrap() == "untouched\n",
+        sentinel.exists()
+            && std::fs::read_to_string(&sentinel).unwrap() == "untouched\n",
         "refusal must not have deleted the sentinel"
     );
     let stderr = stderr_of(&bad);
@@ -444,7 +456,8 @@ fn export_refuses_change_id_traversal_with_overwrite() {
         stderr_of(&bad)
     );
     assert!(
-        sentinel.exists() && std::fs::read_to_string(&sentinel).unwrap() == "untouched\n",
+        sentinel.exists()
+            && std::fs::read_to_string(&sentinel).unwrap() == "untouched\n",
         "refusal must not have deleted the sentinel even with --overwrite"
     );
     let stderr = stderr_of(&bad);
@@ -517,7 +530,9 @@ fn export_overwrite_preserves_backup_of_old_tree() {
     let backup_entries: Vec<_> = std::fs::read_dir(&export_target)
         .unwrap()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_name().to_string_lossy().contains(".backup-"))
+        .filter(|entry| {
+            entry.file_name().to_string_lossy().contains(".backup-")
+        })
         .collect();
     assert!(
         !backup_entries.is_empty(),
@@ -610,7 +625,8 @@ fn delete_original_refuses_when_proof_is_dirty() {
     // diverges.
     let source = fixture.project_root().join("scratch-dirty");
     std::fs::create_dir_all(source.join("add-foo")).unwrap();
-    std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n\nbody\n").unwrap();
+    std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n\nbody\n")
+        .unwrap();
     std::fs::write(
         source.join("add-foo/tasks.md"),
         "# [ ] Tasks\n- [ ] only\n\nSecond paragraph the round trip cannot reconstruct verbatim.\n",
@@ -649,7 +665,8 @@ fn delete_original_authorizes_clean_deletion() {
     // is clean and --delete-original proceeds.
     let source = fixture.project_root().join("scratch-clean");
     std::fs::create_dir_all(source.join("add-foo")).unwrap();
-    std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n\nbody\n").unwrap();
+    std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n\nbody\n")
+        .unwrap();
 
     let imported = nbspec(
         &fixture,
@@ -672,7 +689,9 @@ fn delete_original_authorizes_clean_deletion() {
     let quarantine_entries: Vec<_> = std::fs::read_dir(&source)
         .unwrap()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_name().to_string_lossy().contains(".quarantine-"))
+        .filter(|entry| {
+            entry.file_name().to_string_lossy().contains(".quarantine-")
+        })
         .collect();
     assert_eq!(
         quarantine_entries.len(),
@@ -701,7 +720,8 @@ fn delete_original_restores_quarantine_on_dirty_proof() {
     // the source verbatim.
     let source = fixture.project_root().join("scratch-dirty-quarantine");
     std::fs::create_dir_all(source.join("add-foo")).unwrap();
-    std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n\nbody\n").unwrap();
+    std::fs::write(source.join("add-foo/proposal.md"), "# add-foo\n\nbody\n")
+        .unwrap();
     std::fs::write(
         source.join("add-foo/tasks.md"),
         "# [ ] Tasks\n- [ ] only\n\nThis second paragraph drifts from the export.\n",
@@ -732,7 +752,9 @@ fn delete_original_restores_quarantine_on_dirty_proof() {
     let quarantine_entries: Vec<_> = std::fs::read_dir(&source)
         .unwrap()
         .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_name().to_string_lossy().contains(".quarantine-"))
+        .filter(|entry| {
+            entry.file_name().to_string_lossy().contains(".quarantine-")
+        })
         .collect();
     assert!(
         quarantine_entries.is_empty(),
@@ -760,7 +782,8 @@ fn delete_original_archive_renames_source_to_quarantine_with_passing_proof() {
     // compares the extracted archive against this exact content.
     let change_id = "archive-roundtrip";
     let source_root = fixture.project_root().join("scratch-archive-tree");
-    let archive_tree = source_root.join("openspec/changes/archive").join(change_id);
+    let archive_tree =
+        source_root.join("openspec/changes/archive").join(change_id);
     std::fs::create_dir_all(&archive_tree).unwrap();
     std::fs::write(
         archive_tree.join("proposal.md"),

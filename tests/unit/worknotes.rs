@@ -34,13 +34,15 @@ fn parses_title_and_items() {
 #[test]
 fn records_item_line_numbers() {
     let checklist = parse_work_note(WORK_NOTE).unwrap();
-    let lines: Vec<usize> = checklist.items.iter().map(|item| item.line).collect();
+    let lines: Vec<usize> =
+        checklist.items.iter().map(|item| item.line).collect();
     assert_eq!(lines, vec![13, 14, 15]);
 }
 
 #[test]
 fn parses_completed_title() {
-    let checklist = parse_work_note("# [x] work\n\n- [x] Everything.\n").unwrap();
+    let checklist =
+        parse_work_note("# [x] work\n\n- [x] Everything.\n").unwrap();
     assert_eq!(checklist.title.as_deref(), Some("work"));
     assert!(checklist.complete);
     assert_eq!(checklist.progress(), (1, 1));
@@ -48,7 +50,8 @@ fn parses_completed_title() {
 
 #[test]
 fn accepts_indented_items() {
-    let checklist = parse_work_note("- [ ] Parent.\n  - [x] Nested.\n").unwrap();
+    let checklist =
+        parse_work_note("- [ ] Parent.\n  - [x] Nested.\n").unwrap();
     assert_eq!(checklist.progress(), (1, 2));
     assert_eq!(checklist.items[1].text, "Nested.");
 }
@@ -107,7 +110,8 @@ fn tolerates_missing_title() {
 
 #[test]
 fn handles_crlf_line_endings() {
-    let checklist = parse_work_note("# [ ] work\r\n\r\n- [x] Done.\r\n").unwrap();
+    let checklist =
+        parse_work_note("# [ ] work\r\n\r\n- [x] Done.\r\n").unwrap();
     assert_eq!(checklist.title.as_deref(), Some("work"));
     assert_eq!(checklist.progress(), (1, 1));
     assert_eq!(checklist.items[0].text, "Done.");

@@ -53,7 +53,8 @@ The system SHALL gamma.
         "added block appended: {body}"
     );
     assert!(
-        body.find("### Requirement: Alpha").unwrap() < body.find("### Requirement: Gamma").unwrap(),
+        body.find("### Requirement: Alpha").unwrap()
+            < body.find("### Requirement: Gamma").unwrap(),
         "original order kept, additions appended: {body}"
     );
 }
@@ -79,7 +80,8 @@ The system SHALL beta.
 
 ### Requirement: Ghost
 ";
-    let applied = plan_delta_merge(delta, Some(TARGET), "alpha", false).unwrap();
+    let applied =
+        plan_delta_merge(delta, Some(TARGET), "alpha", false).unwrap();
     assert_eq!(applied.body, TARGET, "already-removed is a no-op");
     assert_eq!(applied.warnings.len(), 1, "one already-removed warning");
     assert!(
@@ -210,7 +212,8 @@ fn renamed_reheaders_in_place() {
         "old header gone: {body}"
     );
     assert!(
-        body.find("Alpha2").unwrap() < body.find("### Requirement: Beta").unwrap(),
+        body.find("Alpha2").unwrap()
+            < body.find("### Requirement: Beta").unwrap(),
         "renamed block keeps its slot: {body}"
     );
     assert!(
@@ -238,7 +241,8 @@ fn renamed_both_missing_refuses() {
 
 #[test]
 fn renamed_already_synced_is_a_noop() {
-    let target = TARGET.replace("### Requirement: Alpha", "### Requirement: Alpha2");
+    let target =
+        TARGET.replace("### Requirement: Alpha", "### Requirement: Alpha2");
     let delta = "\
 # alpha
 
@@ -247,7 +251,8 @@ fn renamed_already_synced_is_a_noop() {
 - FROM: `### Requirement: Alpha`
 - TO: `### Requirement: Alpha2`
 ";
-    let applied = plan_delta_merge(delta, Some(&target), "alpha", false).unwrap();
+    let applied =
+        plan_delta_merge(delta, Some(&target), "alpha", false).unwrap();
     assert_eq!(applied.body, target, "synced rename changes nothing");
     assert!(applied.warnings.is_empty());
 }
@@ -298,7 +303,8 @@ fn added_identical_is_a_noop() {
 ### Requirement: Beta
 The system SHALL beta.
 ";
-    let applied = plan_delta_merge(delta, Some(TARGET), "alpha", false).unwrap();
+    let applied =
+        plan_delta_merge(delta, Some(TARGET), "alpha", false).unwrap();
     assert_eq!(applied.body, TARGET, "identical re-add changes nothing");
 }
 
@@ -456,7 +462,8 @@ fn removed_only_against_absent_target_skips() {
 
 #[test]
 fn purpose_difference_warns() {
-    let target = "# alpha\n\n## Purpose\n\nOld why.\n\n## ADDED Requirements\n";
+    let target =
+        "# alpha\n\n## Purpose\n\nOld why.\n\n## ADDED Requirements\n";
     let delta = "\
 # alpha
 
@@ -469,7 +476,8 @@ New why.
 ### Requirement: First
 The system SHALL first.
 ";
-    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    let applied =
+        plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
     assert!(
         applied
             .warnings
@@ -576,8 +584,10 @@ fn crlf_noop_round_trips_bytes() {
     // The reviewer's exact case: missing REMOVED on a CRLF target
     // with deliberate spacing must not rewrite a single byte.
     let target = "# alpha\r\n\r\n## ADDED Requirements\r\n\r\n### Requirement: Alpha\r\nText.\r\n";
-    let delta = "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n";
-    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    let delta =
+        "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n";
+    let applied =
+        plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
     assert_eq!(applied.body, target, "no-op preserves bytes and EOL");
     assert_eq!(applied.warnings.len(), 1);
 }
@@ -585,21 +595,24 @@ fn crlf_noop_round_trips_bytes() {
 #[test]
 fn deliberate_blanks_survive_noop() {
     let target = "# alpha\n\n\n## ADDED Requirements\n\n\n### Requirement: Alpha\nText.\n";
-    let delta = "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n";
-    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    let delta =
+        "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n";
+    let applied =
+        plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
     assert_eq!(applied.body, target, "deliberate spacing preserved");
 }
 
 #[test]
 fn crlf_edits_adopt_crlf() {
     let target = "# alpha\r\n\r\n## ADDED Requirements\r\n\r\n### Requirement: Alpha\r\nText.\r\n\r\n### Requirement: Beta\r\nOld.\r\n";
-    let delta = "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Beta\n";
-    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    let delta =
+        "# alpha\n\n## REMOVED Requirements\n\n### Requirement: Beta\n";
+    let applied =
+        plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
     assert!(!applied.body.contains("Beta"), "removed");
-    let bare_lf = applied
-        .body
-        .match_indices('\n')
-        .any(|(index, _)| index == 0 || applied.body.as_bytes()[index - 1] != b'\r');
+    let bare_lf = applied.body.match_indices('\n').any(|(index, _)| {
+        index == 0 || applied.body.as_bytes()[index - 1] != b'\r'
+    });
     assert!(!bare_lf, "no bare LF in CRLF output");
 }
 
@@ -626,9 +639,11 @@ fn duplicate_sections_refuse() {
 
 #[test]
 fn rename_chain_remerges_clean() {
-    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: C\nText.\n";
+    let target =
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: C\nText.\n";
     let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n";
-    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    let applied =
+        plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
     assert_eq!(applied.body, target, "applied chain remerges silently");
     assert!(applied.warnings.is_empty());
 }
@@ -642,10 +657,11 @@ fn rename_cycle_refuses() {
 
 #[test]
 fn delta_purpose_without_target_purpose_warns() {
-    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
-    let delta =
-        "# alpha\n\n## Purpose\n\nWhy.\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
-    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    let target =
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
+    let delta = "# alpha\n\n## Purpose\n\nWhy.\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
+    let applied =
+        plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
     assert!(
         applied
             .warnings
@@ -682,7 +698,8 @@ fn fenced_added_heading_does_not_capture_insertion() {
     // A fenced example ADDED section before the live structure must
     // not capture the append; remerging the result is a silent no-op.
     let target = "# alpha\n\n```md\n## ADDED Requirements\n\n### Requirement: Ghost\nText.\n```\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
-    let delta = "# alpha\n\n## ADDED Requirements\n\n### Requirement: Beta\nText.\n";
+    let delta =
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: Beta\nText.\n";
     let first = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
     assert!(
         first.body.contains("```md\n## ADDED Requirements"),
@@ -697,7 +714,8 @@ fn fenced_added_heading_does_not_capture_insertion() {
         "append lands in the live section: {}",
         first.body
     );
-    let second = plan_delta_merge(delta, Some(&first.body), "alpha", false).unwrap();
+    let second =
+        plan_delta_merge(delta, Some(&first.body), "alpha", false).unwrap();
     assert_eq!(second.body, first.body, "remerge is byte-identical");
     assert!(second.warnings.is_empty());
 }
@@ -705,8 +723,10 @@ fn fenced_added_heading_does_not_capture_insertion() {
 #[test]
 fn tilde_fenced_added_heading_does_not_capture() {
     let target = "# alpha\n\n~~~\n## ADDED Requirements\n~~~\n\n## ADDED Requirements\n\n### Requirement: Alpha\nText.\n";
-    let delta = "# alpha\n\n## ADDED Requirements\n\n### Requirement: Beta\nText.\n";
-    let applied = plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
+    let delta =
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: Beta\nText.\n";
+    let applied =
+        plan_delta_merge(delta, Some(target), "alpha", false).unwrap();
     assert_eq!(applied.body.matches("### Requirement: Beta").count(), 1);
     assert!(applied.body.contains("~~~\n## ADDED Requirements\n~~~"));
 }
@@ -730,7 +750,8 @@ fn repeated_target_sections_all_apply() {
 fn initial_chain_applies_transitively() {
     // A→B→C against a target holding only A ends as C: the created
     // intermediate satisfies the second link in the same fixpoint.
-    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n";
+    let target =
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n";
     let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n";
     let body = plan(delta, Some(target)).unwrap();
     assert!(
@@ -762,7 +783,8 @@ fn repeated_target_modified_sections_all_apply() {
 fn intermediate_only_chain_converges() {
     // Only the middle link exists: B→C applies, then A→B resolves
     // against the arrived C instead of erroring source-missing.
-    let target = "# alpha\n\n## ADDED Requirements\n\n### Requirement: B\nTwo.\n";
+    let target =
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: B\nTwo.\n";
     let delta = "# alpha\n\n## RENAMED Requirements\n\n- FROM: `### Requirement: A`\n- TO: `### Requirement: B`\n\n- FROM: `### Requirement: B`\n- TO: `### Requirement: C`\n";
     let body = plan(delta, Some(target)).unwrap();
     assert!(
@@ -812,7 +834,8 @@ fn cr_only_targets_treat_cr_as_content() {
     // Removal warns already-removed: nothing addressable to delete.
     let rename_message = plan(rename, Some(target)).unwrap_err();
     assert!(rename_message.contains("not found"), "{rename_message}");
-    let removed = plan_delta_merge(remove, Some(target), "alpha", false).unwrap();
+    let removed =
+        plan_delta_merge(remove, Some(target), "alpha", false).unwrap();
     assert_eq!(removed.body, target, "nothing addressable, nothing changed");
     assert!(
         removed
@@ -875,9 +898,9 @@ fn append_preserves_bytes_lf_and_crlf() {
     // Exact byte assertions: deliberate blanks before a following
     // H2 and at EOF survive on both LF and CRLF, existing-section
     // and create-section paths.
-    let lf =
-        "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n\n\n## Designs\n\nProse.\n";
-    let delta = "# alpha\n\n## ADDED Requirements\n\n### Requirement: B\nTwo.\n";
+    let lf = "# alpha\n\n## ADDED Requirements\n\n### Requirement: A\nOne.\n\n\n## Designs\n\nProse.\n";
+    let delta =
+        "# alpha\n\n## ADDED Requirements\n\n### Requirement: B\nTwo.\n";
     let lf_body = plan(delta, Some(lf)).unwrap();
     assert!(
         lf_body.contains("### Requirement: B\nTwo.\n\n\n## Designs"),
@@ -890,13 +913,20 @@ fn append_preserves_bytes_lf_and_crlf() {
         crlf_body.replace("\r\n", "\n").replace('\n', "\r\n"),
         "CRLF stays CRLF throughout"
     );
-    assert!(crlf_body.contains("### Requirement: B\r\nTwo.\r\n\r\n\r\n## Designs"));
+    assert!(
+        crlf_body.contains("### Requirement: B\r\nTwo.\r\n\r\n\r\n## Designs")
+    );
     // Create-section path on a section-less target keeps EOF shape.
     let plain = "# alpha\n\n## Purpose\n\nWhy.\n";
     let created = plan(delta, Some(plain)).unwrap();
-    assert!(created.contains("## ADDED Requirements\n\n### Requirement: B\nTwo.\n"));
+    assert!(
+        created
+            .contains("## ADDED Requirements\n\n### Requirement: B\nTwo.\n")
+    );
     assert!(created.ends_with("Two.\n") && !created.ends_with("\n\n"));
     let plain_crlf = plain.replace('\n', "\r\n");
     let created_crlf = plan(delta, Some(&plain_crlf)).unwrap();
-    assert!(created_crlf.contains("## ADDED Requirements\r\n\r\n### Requirement: B\r\nTwo.\r\n"));
+    assert!(created_crlf.contains(
+        "## ADDED Requirements\r\n\r\n### Requirement: B\r\nTwo.\r\n"
+    ));
 }

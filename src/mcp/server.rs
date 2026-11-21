@@ -21,8 +21,8 @@ use rmcp::{
 
 use crate::mcp::errors::{operation_result, validation_result};
 use crate::mcp::params::{
-    CreateArgs, DisplayArgs, ExportArgs, ImportArgs, MergeArgs, RenderArgs, ReviewArgs,
-    ValidateArgs,
+    CreateArgs, DisplayArgs, ExportArgs, ImportArgs, MergeArgs, RenderArgs,
+    ReviewArgs, ValidateArgs,
 };
 
 /// Configuration provided when booting the MCP stdio service.
@@ -41,7 +41,10 @@ pub enum NotebookSource {
 }
 
 impl std::fmt::Display for NotebookSource {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         match self {
             NotebookSource::Explicit => formatter.write_str("explicit"),
             NotebookSource::GitDerived => formatter.write_str("git-derived"),
@@ -69,7 +72,10 @@ pub struct McpServer {
 }
 
 impl std::fmt::Debug for McpServer {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(
+        &self,
+        formatter: &mut std::fmt::Formatter<'_>,
+    ) -> std::fmt::Result {
         formatter
             .debug_struct("McpServer")
             .field("notebook", &self.context.notebook)
@@ -101,7 +107,8 @@ impl McpServer {
             notebook: Some(notebook.clone()),
             ..NbConfig::default()
         };
-        let client = NbClient::new(&nb_config).context("failed to construct nb client")?;
+        let client = NbClient::new(&nb_config)
+            .context("failed to construct nb client")?;
         validate_notebook_exists(&client, &notebook).await?;
         Ok(Self {
             context: Arc::new(McpContext {
@@ -125,7 +132,9 @@ impl McpServer {
 /// behavior (`nbspec --notebook ""` fails the same way), so the
 /// MCP surface does not diverge from the CLI on operator-
 /// supplied values.
-pub fn resolve_notebook(explicit: &Option<String>) -> Result<(String, NotebookSource)> {
+pub fn resolve_notebook(
+    explicit: &Option<String>,
+) -> Result<(String, NotebookSource)> {
     if let Some(value) = explicit.as_ref() {
         return Ok((value.clone(), NotebookSource::Explicit));
     }
@@ -142,7 +151,10 @@ pub fn resolve_notebook(explicit: &Option<String>) -> Result<(String, NotebookSo
 /// `notebooks()` rather than `notebook_path()` because the path
 /// lookup would silently succeed for any notebook name `nb` has
 /// ever seen, even one that has been removed.
-async fn validate_notebook_exists(client: &NbClient, notebook: &str) -> Result<()> {
+async fn validate_notebook_exists(
+    client: &NbClient,
+    notebook: &str,
+) -> Result<()> {
     let listing = client.list_notebooks().await?;
     if listing.lines().any(|line| line.trim() == notebook) {
         return Ok(());
@@ -423,8 +435,9 @@ impl McpServer {
 #[tool_handler]
 impl rmcp::ServerHandler for McpServer {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_instructions(
-            "nbspec MCP server wrapping the operations library. \
+        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+            .with_instructions(
+                "nbspec MCP server wrapping the operations library. \
              Exposes one tool per CLI verb: create, display, validate, \
              render, merge, review, import, export. The notebook is \
              resolved once at startup (--notebook flag wins; \
@@ -436,7 +449,7 @@ impl rmcp::ServerHandler for McpServer {
              interchange. Use `validate` to dry-run a change before \
              either, and `review` to record the content-bound \
              verdict that merge's review gate requires.",
-        )
+            )
     }
 }
 

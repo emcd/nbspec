@@ -36,7 +36,7 @@ fn compound_prose_with_embedded_token_is_not_absence() {
     ));
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, feature = "live-nb"))]
 mod live_nb {
     use nb_api::testing::NbTestEnv;
     use nbspec::operations::is_nb_missing_item;
@@ -56,11 +56,11 @@ mod live_nb {
                                 break;
                             }
                         }
-                    }
+                    },
                     Some(_) => {
                         chars.next();
-                    }
-                    None => {}
+                    },
+                    None => {},
                 }
             } else {
                 out.push(c);

@@ -1,9 +1,8 @@
 [package]
 name = "nbspec"
 version = "0.3.1"
-edition = "2024"
-rust-version = "1.98"
 description = "Notebook-first OpenSpec orchestration for spec-driven development"
+authors = []
 license = "Apache-2.0"
 repository = "https://github.com/emcd/nbspec"
 homepage = "https://github.com/emcd/nbspec"
@@ -19,10 +18,27 @@ include = [
     "/LICENSE",
     "/.fable",
 ]
+edition = "2024"
+rust-version = "1.98"
+[workspace]
 
+# v0.3.0 ships without active filesystem-tree ingest: the unsafe
+# per-note nb-api mutations that would commit staging paths into
+# the notebook Git worktree are paused pending an NbApi 0.3
+# notebook transaction/checkpoint primitive with Git/index
+# locking. The v0.3.0 binary emits `PlanEntry::ActiveWrite` for
+# each detected active tree and the execute arm is a no-op that
+# leaves the source filesystem tree untouched. The pre-pause
+# `import_active_tree` body is preserved in source under
+# `#[cfg(any())]` gates and in git history; the 0.3.0-resume
+# cycle restores it once NbApi 0.3 ships. There is no public
+# Cargo feature for active import.
+[lib]
+name = "nbspec"
+path = "src/lib.rs"
 [[bin]]
 name = "nbspec"
-path = "src/main.rs"
+path = "src/bin/nbspec.rs"
 
 [dependencies]
 # nb API primitives
@@ -44,8 +60,8 @@ toml = "1.1"
 schemars = "1.0"
 
 # MCP server framework; macros and the tool-router are default
-# features; `transport-io` enables the stdio transport used by
-# the `nbspec serve mcp` subcommand.
+# features; `transport-io` enables the stdio transport used by the
+# `nbspec serve mcp` subcommand.
 rmcp = { version = "1.7.0", features = ["transport-io"] }
 
 # Platform configuration directories
@@ -79,23 +95,15 @@ thiserror = "2.0"
 # deterministic retirement-ordering regression. Default builds
 # contain no environment-activated mutator.
 test-support = []
+# Live-nb suite: tests driving a real `nb` binary through
+# `nb_api::testing::NbTestEnv`. Explicitly selected (never default)
+# so shared hermetic gates stay ambient-tool-free; project-owned
+# gates provision pinned nb 7.24.0 and run with this feature.
+# Never transitively enabled by product features or test-support.
+live-nb = []
 
 [dev-dependencies]
 # Hermetic nb fixtures for integration-style unit tests that must
 # observe real nb 7.24.0 diagnostics without touching the operator
 # notebook root.
 nb-api = { version = "0.4.6", features = ["testing", "testing-tokio"] }
-
-[workspace]
-
-# v0.3.0 ships without active filesystem-tree ingest: the unsafe
-# per-note nb-api mutations that would commit staging paths into
-# the notebook Git worktree are paused pending an NbApi 0.3
-# notebook transaction/checkpoint primitive with Git/index
-# locking. The v0.3.0 binary emits `PlanEntry::ActiveWrite` for
-# each detected active tree and the execute arm is a no-op that
-# leaves the source filesystem tree untouched. The pre-pause
-# `import_active_tree` body is preserved in source under
-# `#[cfg(any())]` gates and in git history; the 0.3.0-resume
-# cycle restores it once NbApi 0.3 ships. There is no public
-# Cargo feature for active import.

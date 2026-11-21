@@ -2,7 +2,9 @@ use std::path::Path;
 
 use nb_api::{NbError, ShowNote};
 
-use crate::changes::{ArtifactLayout, artifact_layout, note_has_authored_content};
+use crate::changes::{
+    ArtifactLayout, artifact_layout, note_has_authored_content,
+};
 use crate::schemata::WorkflowSchema;
 use crate::worknotes::WorkChecklist;
 
@@ -48,13 +50,16 @@ pub(crate) async fn folder_listing(
         let directory = root.join(folder);
         match dir_has_notes(&directory) {
             Ok(false) => return Ok("(empty)".to_string()),
-            Ok(true) => {}
+            Ok(true) => {},
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok("(empty)".to_string());
-            }
+            },
             Err(error) => {
-                return Err(format!("cannot inspect {}: {error}", directory.display()));
-            }
+                return Err(format!(
+                    "cannot inspect {}: {error}",
+                    directory.display()
+                ));
+            },
         }
     }
     classify_folder_listing(
@@ -109,10 +114,12 @@ pub fn classify_folder_listing(
             } else {
                 Ok(trimmed.to_string())
             }
-        }
-        Err(NbError::CommandFailed { stderr, .. }) if is_nb_missing_item(&stderr, folder) => {
+        },
+        Err(NbError::CommandFailed { stderr, .. })
+            if is_nb_missing_item(&stderr, folder) =>
+        {
             Ok("(empty)".to_string())
-        }
+        },
         Err(error) => Err(error.to_string()),
     }
 }
@@ -127,9 +134,11 @@ pub fn classify_note_content(
     match result {
         Ok(content) => Ok(note_has_authored_content(&content)),
         Err(NbError::NotFound { .. }) => Ok(false),
-        Err(NbError::CommandFailed { stderr, .. }) if is_nb_missing_item(&stderr, selector) => {
+        Err(NbError::CommandFailed { stderr, .. })
+            if is_nb_missing_item(&stderr, selector) =>
+        {
             Ok(false)
-        }
+        },
         Err(error) => Err(error.to_string()),
     }
 }
@@ -191,7 +200,8 @@ fn nb_not_found_target(line: &str) -> Option<&str> {
     // contiguous run of ASCII uppercase letters with no interior
     // separators. `! BACKEND DOWN` (uppercase words split by spaces)
     // is compound prose, not a marker, and stays rejected.
-    let padded = prefix.trim_matches(|c: char| c.is_whitespace() || c.is_control());
+    let padded =
+        prefix.trim_matches(|c: char| c.is_whitespace() || c.is_control());
     let marker = padded.strip_prefix('!')?;
     if !marker.chars().all(|c| c.is_ascii_uppercase()) {
         return None;
@@ -210,7 +220,9 @@ fn nb_not_found_target(line: &str) -> Option<&str> {
 /// the `*.todo.md` file whose checkbox title is `WORK_NOTE`.
 /// Parsing the file directly avoids scraping `nb tasks` output,
 /// which embeds terminal control sequences even with `--no-color`.
-pub(crate) fn read_work_note(change_directory: &std::path::Path) -> Option<String> {
+pub(crate) fn read_work_note(
+    change_directory: &std::path::Path,
+) -> Option<String> {
     use crate::changes::WORK_NOTE;
     let entries = std::fs::read_dir(change_directory).ok()?;
     for entry in entries.flatten() {
@@ -268,12 +280,16 @@ pub(crate) async fn artifact_has_content(
                 .await
                 .and_then(|show| show_note_body(&show));
             classify_note_content(content, &selector)
-        }
+        },
         ArtifactLayout::Folder(subfolder) => {
-            let listing =
-                folder_listing(client, &format!("{folder}/{subfolder}"), notebook).await?;
+            let listing = folder_listing(
+                client,
+                &format!("{folder}/{subfolder}"),
+                notebook,
+            )
+            .await?;
             Ok(listing != "(empty)" && !listing.starts_with("0 "))
-        }
+        },
     }
 }
 
@@ -282,14 +298,17 @@ pub(crate) async fn artifact_has_content(
 pub(crate) fn schema_for(
     metadata: &crate::changes::ChangeMetadata,
 ) -> Result<WorkflowSchema, OperationError> {
-    let configuration = crate::configuration::load_configuration(&project_root())?;
+    let configuration =
+        crate::configuration::load_configuration(&project_root())?;
     Ok(crate::schemata::resolve_schema(
         Some(&metadata.schema),
         &configuration,
     )?)
 }
 
-pub(crate) fn metadata_summary(metadata: &crate::changes::ChangeMetadata) -> String {
+pub(crate) fn metadata_summary(
+    metadata: &crate::changes::ChangeMetadata,
+) -> String {
     let title = metadata.title.as_deref().unwrap_or("(untitled)");
     format!(
         "Change: {id}\nTitle: {title}\nStatus: {status}\nSchema: {schema}\nNotebook: {notebook}\nUpdated: {updated}\n",

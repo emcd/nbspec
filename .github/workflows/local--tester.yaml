@@ -1,0 +1,157 @@
+name: local-tester
+
+# Consumer-owned gates for the template `custom` job. Adapted from the
+# pre-retrofit tester: nb-provisioned matrix tests (live-nb coverage the
+# shared gates cannot provide), the per-platform conformance oracle, and
+# the openspec gate. Bound to the adopted cartesian cells; no has-library
+# input (this crate's shape is known). Never overwritten by template
+# updates (_skip_if_exists).
+on:
+  workflow_call:
+    inputs:
+      platforms:
+        description: 'JSON array of {os, cpu, runner, target} platform objects.'
+        required: true
+        type: string
+      cargo-profile:
+        description: 'Cargo profile to gate: dev or release.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+
+  matrix-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platforms) }}
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Install nb
+        # Cross-platform install (Git Bash .cmd launcher on Windows,
+        # symlink on Unix) pinned to the version we develop against,
+        # from nb-api's reusable action. Exposes nb-exec for
+        # NB_API_TEST_NB so NbTestEnv resolves nb deterministically.
+        # Live-nb probes stay #[cfg(unix)] for now: nb 7.24.0 itself
+        # misbehaves under Git Bash on Windows (qualified-selector
+        # path-in-regex; background auto-checkpoint race), independent
+        # of install method. See nb-api:artifacts/2.
+        id: setup-nb
+        uses: emcd/nb-api/.github/actions/setup-nb@v0.3.1
+        with:
+          version: '7.24.0'
+
+      - name: Set Up Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Build
+        run: cargo build --locked --features live-nb --profile ${{ inputs.cargo-profile }}
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
+
+      - name: Test
+        run: cargo test --locked --features live-nb --profile ${{ inputs.cargo-profile }}
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
+
+  clippy-all-features:
+    # Wider local clippy: the shared gates run --no-default-features by
+    # design, so the test-support feature gate stays covered here.
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Set Up Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Run Clippy (all features)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+  conformance:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platforms) }}
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Run Conformance Oracle
+        run: bash tests/conformance/oracle.sh
+
+  # Test-support regression, executed (not merely compiled): the drift-
+  # injection seam test needs a real nb binary, so it runs here
+  # provisioned, by name, on top of the live-nb selection.
+  test-support:
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Install nb
+        id: setup-nb
+        uses: emcd/nb-api/.github/actions/setup-nb@v0.3.1
+        with:
+          version: '7.24.0'
+
+      - name: Set Up Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Run Test-Support Regression
+        # Guard the by-name filter first: a renamed test must fail loudly,
+        # never pass vacuously with zero tests run.
+        run: |
+          cargo test --locked --features live-nb,test-support --test integration -- --list 2>/dev/null | grep -q drift_after_materialization || { echo 'test-support filter matched zero tests' >&2; exit 1; }
+          cargo test --locked --features live-nb,test-support --test integration drift_after_materialization
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
+
+  openspec-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+
+      - name: Stage OpenSpec Layout
+        # The root `openspec` convenience symlink is git-excluded, so a
+        # clean checkout has no `./openspec/` tree and `validate --all`
+        # exits 0 with "No items found" — a silent no-op gate. Link the
+        # tracked tree into place before validating.
+        run: ln -s documentation/architecture/openspec openspec
+
+      - name: Validate OpenSpec Tree
+        # Guard the item count: zero validated items means the layout
+        # staging above silently broke, and must fail loudly instead of
+        # passing as a no-op.
+        run: |
+          output="$(npx --yes "@fission-ai/openspec@1.5.0" validate --all --strict 2>&1)"
+          echo "$output"
+          echo "$output" | grep -Eq '\([1-9][0-9]* items\)' || { echo 'openspec-gate: zero items validated' >&2; exit 1; }

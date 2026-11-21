@@ -2,7 +2,7 @@ name: release
 
 on:
   push:
-    tags: ['v[0-9]+.*']
+    tags: [ 'v[0-9]+.*' ]
   workflow_dispatch:
     inputs:
       dry-run:
@@ -17,139 +17,162 @@ env:
 jobs:
 
   initialize:
-    uses: ./.github/workflows/core--initializer.yaml
+    uses: ./.github/workflows/common-initializer.yaml
+    permissions: {}
 
-  test:
+  release-gates:
     needs: [initialize]
+    permissions:
+      contents: read
+    uses: emcd/rust-project-common/.github/workflows/xrepo--tester.yaml@gha-1
+    with:
+      platforms: ${{ needs.initialize.outputs.platforms }}
+      cargo-profile: release
+      has-library: true
+
+  # Consumer-owned release gates live in ./.github/workflows/local--releaser.yaml
+  # (authored by the consumer, never rendered by the template). Publish jobs
+  # wait on it alongside the release gates. Job-level uses: reusable
+  # workflows cannot be invoked from a step.
+  custom-release:
+    needs: [initialize]
+    permissions:
+      contents: read
+    uses: ./.github/workflows/local--releaser.yaml
+    with:
+      platforms: ${{ needs.initialize.outputs.platforms }}
+      cargo-profile: release
+
+  # Local per-platform packaging. Runs unconditionally: custom off or on,
+  # dry runs, and publication-off configurations all still package, because
+  # publishers and binaries must never run on unpackaged gates.
+  package:
+    needs: [initialize, release-gates]
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         platform: ${{ fromJSON(needs.initialize.outputs.platforms) }}
-        exclude: ${{ fromJSON(needs.initialize.outputs.matrix-exclusions) }}
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.platform.runner }}
+    permissions:
+      contents: read
     steps:
 
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Node.js
-        uses: actions/setup-node@v6
+      - name: Check Out
+        uses: actions/checkout@v7
         with:
-          node-version: '20'
+          persist-credentials: false
 
-      - name: Configure git for nb
-        # Mirrors the tester setup so the lifecycle integration test
-        # (#[cfg(unix)]) has nb installed and git identity pre-set
-        # before `cargo test --release`. Without this, the tag
-        # release would fail the test job on Linux / Linux-arm /
-        # macOS runners.
-        run: |
-          git config --global user.name "nbspec CI"
-          git config --global user.email "nbspec-ci@users.noreply.github.com"
-          git config --global init.defaultBranch master
-
-      - name: Install nb
-        run: npm install -g nb.sh@7.24.0
-
-      - name: Put npm global bin on PATH
-        shell: bash
-        run: |
-          prefix="$(npm prefix -g)"
-          echo "$prefix" >> "$GITHUB_PATH"
-          if [[ -d "$prefix/bin" ]]; then
-            echo "$prefix/bin" >> "$GITHUB_PATH"
-          fi
-          echo "npm prefix -g: $prefix"
-
-      - name: Verify nb is spawnable
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          export PATH="$(npm prefix -g):$(npm prefix -g)/bin:$PATH"
-          command -v nb
-          nb --version
-
-      - name: Install Rust
+      - name: Set Up Toolchain
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Add Target
+        env:
+          TARGET_TRIPLE: ${{ matrix.platform.target }}
+        run: rustup target add "${TARGET_TRIPLE}"
+        shell: bash
+
+      - name: Generate Lockfile If Missing
+        run: test -f Cargo.lock || cargo generate-lockfile
+        shell: bash
+
+      - name: Package
+        run: cargo package --locked --no-verify
+  # Operator prerequisites, both one-time per crate:
+  # - Register a crates.io trusted publisher before the first release. The
+  #   template promises no tokenless first publication and stores no
+  #   long-lived token.
+  # - Binary GitHub releases require repository attestation support: a public
+  #   repository, or GitHub Enterprise Cloud for a private one. On plans
+  #   without it the publish-github job fails visibly at the attest step;
+  #   attestation is never silently skipped.
+  publish-crates-io:
+    if: ${{ !inputs.dry-run && startsWith(github.ref, 'refs/tags/') }}
+    needs: [initialize, release-gates, package, custom-release]
+    runs-on: ubuntu-latest
+    environment: crates-io
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+
+      - name: Check Out
+        uses: actions/checkout@v7
         with:
-          components: rustfmt, clippy
+          persist-credentials: false
 
-      - name: Check Formatting
-        if: matrix.platform == 'ubuntu-latest'
-        run: cargo fmt --all -- --check
+      - name: Set Up Toolchain
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Run Clippy
-        if: matrix.platform == 'ubuntu-latest'
-        run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Generate Lockfile If Missing
+        run: test -f Cargo.lock || cargo generate-lockfile
+        shell: bash
 
-      - name: Build
-        run: cargo build --release
+      - name: Authenticate to crates.io
+        id: auth
+        uses: rust-lang/crates-io-auth-action@v1.0.6
 
-      - name: Test
-        run: cargo test --release
+      - name: Publish to crates.io
+        run: cargo publish --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
   build-binaries:
-    needs: [initialize, test]
+    needs: [initialize, release-gates, package, custom-release]
+    permissions:
+      contents: read
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         platform: ${{ fromJSON(needs.initialize.outputs.platforms) }}
-        exclude: ${{ fromJSON(needs.initialize.outputs.matrix-exclusions) }}
-    runs-on: ${{ matrix.platform }}
+    runs-on: ${{ matrix.platform.runner }}
     steps:
 
-      - name: Checkout
-        uses: actions/checkout@v6
+      - name: Check Out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Install Rust
+      - name: Set Up Toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Add Target
+        env:
+          TARGET_TRIPLE: ${{ matrix.platform.target }}
+        run: rustup target add "${TARGET_TRIPLE}"
+        shell: bash
+
+      - name: Generate Lockfile If Missing
+        run: test -f Cargo.lock || cargo generate-lockfile
+        shell: bash
+
       - name: Build Release Binary
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Determine Binary Name
         id: binary
         shell: bash
+        # Matrix values arrive via env, never interpolated into the script:
+        # they are template-generated constants, but the habit must be uniform.
+        env:
+          BINARY_TARGET: ${{ matrix.platform.target }}
+          BINARY_OS: ${{ matrix.platform.os }}
         run: |
-          target="${{ fromJSON(needs.initialize.outputs.rust-targets)[matrix.platform] }}"
-          if [[ "${{ matrix.platform }}" == "windows-latest" ]]; then
+          set -eu
+          target="${BINARY_TARGET}"
+          if [[ "${BINARY_OS}" == "windows" ]]; then
             binary_name="nbspec-${target}.exe"
-            cp target/release/nbspec.exe "${binary_name}"
+            cp "target/release/nbspec.exe" "${binary_name}"
           else
             binary_name="nbspec-${target}"
-            cp target/release/nbspec "${binary_name}"
+            cp "target/release/nbspec" "${binary_name}"
           fi
           echo "name=${binary_name}" >>${GITHUB_OUTPUT}
 
       - name: Upload Binary Artifact
         uses: actions/upload-artifact@v7
         with:
-          name: binary-${{ matrix.platform }}
+          name: binary-${{ matrix.platform.os }}-${{ matrix.platform.cpu }}
           path: ${{ steps.binary.outputs.name }}
-
-  publish-crates-io:
-    if: ${{ !inputs.dry-run && startsWith(github.ref, 'refs/tags/') }}
-    needs: [test]
-    runs-on: ubuntu-latest
-    environment: crates-io
-    permissions:
-      id-token: write  # Required for OIDC token exchange
-    steps:
-
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Authenticate with crates.io
-        uses: rust-lang/crates-io-auth-action@v1.0.4
-        id: auth
-
-      - name: Publish to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish
 
   publish-github:
     if: ${{ !inputs.dry-run && startsWith(github.ref, 'refs/tags/') }}
@@ -162,8 +185,10 @@ jobs:
       id-token: write
     steps:
 
-      - name: Checkout
-        uses: actions/checkout@v6
+      - name: Check Out
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Download All Binaries
         uses: actions/download-artifact@v8
@@ -179,24 +204,46 @@ jobs:
           sha256sum nbspec-* >SHA256SUMS.txt
 
       - name: Attest Build Provenance
+        id: attest
         uses: actions/attest@v4
         with:
           subject-path: |
             artifacts/SHA256SUMS.txt
             artifacts/nbspec-*
 
+      - name: Stage Attestation Bundle
+        # actions/attest records provenance in the repository API and emits a
+        # local bundle at an action-chosen path. Copy it under a deterministic
+        # name into artifacts/ so the release upload glob attaches it to the
+        # release. The output reference arrives via env so no expression text
+        # is interpolated into the script.
+        env:
+          BUNDLE_PATH: ${{ steps.attest.outputs.bundle-path }}
+        run: |
+          set -eu
+          cp "${BUNDLE_PATH}" "artifacts/nbspec-provenance.sigstore.json"
+
       - name: Create Release
+        # Tag and repository metadata arrive via env, never interpolated into
+        # the script: a tag name is attacker-reachable ref metadata and must
+        # be treated as data, so gh receives it literally. Options precede a
+        # `--` delimiter with the tag after it, so a leading-dash tag on a
+        # manual dispatch cannot parse as a gh option.
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release create '${{ github.ref_name }}' \
-            --repo '${{ github.repository }}' \
-            --generate-notes
+          gh release create \
+            --repo "${GITHUB_REPOSITORY}" \
+            --generate-notes \
+            -- "${RELEASE_TAG}"
 
       - name: Upload Release Artifacts
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          gh release upload '${{ github.ref_name }}' \
-            artifacts/* \
-            --repo '${{ github.repository }}'
+          gh release upload \
+            --repo "${GITHUB_REPOSITORY}" \
+            -- "${RELEASE_TAG}" \
+            artifacts/*

@@ -11,12 +11,14 @@ mod interchange_plan;
 mod interchange_proof;
 mod mcp;
 mod merging;
+mod merging_stale;
 mod nb_diagnostics;
 mod operations;
 mod rendering;
 mod retirement;
 mod reviews;
 mod schemata;
+#[cfg(all(unix, feature = "live-nb"))]
 mod transaction_atomicity;
 mod validation;
 mod worknotes;

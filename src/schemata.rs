@@ -31,8 +31,10 @@ pub const SCHEMA_FILE: &str = "schema.toml";
 
 const SCHEMA_TOML_DEFAULT: &str = include_str!("schemata/default.toml");
 
-static SCHEMA_DEFAULT: LazyLock<WorkflowSchema> =
-    LazyLock::new(|| parse_schema(SCHEMA_TOML_DEFAULT).expect("embedded default schema is valid"));
+static SCHEMA_DEFAULT: LazyLock<WorkflowSchema> = LazyLock::new(|| {
+    parse_schema(SCHEMA_TOML_DEFAULT)
+        .expect("embedded default schema is valid")
+});
 
 /// Errors from schema parsing and resolution.
 #[derive(Debug, Error)]
@@ -209,7 +211,11 @@ fn validate_schema(schema: &WorkflowSchema) -> Result<(), SchemaError> {
         }
     }
     for artifact in &schema.artifacts {
-        validate_artifact_path(&artifact.id, "generates", &artifact.generates)?;
+        validate_artifact_path(
+            &artifact.id,
+            "generates",
+            &artifact.generates,
+        )?;
         if let Some(target) = &artifact.target {
             validate_artifact_path(&artifact.id, "target", target)?;
         }
@@ -231,7 +237,11 @@ fn validate_schema(schema: &WorkflowSchema) -> Result<(), SchemaError> {
 /// confinement rules live in [`crate::configuration`], beside the
 /// archive-directory check that guards the other configured write
 /// path.
-fn validate_artifact_path(artifact_id: &str, field: &str, path: &str) -> Result<(), SchemaError> {
+fn validate_artifact_path(
+    artifact_id: &str,
+    field: &str,
+    path: &str,
+) -> Result<(), SchemaError> {
     match crate::configuration::confinement_violation(path) {
         Some(detail) => Err(SchemaError::Invalid(format!(
             "artifact {artifact_id} {field} path {path:?} {detail}"
@@ -255,7 +265,8 @@ fn detect_cycles(
             dependents[dependency_index].push(index);
         }
     }
-    let mut queue: Vec<usize> = (0..count).filter(|&index| in_degree[index] == 0).collect();
+    let mut queue: Vec<usize> =
+        (0..count).filter(|&index| in_degree[index] == 0).collect();
     let mut processed = 0;
     while let Some(index) = queue.pop() {
         processed += 1;

@@ -1,7 +1,9 @@
 use nb_api::{NbClient, NbError};
 use serde_json::{Map, Value, json};
 
-use crate::changes::{change_folder, namespace_folders, namespace_notes, validate_change_id};
+use crate::changes::{
+    change_folder, namespace_folders, namespace_notes, validate_change_id,
+};
 use crate::merging::target_status;
 use crate::rendering::render_documents;
 use crate::schemata::WorkflowSchema;
@@ -9,8 +11,8 @@ use crate::worknotes::WorkChecklist;
 
 use super::context::project_root;
 use super::helpers::{
-    artifact_has_content, folder_listing, load_metadata, metadata_summary, read_work_note,
-    render_work_checklist, schema_for, show_note_source,
+    artifact_has_content, folder_listing, load_metadata, metadata_summary,
+    read_work_note, render_work_checklist, schema_for, show_note_source,
 };
 use super::{OperationError, OperationOutcome, OperationResult};
 
@@ -40,9 +42,8 @@ pub async fn display(
         for note in namespace_notes(&schema) {
             let selector = format!("{folder}/{note}.md");
             let body = match client.show_note(&selector, notebook).await {
-                Ok(show) => {
-                    show_note_source(&show).unwrap_or_else(|error| format!("(unreadable: {error})"))
-                }
+                Ok(show) => show_note_source(&show)
+                    .unwrap_or_else(|error| format!("(unreadable: {error})")),
                 Err(NbError::NotFound { .. }) => "(missing)".to_string(),
                 Err(error) => format!("(unreadable: {error})"),
             };
@@ -53,8 +54,14 @@ pub async fn display(
     let mut authored: Vec<&str> = Vec::new();
     let mut artifact_states: Vec<Value> = Vec::new();
     for artifact in schema.authoring_order() {
-        let content_result =
-            artifact_has_content(client, &folder, &schema, &artifact.id, notebook).await;
+        let content_result = artifact_has_content(
+            client,
+            &folder,
+            &schema,
+            &artifact.id,
+            notebook,
+        )
+        .await;
         let unmet: Vec<&str> = artifact
             .requires
             .iter()
@@ -65,7 +72,7 @@ pub async fn display(
             Ok(true) => {
                 authored.push(artifact.id.as_str());
                 "authored".to_string()
-            }
+            },
             Ok(false) if unmet.is_empty() => "ready to author".to_string(),
             Ok(false) => format!("blocked on {}", unmet.join(", ")),
             Err(msg) => format!("unreadable: {msg}"),
@@ -77,15 +84,26 @@ pub async fn display(
         if !unmet.is_empty() {
             entry.insert(
                 "blocked_on".to_string(),
-                Value::Array(unmet.iter().map(|s| Value::String(s.to_string())).collect()),
+                Value::Array(
+                    unmet
+                        .iter()
+                        .map(|s| Value::String(s.to_string()))
+                        .collect(),
+                ),
             );
         }
         artifact_states.push(Value::Object(entry));
     }
     if full {
         for subfolder in namespace_folders(&schema) {
-            let listing = folder_listing(client, &format!("{folder}/{subfolder}"), notebook).await;
-            let listing_text = listing.unwrap_or_else(|msg| format!("(unreadable: {msg})"));
+            let listing = folder_listing(
+                client,
+                &format!("{folder}/{subfolder}"),
+                notebook,
+            )
+            .await;
+            let listing_text =
+                listing.unwrap_or_else(|msg| format!("(unreadable: {msg})"));
             output.push_str(&format!("\n## {subfolder}/\n\n{listing_text}\n"));
         }
     }
@@ -100,11 +118,13 @@ pub async fn display(
         WorkSummary::Checklist(checklist) => {
             let (complete, total) = checklist.progress();
             json!({ "complete": complete, "total": total })
-        }
-        WorkSummary::Missing => json!({ "complete": 0, "total": 0, "missing": true }),
+        },
+        WorkSummary::Missing => {
+            json!({ "complete": 0, "total": 0, "missing": true })
+        },
         WorkSummary::ParseError(message) => {
             json!({ "complete": 0, "total": 0, "parse_error": message })
-        }
+        },
     };
     output.push_str(&render_work_report(&work_summary));
 
@@ -114,7 +134,8 @@ pub async fn display(
     output.push_str(&review_text);
 
     output.push_str("\n## drift\n\n");
-    let drift_lines = drift_report_lines(&change_directory, &folder, &schema, change_id)?;
+    let drift_lines =
+        drift_report_lines(&change_directory, &folder, &schema, change_id)?;
     output.push_str(&drift_lines.text);
     let structured_drift: Vec<Value> = drift_lines
         .items
@@ -144,7 +165,8 @@ pub async fn display(
         "status".to_string(),
         Value::String(metadata.status.to_string()),
     );
-    structured.insert("schema".to_string(), Value::String(metadata.schema.clone()));
+    structured
+        .insert("schema".to_string(), Value::String(metadata.schema.clone()));
     structured.insert(
         "notebook".to_string(),
         Value::String(metadata.notebook.clone()),
@@ -179,7 +201,7 @@ fn drift_report_lines(
                 text: format!("cannot compute drift: {error}\n"),
                 items: Vec::new(),
             });
-        }
+        },
     };
     let mut items: Vec<DriftItem> = Vec::new();
     let mut text = String::new();

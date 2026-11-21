@@ -14,8 +14,9 @@
 use std::collections::HashMap;
 
 use crate::grammar::{
-    UnpairedSide, duplicate_section_kinds, extract_purpose_section, find_unpaired_renames,
-    fold_requirement_name, mask_fenced_lines, parse_delta_specification, parse_target_blocks,
+    UnpairedSide, duplicate_section_kinds, extract_purpose_section,
+    find_unpaired_renames, fold_requirement_name, mask_fenced_lines,
+    parse_delta_specification, parse_target_blocks,
 };
 
 pub use crate::grammar::has_requirements_section;
@@ -74,7 +75,8 @@ pub fn plan_delta_merge(
     check_delta_coherence(delta_content)?;
     let delta = parse_delta_specification(delta_content);
 
-    let added_names: Vec<String> = delta.added.iter().map(|req| req.name.clone()).collect();
+    let added_names: Vec<String> =
+        delta.added.iter().map(|req| req.name.clone()).collect();
     if target_body.is_none()
         && delta.modified.is_empty()
         && delta.renamed.is_empty()
@@ -89,7 +91,9 @@ pub fn plan_delta_merge(
             skipped: true,
         });
     }
-    if target_body.is_none() && (!delta.modified.is_empty() || !delta.renamed.is_empty()) {
+    if target_body.is_none()
+        && (!delta.modified.is_empty() || !delta.renamed.is_empty())
+    {
         return Err(ApplyFailure::dangling(format!(
             "target does not exist; only ADDED requirements are allowed for new documents ({} MODIFIED, {} RENAMED)",
             delta.modified.len(),
@@ -136,7 +140,9 @@ fn prevalidate(
     delta: &crate::grammar::DeltaSpecification,
     delta_content: &str,
 ) -> Result<(), ApplyFailure> {
-    if let Some(first) = find_unpaired_renames(delta_content).into_iter().next() {
+    if let Some(first) =
+        find_unpaired_renames(delta_content).into_iter().next()
+    {
         let missing = match first.side {
             UnpairedSide::From => "TO",
             UnpairedSide::To => "FROM",
@@ -146,7 +152,9 @@ fn prevalidate(
             first.line
         )));
     }
-    if let Some(kind) = duplicate_section_kinds(delta_content).into_iter().next() {
+    if let Some(kind) =
+        duplicate_section_kinds(delta_content).into_iter().next()
+    {
         return Err(ApplyFailure::incoherent(format!(
             "duplicate \"## {kind}\" section: repeated delta sections leave operations silently ignored"
         )));
@@ -187,26 +195,32 @@ fn prevalidate(
         "REMOVED",
     )?;
 
-    let added_names: Vec<String> = delta.added.iter().map(|req| req.name.clone()).collect();
-    let modified_names: Vec<String> = delta.modified.iter().map(|req| req.name.clone()).collect();
+    let added_names: Vec<String> =
+        delta.added.iter().map(|req| req.name.clone()).collect();
+    let modified_names: Vec<String> =
+        delta.modified.iter().map(|req| req.name.clone()).collect();
     let added: HashMap<String, &str> = fold_map(&added_names);
     let modified: HashMap<String, &str> = fold_map(&modified_names);
     let removed: HashMap<String, &str> = fold_map(&delta.removed);
     let mut renamed_from: HashMap<String, &str> = HashMap::new();
     let mut renamed_to: HashMap<String, &str> = HashMap::new();
     for rename in &delta.renamed {
-        renamed_from.insert(fold_requirement_name(&rename.from), rename.from.as_str());
-        renamed_to.insert(fold_requirement_name(&rename.to), rename.to.as_str());
+        renamed_from
+            .insert(fold_requirement_name(&rename.from), rename.from.as_str());
+        renamed_to
+            .insert(fold_requirement_name(&rename.to), rename.to.as_str());
     }
     // Duplicate FROM / TO sides (folded).
     if renamed_from.len() != delta.renamed.len() {
         return Err(ApplyFailure::incoherent(
-            "duplicate FROM in RENAMED: each rename source may appear once".to_string(),
+            "duplicate FROM in RENAMED: each rename source may appear once"
+                .to_string(),
         ));
     }
     if renamed_to.len() != delta.renamed.len() {
         return Err(ApplyFailure::incoherent(
-            "duplicate TO in RENAMED: each rename destination may appear once".to_string(),
+            "duplicate TO in RENAMED: each rename destination may appear once"
+                .to_string(),
         ));
     }
     // Cycles on the folded graph (duplicate sides already rejected
@@ -388,11 +402,16 @@ fn apply_onto_existing(
     // chain final already exists was consumed by an earlier run.
     // (Evaluating it on the evolving map would misread names this
     // very run created as already-synced destinations.)
-    let original: std::collections::HashSet<&str> = by_name.keys().map(String::as_str).collect();
+    let original: std::collections::HashSet<&str> =
+        by_name.keys().map(String::as_str).collect();
     let mut pending: Vec<bool> = vec![true; delta.renamed.len()];
     for (index, rename) in delta.renamed.iter().enumerate() {
         if !original.contains(rename.from.as_str())
-            && chain_final_in(&chain, &|name| original.contains(name), rename.to.as_str())
+            && chain_final_in(
+                &chain,
+                &|name| original.contains(name),
+                rename.to.as_str(),
+            )
         {
             pending[index] = false;
         }
@@ -424,12 +443,17 @@ fn apply_onto_existing(
             if by_name.contains_key(&rename.to) {
                 continue;
             }
-            if let Some(near) = near_miss(&by_name, &order, &rename.to, Some(&rename.from)) {
+            if let Some(near) =
+                near_miss(&by_name, &order, &rename.to, Some(&rename.from))
+            {
                 return Err(typo_error("RENAMED", &rename.to, &near));
             }
-            let slot = by_name.remove(&rename.from).expect("renamed source slot");
+            let slot =
+                by_name.remove(&rename.from).expect("renamed source slot");
             by_name.insert(rename.to.clone(), slot);
-            if let Some(key) = order.iter_mut().find(|key| *key == &rename.from) {
+            if let Some(key) =
+                order.iter_mut().find(|key| *key == &rename.from)
+            {
                 *key = rename.to.clone();
             }
             span_edits.push((
@@ -468,12 +492,14 @@ fn apply_onto_existing(
         // already-synced renames, whose map key is the destination);
         // otherwise resolve through applied renames to the
         // pre-rename slot. Slots index `blocks` directly.
-        let slot = by_name
-            .remove(name)
-            .or_else(|| rename_to_from(&renamed, name).and_then(|from| by_name.remove(&from)));
+        let slot = by_name.remove(name).or_else(|| {
+            rename_to_from(&renamed, name)
+                .and_then(|from| by_name.remove(&from))
+        });
         if let Some(slot) = slot {
             let block = &blocks[slot];
-            span_edits.push((block.start_line, SpanEdit::Delete(block.end_line)));
+            span_edits
+                .push((block.start_line, SpanEdit::Delete(block.end_line)));
         } else {
             if let Some(near) = near_miss(&by_name, &order, name, None) {
                 return Err(typo_error("REMOVED", name, &near));
@@ -486,7 +512,9 @@ fn apply_onto_existing(
 
     for modified in &delta.modified {
         let Some(&slot) = by_name.get(&modified.name) else {
-            if let Some(near) = near_miss(&by_name, &order, &modified.name, None) {
+            if let Some(near) =
+                near_miss(&by_name, &order, &modified.name, None)
+            {
                 return Err(typo_error("MODIFIED", &modified.name, &near));
             }
             return Err(ApplyFailure::dangling(format!(
@@ -675,7 +703,8 @@ fn recompose(
     } else {
         "\n"
     };
-    let mut lines: Vec<String> = target.split('\n').map(str::to_string).collect();
+    let mut lines: Vec<String> =
+        target.split('\n').map(str::to_string).collect();
     // Bottom-up so earlier line numbers stay valid; ties at one
     // start reheader first so MODIFIED replacements (which already
     // hold the new header) win their span.
@@ -688,11 +717,11 @@ fn recompose(
         match edit {
             SpanEdit::Reheader(header) => {
                 lines[start - 1] = eol_terminated(header, eol);
-            }
+            },
             SpanEdit::Replace(replacement, end) => {
                 let replacement = eol_lines(replacement, eol);
                 lines.splice(start - 1..end, replacement);
-            }
+            },
             SpanEdit::Delete(end) => {
                 let mut from = start - 1;
                 let mut to = end;
@@ -702,7 +731,7 @@ fn recompose(
                     from -= 1;
                 }
                 lines.drain(from..to);
-            }
+            },
         }
     }
     if !appended.is_empty() {
@@ -756,13 +785,20 @@ fn eol_terminated(line: String, eol: &str) -> String {
 /// Section scans skip fenced lines through `mask`, so an example
 /// `## ADDED Requirements` never captures insertion.
 /// Separators adopt the target EOL style.
-fn append_blocks(lines: &mut Vec<String>, appended: Vec<Vec<String>>, eol: &str, mask: &[bool]) {
+fn append_blocks(
+    lines: &mut Vec<String>,
+    appended: Vec<Vec<String>>,
+    eol: &str,
+    mask: &[bool],
+) {
     let section_at = lines.iter().enumerate().position(|(index, line)| {
         !mask[index]
             && line
                 .strip_prefix("##")
                 .filter(|rest| !rest.starts_with('#'))
-                .is_some_and(|rest| rest.trim().eq_ignore_ascii_case("ADDED Requirements"))
+                .is_some_and(|rest| {
+                    rest.trim().eq_ignore_ascii_case("ADDED Requirements")
+                })
     });
     let blank = blank_line(eol);
     let mut addition: Vec<String> = Vec::new();
@@ -773,7 +809,9 @@ fn append_blocks(lines: &mut Vec<String>, appended: Vec<Vec<String>>, eol: &str,
     match section_at {
         Some(header) => {
             let mut end = header + 1;
-            while end < lines.len() && !(is_section_header(&lines[end]) && !mask[end]) {
+            while end < lines.len()
+                && !(is_section_header(&lines[end]) && !mask[end])
+            {
                 end += 1;
             }
             // Insert before the existing separator/trailing entries
@@ -784,10 +822,12 @@ fn append_blocks(lines: &mut Vec<String>, appended: Vec<Vec<String>>, eol: &str,
             }
             let inserted = addition.len();
             lines.splice(at..at, addition);
-            if at + inserted < lines.len() && !lines[at + inserted].trim().is_empty() {
+            if at + inserted < lines.len()
+                && !lines[at + inserted].trim().is_empty()
+            {
                 lines.insert(at + inserted, blank);
             }
-        }
+        },
         None => {
             let mut at = lines.len();
             while at > 0 && lines[at - 1].trim().is_empty() {
@@ -797,10 +837,11 @@ fn append_blocks(lines: &mut Vec<String>, appended: Vec<Vec<String>>, eol: &str,
             if at > 0 {
                 insertion.push(blank);
             }
-            insertion.push(format!("## ADDED Requirements{}", crlf_suffix(eol)));
+            insertion
+                .push(format!("## ADDED Requirements{}", crlf_suffix(eol)));
             insertion.extend(addition);
             lines.splice(at..at, insertion);
-        }
+        },
     }
 }
 

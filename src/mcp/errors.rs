@@ -30,7 +30,9 @@ pub fn operation_result(
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     match output {
         Ok(outcome) => Ok(outcome_to_result(outcome, false)),
-        Err(OperationError::ImportFailed { outcome, .. }) => Ok(outcome_to_result(*outcome, true)),
+        Err(OperationError::ImportFailed { outcome, .. }) => {
+            Ok(outcome_to_result(*outcome, true))
+        },
         Err(error) => Ok(tool_error(error.to_string())),
     }
 }
@@ -46,7 +48,9 @@ pub fn validation_result(
 ) -> Result<CallToolResult, rmcp::ErrorData> {
     match output {
         Ok(outcome) => Ok(outcome_to_result(outcome, false)),
-        Err(OperationError::Invalid(failure)) => Ok(validation_failure_result(failure)),
+        Err(OperationError::Invalid(failure)) => {
+            Ok(validation_failure_result(failure))
+        },
         Err(error) => Ok(tool_error(error.to_string())),
     }
 }
@@ -55,8 +59,15 @@ pub fn validation_result(
 /// `content`, structured payload in `structured_content`. The
 /// `is_error` parameter lets the caller mark the result as a
 /// tool-level error (used by `validation_failure_result`).
-fn outcome_to_result(outcome: OperationOutcome, is_error: bool) -> CallToolResult {
-    text_and_structured(outcome.text, ensure_object(outcome.structured), is_error)
+fn outcome_to_result(
+    outcome: OperationOutcome,
+    is_error: bool,
+) -> CallToolResult {
+    text_and_structured(
+        outcome.text,
+        ensure_object(outcome.structured),
+        is_error,
+    )
 }
 
 /// Wraps a validation failure as a tool-level result carrying both
@@ -112,7 +123,7 @@ fn ensure_object(value: Value) -> Map<String, Value> {
             let mut map = Map::new();
             map.insert("value".to_string(), other);
             map
-        }
+        },
     }
 }
 
@@ -135,7 +146,8 @@ mod tests {
         );
         let result = outcome_to_result(outcome, false);
         assert_eq!(result.is_error, Some(false));
-        let structured = result.structured_content.expect("structured payload");
+        let structured =
+            result.structured_content.expect("structured payload");
         assert_eq!(structured["change_id"], json!("add-foo"));
         assert_eq!(structured["schema"], json!("nbspec-default"));
     }
@@ -144,7 +156,8 @@ mod tests {
     fn outcome_with_non_object_payload_is_wrapped() {
         let outcome = OperationOutcome::new("count: 3", json!(3));
         let result = outcome_to_result(outcome, false);
-        let structured = result.structured_content.expect("structured payload");
+        let structured =
+            result.structured_content.expect("structured payload");
         assert_eq!(structured, json!({ "value": 3 }));
     }
 
@@ -163,13 +176,15 @@ mod tests {
                     note: "proposals/add-foo/specifications/x.md".to_string(),
                     artifact_id: "specifications".to_string(),
                     line: None,
-                    message: "required artifact has no authored content".to_string(),
+                    message: "required artifact has no authored content"
+                        .to_string(),
                 },
             ],
         };
         let result = validation_failure_result(failure);
         assert_eq!(result.is_error, Some(true));
-        let structured = result.structured_content.expect("structured payload");
+        let structured =
+            result.structured_content.expect("structured payload");
         assert_eq!(structured.get("valid"), Some(&json!(false)));
         assert_eq!(structured.get("change_id"), Some(&json!("add-foo")));
         let diagnostics = structured
@@ -220,6 +235,8 @@ mod tests {
             .map(|t| t.text.as_str())
             .expect("text content");
         assert!(text.starts_with("change add-foo is invalid: 1 violation"));
-        assert!(text.contains("proposals/add-foo/proposal.md:3: [proposal] missing H1"));
+        assert!(text.contains(
+            "proposals/add-foo/proposal.md:3: [proposal] missing H1"
+        ));
     }
 }

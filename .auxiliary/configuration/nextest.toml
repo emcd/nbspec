@@ -1,0 +1,8 @@
+# Nextest configuration
+#
+# Per-repository cargo-nextest configuration. Lives under
+# `.auxiliary/configuration/` to keep all dev-tool config in one place;
+# it is NOT at the default `workspace-root/.config/nextest.toml` path, so
+# every nextest invocation MUST pass
+# `--config-file .auxiliary/configuration/nextest.toml` explicitly.
+# Reference: https://nexte.st/docs/configuration/

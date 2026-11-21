@@ -24,7 +24,7 @@ pub fn failure_report(error: &OperationError) -> String {
             // callers see the per-entry writes, refusals, and structured
             // payload that the review contract promises.
             format!("{}\nError: import failed", outcome.text)
-        }
+        },
         other => format!("Error: {other}"),
     }
 }

@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use crate::interchange::detect::{STAGING_COUNTER, create_dir_exclusive, rename_no_replace};
+use crate::interchange::detect::{
+    STAGING_COUNTER, create_dir_exclusive, rename_no_replace,
+};
 use crate::interchange::plan::{
     ExportEntry, ExportOptions, ExportPlan, InterchangeError, resolve_notebook,
 };
@@ -13,16 +15,22 @@ pub async fn export(
     change_id: &str,
     target: &std::path::Path,
     options: ExportOptions,
-) -> Result<crate::operations::OperationOutcome, crate::operations::OperationError> {
+) -> Result<
+    crate::operations::OperationOutcome,
+    crate::operations::OperationError,
+> {
     // R1 (F1): reject change IDs that contain path components or
     // escape sequences before constructing any filesystem path.
     // Kebab-case validation alone is sufficient: a kebab-case
     // string contains no `.`, `/`, or `..`, so `target.join(change_id)`
     // cannot escape `target`.
-    crate::changes::validate_change_id(change_id)
-        .map_err(|_| InterchangeError::InvalidChangeId(change_id.to_string()))?;
+    crate::changes::validate_change_id(change_id).map_err(|_| {
+        InterchangeError::InvalidChangeId(change_id.to_string())
+    })?;
     let notebook_name = resolve_notebook(notebook)?;
-    let plan = build_export_plan(client, change_id, target, &notebook_name, &options).await?;
+    let plan =
+        build_export_plan(client, change_id, target, &notebook_name, &options)
+            .await?;
     let plan_text = render_export_plan_text(&plan);
 
     if plan.dry_run {
@@ -78,17 +86,24 @@ pub async fn build_export_plan(
     let change_root = target.join(change_id);
     let would_overwrite = change_root.is_dir() && !options.overwrite;
 
-    let proposal_content =
-        match read_notebook_note(client, change_id, "", "proposal", notebook_name).await? {
-            Some(content) => content,
-            None => {
-                return Err(InterchangeError::RequiredNoteAbsent {
-                    notebook: notebook_name.to_string(),
-                    selector: format!("proposals/{change_id}/proposal.md"),
-                }
-                .into());
+    let proposal_content = match read_notebook_note(
+        client,
+        change_id,
+        "",
+        "proposal",
+        notebook_name,
+    )
+    .await?
+    {
+        Some(content) => content,
+        None => {
+            return Err(InterchangeError::RequiredNoteAbsent {
+                notebook: notebook_name.to_string(),
+                selector: format!("proposals/{change_id}/proposal.md"),
             }
-        };
+            .into());
+        },
+    };
     let mut entries: Vec<ExportEntry> = Vec::new();
     entries.push(ExportEntry {
         tree_path: "proposal.md".to_string(),
@@ -96,8 +111,13 @@ pub async fn build_export_plan(
         content: proposal_content,
     });
 
-    for (capability, content) in
-        list_notebook_folder(client, change_id, "specifications", notebook_name).await?
+    for (capability, content) in list_notebook_folder(
+        client,
+        change_id,
+        "specifications",
+        notebook_name,
+    )
+    .await?
     {
         if capability.is_empty() {
             continue;
@@ -105,13 +125,21 @@ pub async fn build_export_plan(
         let tree_path = format!("specs/{capability}/spec.md");
         entries.push(ExportEntry {
             tree_path,
-            absolute_path: change_root.join("specs").join(&capability).join("spec.md"),
+            absolute_path: change_root
+                .join("specs")
+                .join(&capability)
+                .join("spec.md"),
             content,
         });
     }
 
-    if let Some((_, first_design)) =
-        first_notebook_folder_entry(client, change_id, "designs", notebook_name).await?
+    if let Some((_, first_design)) = first_notebook_folder_entry(
+        client,
+        change_id,
+        "designs",
+        notebook_name,
+    )
+    .await?
     {
         entries.push(ExportEntry {
             tree_path: "design.md".to_string(),
@@ -121,17 +149,22 @@ pub async fn build_export_plan(
     }
 
     for (name, content) in
-        list_notebook_folder(client, change_id, "decisions", notebook_name).await?
+        list_notebook_folder(client, change_id, "decisions", notebook_name)
+            .await?
     {
         let tree_path = format!("decisions/{name}.md");
         entries.push(ExportEntry {
             tree_path,
-            absolute_path: change_root.join("decisions").join(format!("{name}.md")),
+            absolute_path: change_root
+                .join("decisions")
+                .join(format!("{name}.md")),
             content,
         });
     }
 
-    if let Some(tasks_content) = read_notebook_work_note(client, change_id, notebook_name).await? {
+    if let Some(tasks_content) =
+        read_notebook_work_note(client, change_id, notebook_name).await?
+    {
         entries.push(ExportEntry {
             tree_path: "tasks.md".to_string(),
             absolute_path: change_root.join("tasks.md"),
@@ -160,7 +193,9 @@ pub fn render_export_plan_text(plan: &ExportPlan) -> String {
         plan.target.display()
     ));
     if plan.would_overwrite {
-        output.push_str("  warning: target tree exists; refused without --overwrite\n");
+        output.push_str(
+            "  warning: target tree exists; refused without --overwrite\n",
+        );
     }
     for entry in &plan.entries {
         output.push_str(&format!("  write: {}\n", entry.tree_path));
@@ -175,7 +210,10 @@ pub fn render_export_plan_text(plan: &ExportPlan) -> String {
 pub async fn execute_export_plan(
     _client: &nb_api::NbClient,
     plan: &ExportPlan,
-) -> Result<crate::operations::OperationOutcome, crate::operations::OperationError> {
+) -> Result<
+    crate::operations::OperationOutcome,
+    crate::operations::OperationError,
+> {
     let change_root = plan.target.join(&plan.change_id);
     // R7' (F7 re-review 2026-07-25): every export is staged into
     // a sibling directory; the destination is renamed only after
@@ -205,7 +243,8 @@ pub async fn execute_export_plan(
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
-    let counter = STAGING_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let counter =
+        STAGING_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let staging = plan.target.join(format!(
         ".{}.staging-{}-{}-{}",
         plan.change_id,
@@ -251,12 +290,12 @@ pub async fn execute_export_plan(
                     }
                 })?;
             }
-            std::fs::write(&staged_path, entry.content.as_bytes()).map_err(|source| {
-                crate::operations::OperationError::NoteRead {
+            std::fs::write(&staged_path, entry.content.as_bytes()).map_err(
+                |source| crate::operations::OperationError::NoteRead {
                     path: staged_path.clone(),
                     source,
-                }
-            })?;
+                },
+            )?;
             written.push(entry.tree_path.clone());
         }
         // Best-effort directory fsync: flushes the staging
@@ -308,7 +347,7 @@ pub async fn execute_export_plan(
             });
         }
         match rename_no_replace(&staging, &change_root) {
-            Ok(()) => {}
+            Ok(()) => {},
             Err(error) => {
                 // R7''''' / F7 third re-review: emit a structured
                 // outcome with exact recovery status rather than
@@ -316,7 +355,10 @@ pub async fn execute_export_plan(
                 // publish phase failed; we attempt to restore the
                 // backup. Success or failure of the restore is
                 // recorded with the surviving backup path.
-                let restore_status = match std::fs::rename(&backup, &change_root) {
+                let restore_status = match std::fs::rename(
+                    &backup,
+                    &change_root,
+                ) {
                     Ok(()) => format!(
                         "publish rename failed: {error}; restored from backup at {}",
                         backup.display()
@@ -328,7 +370,9 @@ pub async fn execute_export_plan(
                     ),
                 };
                 rollback_failures.push(restore_status.clone());
-                output.push_str(&format!("ROLLBACK FAILURE: {restore_status}\n"));
+                output.push_str(&format!(
+                    "ROLLBACK FAILURE: {restore_status}\n"
+                ));
                 let _ = std::fs::remove_dir_all(&staging);
                 // R7''''' / F7 third re-review: the rolled-back
                 // error path returns Err with the exact recovery
@@ -342,13 +386,15 @@ pub async fn execute_export_plan(
                     path: change_root.clone(),
                     source: std::io::Error::other(restore_status),
                 });
-            }
+            },
         }
     } else if let Err(error) = rename_no_replace(&staging, &change_root) {
         let _ = std::fs::remove_dir_all(&staging);
         return Err(crate::operations::OperationError::NoteRead {
             path: change_root.clone(),
-            source: std::io::Error::other(format!("cannot publish staging tree: {error}")),
+            source: std::io::Error::other(format!(
+                "cannot publish staging tree: {error}"
+            )),
         });
     }
 
@@ -483,7 +529,9 @@ pub async fn list_notebook_folder(
     let mut paths: Vec<PathBuf> = dir_entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("md"))
+        .filter(|p| {
+            p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("md")
+        })
         .collect();
     paths.sort();
     for path in paths {

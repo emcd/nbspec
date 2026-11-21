@@ -52,7 +52,11 @@ pub(super) fn nbspec(fixture: &Fixture, arguments: &[&str]) -> Output {
 /// standard input — the transport for `--comment-file -`. Same
 /// hygiene as [`nbspec`]: fixture environment applied, `NB_DIR`
 /// pinned to the isolated root.
-fn nbspec_with_stdin(fixture: &Fixture, arguments: &[&str], stdin_content: &str) -> Output {
+fn nbspec_with_stdin(
+    fixture: &Fixture,
+    arguments: &[&str],
+    stdin_content: &str,
+) -> Output {
     use std::io::Write as _;
     use std::process::Stdio;
     let mut command = Command::new(env!("CARGO_BIN_EXE_nbspec"));
@@ -147,16 +151,25 @@ fn change_lifecycle_end_to_end() {
     assert!(!report.contains("Error:"), "unexpected banner: {report}");
     let lines: Vec<&str> = report.lines().collect();
     assert_eq!(lines[0], "change add-demo is invalid: 2 violations");
-    assert!(lines[1].starts_with("proposals/add-demo/proposal.md: [proposal]"));
-    assert!(lines[2].starts_with("proposals/add-demo/specifications/: [specifications]"));
+    assert!(
+        lines[1].starts_with("proposals/add-demo/proposal.md: [proposal]")
+    );
+    assert!(
+        lines[2].starts_with(
+            "proposals/add-demo/specifications/: [specifications]"
+        )
+    );
 
     // Author the proposal and one delta specification directly on the
     // notebook filesystem, as an agent's editor would.
-    let change_directory = fixture.notebook_path().join("proposals").join(CHANGE_ID);
-    let mut proposal = std::fs::read_to_string(change_directory.join("proposal.md")).unwrap();
+    let change_directory =
+        fixture.notebook_path().join("proposals").join(CHANGE_ID);
+    let mut proposal =
+        std::fs::read_to_string(change_directory.join("proposal.md")).unwrap();
     proposal.push_str("\n## Why\n\nProve the lifecycle.\n");
     std::fs::write(change_directory.join("proposal.md"), proposal).unwrap();
-    let specification_note = change_directory.join("specifications/user-auth.md");
+    let specification_note =
+        change_directory.join("specifications/user-auth.md");
     std::fs::write(&specification_note, SPECIFICATION).unwrap();
 
     // The authored change validates: exit 0 and a one-line summary.
@@ -241,7 +254,9 @@ fn change_lifecycle_end_to_end() {
         !unreadable.status.success(),
         "unreadable comment file must refuse"
     );
-    assert!(stderr_of(&unreadable).contains("cannot read the review comment file"));
+    assert!(
+        stderr_of(&unreadable).contains("cannot read the review comment file")
+    );
     let findings_file = fixture.project_root().join("itest-findings.md");
     std::fs::write(&findings_file, "tighten the scenario wording").unwrap();
     let revised = nbspec(
@@ -308,7 +323,8 @@ fn change_lifecycle_end_to_end() {
         .file_name()
         .and_then(|name| name.to_str())
         .expect("verdict note path must have a UTF-8 basename");
-    let absolute_verdict_note = fixture.notebook_path().join(&verdict_note_path);
+    let absolute_verdict_note =
+        fixture.notebook_path().join(&verdict_note_path);
     assert!(
         absolute_verdict_note.is_file(),
         "recorded verdict note path must exist on disk: {verdict_note_path} \
@@ -316,7 +332,8 @@ fn change_lifecycle_end_to_end() {
         absolute_verdict_note.display()
     );
     assert!(
-        !verdict_note_filename.is_empty() && verdict_note_filename.ends_with(".md"),
+        !verdict_note_filename.is_empty()
+            && verdict_note_filename.ends_with(".md"),
         "verdict note filename must be a non-empty `.md` basename: {verdict_note_filename:?}"
     );
     // The basename (without `.md`) is the verdict id the gate binds to.
@@ -340,11 +357,13 @@ fn change_lifecycle_end_to_end() {
     // - does NOT contain a second duplicate `# {verdict_id}` heading
     //   (which would be the `DuplicateTitleHeading` failure mode
     //   that the verdict writer's body change guards against)
-    let body = std::fs::read_to_string(&absolute_verdict_note).expect("read verdict note body");
+    let body = std::fs::read_to_string(&absolute_verdict_note)
+        .expect("read verdict note body");
     let expected_prefix = format!("# {verdict_id}\n\n```json\n");
     let expected_prefix_crlf = format!("# {verdict_id}\r\n\r\n```json\r\n");
     assert!(
-        body.starts_with(&expected_prefix) || body.starts_with(&expected_prefix_crlf),
+        body.starts_with(&expected_prefix)
+            || body.starts_with(&expected_prefix_crlf),
         "verdict body must start with `# {{verdict_id}}\\n\\n```json\\n` \
          (or the line-ending-normalized CRLF equivalent); body starts with: {:?}",
         body.chars().take(80).collect::<String>()
@@ -405,8 +424,14 @@ fn change_lifecycle_end_to_end() {
     let merged = nbspec(&fixture, &["merge", CHANGE_ID]);
     assert!(merged.status.success(), "{}", stderr_of(&merged));
     let merge_output = stdout_of(&merged);
-    assert!(merge_output.contains("wrote documentation/specifications/user-auth.md"));
-    assert!(merge_output.contains("archived documentation/archives/add-demo.tar.zst"));
+    assert!(
+        merge_output
+            .contains("wrote documentation/specifications/user-auth.md")
+    );
+    assert!(
+        merge_output
+            .contains("archived documentation/archives/add-demo.tar.zst")
+    );
     assert!(merge_output.contains("warning: no .gitattributes rule"));
     assert!(
         merge_output.contains("retired proposals/add-demo/"),
@@ -424,7 +449,9 @@ fn change_lifecycle_end_to_end() {
         .project_root()
         .join("documentation/specifications/user-auth.md");
     let merged_content = std::fs::read_to_string(&target).unwrap();
-    assert!(merged_content.starts_with("<!-- nbspec: change=add-demo notebook="));
+    assert!(
+        merged_content.starts_with("<!-- nbspec: change=add-demo notebook=")
+    );
     assert!(merged_content.ends_with(SPECIFICATION));
     assert!(
         fixture
@@ -459,7 +486,8 @@ fn change_lifecycle_end_to_end() {
     assert!(
         entry_paths
             .iter()
-            .any(|path| path == "add-demo/namespace/specifications/user-auth.md")
+            .any(|path| path
+                == "add-demo/namespace/specifications/user-auth.md")
     );
     assert_eq!(
         entry_paths
@@ -496,7 +524,8 @@ fn change_lifecycle_end_to_end() {
     );
 
     // A retired id cannot be recreated: the on-disk tarball claims it.
-    let recreated = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
+    let recreated =
+        nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
     assert_eq!(recreated.status.code(), Some(1));
     assert!(
         stderr_of(&recreated).contains("add-demo.tar.zst"),
@@ -538,7 +567,8 @@ fn display_reports_authored_when_h1_diverges_from_selector_stem() {
     // Author the proposal with an H1 that does NOT match the note
     // filename stem ("proposal"). Before the fix, this caused nb to
     // fail selector resolution, and display reported "ready to author".
-    let change_directory = fixture.notebook_path().join("proposals").join(CHANGE_ID);
+    let change_directory =
+        fixture.notebook_path().join("proposals").join(CHANGE_ID);
     std::fs::write(
         change_directory.join("proposal.md"),
         "# A Human-Readable Title\n\n## Why\n\nBody text that counts as authored.\n",
@@ -583,7 +613,8 @@ fn display_classifies_missing_note_and_folder_as_absence() {
     let created = nbspec(&fixture, &["create", CHANGE_ID, "--title", "Demo"]);
     assert!(created.status.success(), "{}", stderr_of(&created));
 
-    let change_directory = fixture.notebook_path().join("proposals").join(CHANGE_ID);
+    let change_directory =
+        fixture.notebook_path().join("proposals").join(CHANGE_ID);
 
     // --- missing note: delete proposal.md ---
     std::fs::remove_file(change_directory.join("proposal.md")).unwrap();
@@ -612,7 +643,8 @@ fn display_classifies_missing_note_and_folder_as_absence() {
     );
     let full_missing_out = stdout_of(&full_missing);
     assert!(
-        full_missing_out.contains("## specifications/") && full_missing_out.contains("(empty)"),
+        full_missing_out.contains("## specifications/")
+            && full_missing_out.contains("(empty)"),
         "missing folder must render (empty): {full_missing_out}"
     );
     assert!(
@@ -620,7 +652,8 @@ fn display_classifies_missing_note_and_folder_as_absence() {
         "missing folder must not be unreadable: {full_missing_out}"
     );
     assert!(
-        full_missing_out.contains("(missing)") || full_missing_out.contains("## proposal"),
+        full_missing_out.contains("(missing)")
+            || full_missing_out.contains("## proposal"),
         "full display must tolerate missing proposal note: {full_missing_out}"
     );
 }
@@ -703,7 +736,8 @@ fn first_review_reports_qualified_note_path() {
         .lines()
         .find_map(|line| line.strip_prefix("note=").map(str::to_string))
         .expect("review output must contain `note=...` line");
-    let qualified_prefix = format!("{}:proposals/{CHANGE_ID}/verdicts/", fixture.notebook());
+    let qualified_prefix =
+        format!("{}:proposals/{CHANGE_ID}/verdicts/", fixture.notebook());
     assert!(
         note_line.starts_with(&qualified_prefix),
         "first-review note= must be qualified as \
@@ -770,7 +804,8 @@ The system SHALL refresh sessions.
         let created = nbspec(&fixture, &["create", id, "--title", "Demo"]);
         assert!(created.status.success(), "{}", stderr_of(&created));
         let dir = fixture.notebook_path().join("proposals").join(id);
-        let mut proposal = std::fs::read_to_string(dir.join("proposal.md")).unwrap();
+        let mut proposal =
+            std::fs::read_to_string(dir.join("proposal.md")).unwrap();
         proposal.push_str("\n## Why\n\nProve surgical merge.\n");
         std::fs::write(dir.join("proposal.md"), proposal).unwrap();
         std::fs::write(dir.join("specifications/user-auth.md"), spec).unwrap();

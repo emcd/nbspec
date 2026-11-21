@@ -68,18 +68,24 @@ pub fn round_trip_proof(
         };
     }
 
-    let source_files = collect_files_for_proof(source_change, "source", &mut divergences);
+    let source_files =
+        collect_files_for_proof(source_change, "source", &mut divergences);
     for (relative, source_bytes) in &source_files {
         let export_path = scratch_change.join(relative);
         let export_bytes = match std::fs::read(&export_path) {
             Ok(bytes) => bytes,
             Err(error) => {
-                divergences.push(format!("{}: missing from export ({})", relative, error));
+                divergences.push(format!(
+                    "{}: missing from export ({})",
+                    relative, error
+                ));
                 continue;
-            }
+            },
         };
-        let canonical_source = canonical_bytes_for_proof(relative, source_bytes);
-        let canonical_export = canonical_bytes_for_proof(relative, &export_bytes);
+        let canonical_source =
+            canonical_bytes_for_proof(relative, source_bytes);
+        let canonical_export =
+            canonical_bytes_for_proof(relative, &export_bytes);
         if canonical_source == canonical_export {
             continue;
         }
@@ -90,7 +96,8 @@ pub fn round_trip_proof(
     }
 
     // Files only in the export tree are divergences too.
-    let export_files = collect_files_for_proof(scratch_change, "export", &mut divergences);
+    let export_files =
+        collect_files_for_proof(scratch_change, "export", &mut divergences);
     for (relative, _) in &export_files {
         if !source_files
             .iter()
@@ -154,7 +161,7 @@ pub fn walk_for_proof(
                 current.display()
             ));
             return;
-        }
+        },
     };
     let mut names: Vec<String> = Vec::new();
     for entry_result in entries {
@@ -166,7 +173,7 @@ pub fn walk_for_proof(
                     current.display()
                 ));
                 continue;
-            }
+            },
         };
         match entry.file_name().into_string() {
             Ok(name) => names.push(name),
@@ -176,7 +183,7 @@ pub fn walk_for_proof(
                     current.display(),
                     os_str
                 ));
-            }
+            },
         }
     }
     names.sort();
@@ -185,9 +192,12 @@ pub fn walk_for_proof(
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
             Err(error) => {
-                divergences.push(format!("{side}: cannot stat {}: {error}", path.display()));
+                divergences.push(format!(
+                    "{side}: cannot stat {}: {error}",
+                    path.display()
+                ));
                 continue;
-            }
+            },
         };
         if metadata.file_type().is_symlink() {
             divergences.push(format!(
@@ -208,7 +218,7 @@ pub fn walk_for_proof(
                         root.display()
                     ));
                     continue;
-                }
+                },
             };
             let posix = match relative.to_str() {
                 Some(s) => s.replace(std::path::MAIN_SEPARATOR, "/"),
@@ -218,14 +228,17 @@ pub fn walk_for_proof(
                         relative.display()
                     ));
                     continue;
-                }
+                },
             };
             let bytes = match std::fs::read(&path) {
                 Ok(bytes) => bytes,
                 Err(error) => {
-                    divergences.push(format!("{side}: cannot read {}: {error}", path.display()));
+                    divergences.push(format!(
+                        "{side}: cannot read {}: {error}",
+                        path.display()
+                    ));
                     continue;
-                }
+                },
             };
             files.push((posix, bytes));
         } else {
@@ -250,12 +263,17 @@ pub fn walk_for_proof(
 /// silently dropped, and never reached the comparison. We now
 /// carry bytes end-to-end and only apply text normalizations to
 /// the change-tree artifacts that the spec defines.
-pub fn canonical_bytes_for_proof(relative_path: &str, bytes: &[u8]) -> Vec<u8> {
+pub fn canonical_bytes_for_proof(
+    relative_path: &str,
+    bytes: &[u8],
+) -> Vec<u8> {
     let is_text = relative_path == "proposal.md"
         || relative_path == "tasks.md"
         || relative_path == "design.md"
-        || (relative_path.starts_with("specs/") && relative_path.ends_with("/spec.md"))
-        || (relative_path.starts_with("decisions/") && relative_path.ends_with(".md"));
+        || (relative_path.starts_with("specs/")
+            && relative_path.ends_with("/spec.md"))
+        || (relative_path.starts_with("decisions/")
+            && relative_path.ends_with(".md"));
     if !is_text {
         return bytes.to_vec();
     }
@@ -280,7 +298,9 @@ pub fn canonical_for_proof(relative_path: &str, content: &str) -> String {
     if relative_path.starts_with("decisions/") {
         return canonical_decision_for_proof(content);
     }
-    if relative_path.starts_with("specs/") && relative_path.ends_with("/spec.md") {
+    if relative_path.starts_with("specs/")
+        && relative_path.ends_with("/spec.md")
+    {
         return canonical_spec_for_proof(content);
     }
     if relative_path == "design.md" {

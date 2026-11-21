@@ -1,7 +1,9 @@
 #![allow(dead_code, unused_imports)]
 use std::path::PathBuf;
 
-use nbspec::interchange::{InterchangePlan, InterchangePlanStructured, PlanEntry};
+use nbspec::interchange::{
+    InterchangePlan, InterchangePlanStructured, PlanEntry,
+};
 
 // MCP Owner ring-1 v0.3.0-pause re-review (msg 1265cd09) bounded
 // correction #2 (dry side): the dry-run structured payload must
@@ -20,8 +22,12 @@ fn fixture_plan(delete_original: bool) -> InterchangePlan {
             },
             PlanEntry::ArchiveWrite {
                 change_id: "legacy".to_string(),
-                source_path: PathBuf::from("/tmp/source/openspec/changes/archive/legacy"),
-                target_path: PathBuf::from("documentation/archives/legacy.tar.zst"),
+                source_path: PathBuf::from(
+                    "/tmp/source/openspec/changes/archive/legacy",
+                ),
+                target_path: PathBuf::from(
+                    "documentation/archives/legacy.tar.zst",
+                ),
             },
             PlanEntry::Refusal {
                 source_path: PathBuf::from("/tmp/source/add-bad"),
@@ -29,7 +35,8 @@ fn fixture_plan(delete_original: bool) -> InterchangePlan {
             },
             PlanEntry::Skip {
                 source_path: PathBuf::from("/tmp/source/add-skipped"),
-                reason: "--no-active excludes active change ingestion".to_string(),
+                reason: "--no-active excludes active change ingestion"
+                    .to_string(),
             },
         ],
         delete_original,
@@ -56,7 +63,9 @@ fn dry_run_structured_payload_emits_typed_active_write_entry() {
         .expect("entries must be an array");
     let active = entries
         .iter()
-        .find(|entry| entry.get("kind").and_then(|v| v.as_str()) == Some("active-write"))
+        .find(|entry| {
+            entry.get("kind").and_then(|v| v.as_str()) == Some("active-write")
+        })
         .expect("an active-write entry must be present");
     assert_eq!(
         active.get("change_id").and_then(|v| v.as_str()),
@@ -88,7 +97,9 @@ fn dry_run_structured_payload_emits_typed_archive_write_entry() {
         .expect("entries must be an array");
     let archive = entries
         .iter()
-        .find(|entry| entry.get("kind").and_then(|v| v.as_str()) == Some("archive-write"))
+        .find(|entry| {
+            entry.get("kind").and_then(|v| v.as_str()) == Some("archive-write")
+        })
         .expect("an archive-write entry must be present");
     assert_eq!(
         archive.get("change_id").and_then(|v| v.as_str()),
@@ -108,7 +119,8 @@ fn dry_run_structured_payload_emits_typed_archive_write_entry() {
 }
 
 #[test]
-fn dry_run_structured_payload_pending_deletions_excludes_paused_active_sources() {
+fn dry_run_structured_payload_pending_deletions_excludes_paused_active_sources()
+ {
     // After resume, pending_deletions includes both active and archive.
     let plan = fixture_plan(true);
     let structured = InterchangePlanStructured::from_plan(plan).structured;
@@ -122,15 +134,17 @@ fn dry_run_structured_payload_pending_deletions_excludes_paused_active_sources()
         "both archive and active sources must be pending deletion: {pending:?}"
     );
     assert!(
-        pending
-            .iter()
-            .any(|v| v.as_str().map(|s| s.contains("add-foo")).unwrap_or(false)),
+        pending.iter().any(|v| v
+            .as_str()
+            .map(|s| s.contains("add-foo"))
+            .unwrap_or(false)),
         "active source must be in pending_deletions after resume: {pending:?}"
     );
     assert!(
-        pending
-            .iter()
-            .any(|v| v.as_str().map(|s| s.contains("legacy")).unwrap_or(false)),
+        pending.iter().any(|v| v
+            .as_str()
+            .map(|s| s.contains("legacy"))
+            .unwrap_or(false)),
         "archive source must be in pending_deletions: {pending:?}"
     );
 }

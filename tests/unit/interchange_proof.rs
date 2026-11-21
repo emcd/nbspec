@@ -8,9 +8,12 @@ use nbspec::interchange::ActiveTree;
 #[cfg(any())]
 use nbspec::interchange::import_active_tree;
 use nbspec::interchange::{
-    ArchiveTree, DetectedTree, detect_trees, import_archive_tree, round_trip_proof,
+    ArchiveTree, DetectedTree, detect_trees, import_archive_tree,
+    round_trip_proof,
 };
-use nbspec::interchange::{InterchangePlan, InterchangePlanStructured, PlanEntry};
+use nbspec::interchange::{
+    InterchangePlan, InterchangePlanStructured, PlanEntry,
+};
 
 fn write_file(base: &Path, relative: &str, content: &str) {
     let path = base.join(relative);
@@ -77,7 +80,11 @@ fn round_trip_clean_when_source_and_export_match_canonically() {
         "Decision body.\n",
     );
 
-    let proof = round_trip_proof("add-foo", &source.join("add-foo"), &export.join("add-foo"));
+    let proof = round_trip_proof(
+        "add-foo",
+        &source.join("add-foo"),
+        &export.join("add-foo"),
+    );
     assert!(
         proof.clean,
         "expected clean, got divergences: {:?}",
@@ -105,7 +112,11 @@ fn round_trip_dirty_when_body_diverges() {
     );
     write_file(&export, "add-foo/tasks.md", "# Tasks\n\n- [ ] open\n");
 
-    let proof = round_trip_proof("add-foo", &source.join("add-foo"), &export.join("add-foo"));
+    let proof = round_trip_proof(
+        "add-foo",
+        &source.join("add-foo"),
+        &export.join("add-foo"),
+    );
     assert!(!proof.clean, "expected dirty");
     assert!(
         proof.divergences.iter().any(|d| d.contains("proposal.md")),
@@ -125,7 +136,11 @@ fn round_trip_dirty_when_export_missing_source_file() {
     write_file(&source, "add-foo/tasks.md", "# [ ] Tasks\n");
     write_file(&export, "add-foo/proposal.md", "# add-foo\n");
 
-    let proof = round_trip_proof("add-foo", &source.join("add-foo"), &export.join("add-foo"));
+    let proof = round_trip_proof(
+        "add-foo",
+        &source.join("add-foo"),
+        &export.join("add-foo"),
+    );
     assert!(!proof.clean);
     assert!(
         proof.divergences.iter().any(|d| d.contains("tasks.md")),
@@ -157,9 +172,14 @@ fn round_trip_dirty_when_source_contains_symlink() {
     std::fs::create_dir_all(&victim).unwrap();
     std::fs::write(victim.join("outside.txt"), "leaked\n").unwrap();
     let link_path = source.join("add-foo").join("leaked");
-    std::os::unix::fs::symlink(victim.join("outside.txt"), &link_path).unwrap();
+    std::os::unix::fs::symlink(victim.join("outside.txt"), &link_path)
+        .unwrap();
 
-    let proof = round_trip_proof("add-foo", &source.join("add-foo"), &export.join("add-foo"));
+    let proof = round_trip_proof(
+        "add-foo",
+        &source.join("add-foo"),
+        &export.join("add-foo"),
+    );
     assert!(!proof.clean, "symlink must surface as a divergence");
     assert!(
         proof.divergences.iter().any(|d| d.contains("symlink")),
@@ -185,7 +205,11 @@ fn round_trip_clean_when_source_contains_binary_file() {
     write_bytes(&export, "add-foo/proposal.md", b"# add-foo\n");
     write_bytes(&export, "add-foo/blob.bin", &bytes);
 
-    let proof = round_trip_proof("add-foo", &source.join("add-foo"), &export.join("add-foo"));
+    let proof = round_trip_proof(
+        "add-foo",
+        &source.join("add-foo"),
+        &export.join("add-foo"),
+    );
     assert!(
         proof.clean,
         "binary file with byte-equal source/export must prove clean; got {:?}",
@@ -208,7 +232,11 @@ fn round_trip_dirty_when_source_binary_diverges_from_export() {
     write_bytes(&export, "add-foo/proposal.md", b"# add-foo\n");
     write_bytes(&export, "add-foo/blob.bin", &[4u8, 5, 6]);
 
-    let proof = round_trip_proof("add-foo", &source.join("add-foo"), &export.join("add-foo"));
+    let proof = round_trip_proof(
+        "add-foo",
+        &source.join("add-foo"),
+        &export.join("add-foo"),
+    );
     assert!(!proof.clean, "divergent binary must prove dirty");
     assert!(
         proof.divergences.iter().any(|d| d.contains("blob.bin")),
@@ -244,11 +272,16 @@ fn round_trip_dirty_when_source_contains_non_utf8_filename() {
     // Lay a sibling file whose name is not valid UTF-8. On Unix,
     // filenames are arbitrary byte strings; the proof must refuse
     // to silently drop the entry.
-    let bad_name = OsString::from_vec(vec![0xff, 0xfe, b'_', b'd', b'a', b't', b'a']);
+    let bad_name =
+        OsString::from_vec(vec![0xff, 0xfe, b'_', b'd', b'a', b't', b'a']);
     let bad_path = source.join("add-foo").join(&bad_name);
     std::fs::write(&bad_path, b"data\n").unwrap();
 
-    let proof = round_trip_proof("add-foo", &source.join("add-foo"), &export.join("add-foo"));
+    let proof = round_trip_proof(
+        "add-foo",
+        &source.join("add-foo"),
+        &export.join("add-foo"),
+    );
     assert!(
         !proof.clean,
         "non-UTF-8 filename must surface as a divergence; got clean proof"

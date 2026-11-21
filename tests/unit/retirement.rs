@@ -3,8 +3,8 @@ use std::path::{Path, PathBuf};
 use nbspec::archives::{ArchiveEntry, build_archive};
 use nbspec::changes::{ChangeMetadata, render_meta_note};
 use nbspec::retirement::{
-    capture_snapshot, classify_commit_outcome, namespace_entries, validate_archive_identity,
-    verify_persisted_archive, verify_snapshot,
+    capture_snapshot, classify_commit_outcome, namespace_entries,
+    validate_archive_identity, verify_persisted_archive, verify_snapshot,
 };
 
 const TEMP_TEST_ROOT: &str = ".auxiliary/temporary/tests";
@@ -40,9 +40,13 @@ fn seed_namespace(root: &Path) -> PathBuf {
 }
 
 fn seed_meta(namespace: &std::path::Path) {
-    let metadata =
-        nbspec::changes::ChangeMetadata::new("add-demo", Some("Demo"), "nbspec-default", "nbspec")
-            .unwrap();
+    let metadata = nbspec::changes::ChangeMetadata::new(
+        "add-demo",
+        Some("Demo"),
+        "nbspec-default",
+        "nbspec",
+    )
+    .unwrap();
     let body = render_meta_note(&metadata).unwrap();
     std::fs::write(namespace.join("meta.md"), body).unwrap();
 }
@@ -96,7 +100,8 @@ fn snapshot_verification_detects_edit_add_and_remove() {
     );
 
     std::fs::remove_file(namespace.join("extra.md")).unwrap();
-    std::fs::remove_file(namespace.join("specifications/user-auth.md")).unwrap();
+    std::fs::remove_file(namespace.join("specifications/user-auth.md"))
+        .unwrap();
     assert!(
         verify_snapshot(&namespace, &snapshot).is_err(),
         "removal refuses"
@@ -122,8 +127,13 @@ fn namespace_entries_carry_original_paths_as_raw_bytes() {
 }
 
 fn valid_tarball_bytes(change_id: &str) -> Vec<u8> {
-    let metadata =
-        ChangeMetadata::new(change_id, Some("Demo"), "nbspec-default", "nbspec").unwrap();
+    let metadata = ChangeMetadata::new(
+        change_id,
+        Some("Demo"),
+        "nbspec-default",
+        "nbspec",
+    )
+    .unwrap();
     let entries = vec![ArchiveEntry {
         path: PathBuf::from(format!("{change_id}/meta.md")),
         content: render_meta_note(&metadata).unwrap().into_bytes(),
@@ -178,8 +188,13 @@ fn persisted_verification_matches_inventory_and_catches_divergence() {
 
 #[test]
 fn archive_identity_rejects_prefix_lookalikes_and_duplicate_meta() {
-    let metadata =
-        ChangeMetadata::new("add-demo", Some("Demo"), "nbspec-default", "nbspec").unwrap();
+    let metadata = ChangeMetadata::new(
+        "add-demo",
+        Some("Demo"),
+        "nbspec-default",
+        "nbspec",
+    )
+    .unwrap();
     let meta_body = render_meta_note(&metadata).unwrap().into_bytes();
     // `add-demometa.md` names the change but lives outside `add-demo/`.
     let tricky = vec![ArchiveEntry {
@@ -187,7 +202,11 @@ fn archive_identity_rejects_prefix_lookalikes_and_duplicate_meta() {
         content: meta_body.clone(),
     }];
     assert!(
-        validate_archive_identity(&build_archive(&tricky).unwrap(), "add-demo").is_err(),
+        validate_archive_identity(
+            &build_archive(&tricky).unwrap(),
+            "add-demo"
+        )
+        .is_err(),
         "string-prefix lookalike refuses"
     );
     // Sibling directory with the id as a string prefix.
@@ -202,7 +221,11 @@ fn archive_identity_rejects_prefix_lookalikes_and_duplicate_meta() {
         },
     ];
     assert!(
-        validate_archive_identity(&build_archive(&sibling).unwrap(), "add-demo").is_err(),
+        validate_archive_identity(
+            &build_archive(&sibling).unwrap(),
+            "add-demo"
+        )
+        .is_err(),
         "sibling directory refuses"
     );
     // Two meta snapshots is ambiguous, not proof.
@@ -217,7 +240,11 @@ fn archive_identity_rejects_prefix_lookalikes_and_duplicate_meta() {
         },
     ];
     assert!(
-        validate_archive_identity(&build_archive(&duplicated).unwrap(), "add-demo").is_err(),
+        validate_archive_identity(
+            &build_archive(&duplicated).unwrap(),
+            "add-demo"
+        )
+        .is_err(),
         "duplicate meta refuses"
     );
 }
@@ -243,7 +270,8 @@ fn snapshot_refuses_non_utf8_filenames() {
     use std::os::unix::ffi::OsStringExt;
     let root = unique_root("nonutf8");
     let namespace = seed_namespace(&root);
-    let hostile = std::ffi::OsString::from_vec(b"hostile-\xff-note.md".to_vec());
+    let hostile =
+        std::ffi::OsString::from_vec(b"hostile-\xff-note.md".to_vec());
     std::fs::write(namespace.join(hostile), "# hostile\n").unwrap();
     assert!(
         capture_snapshot(&namespace).is_err(),

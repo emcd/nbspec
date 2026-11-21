@@ -8,9 +8,12 @@ use nbspec::interchange::ActiveTree;
 #[cfg(any())]
 use nbspec::interchange::import_active_tree;
 use nbspec::interchange::{
-    ArchiveTree, DetectedTree, detect_trees, import_archive_tree, round_trip_proof,
+    ArchiveTree, DetectedTree, detect_trees, import_archive_tree,
+    round_trip_proof,
 };
-use nbspec::interchange::{InterchangePlan, InterchangePlanStructured, PlanEntry};
+use nbspec::interchange::{
+    InterchangePlan, InterchangePlanStructured, PlanEntry,
+};
 
 fn write_file(base: &Path, relative: &str, content: &str) {
     let path = base.join(relative);
@@ -74,8 +77,8 @@ fn active_tree_mapping_emits_proposal_spec_design_work_decisions_meta() {
         root: root.join("add-foo"),
         change_id: "add-foo".to_string(),
     };
-    let (writes, warnings, meta) =
-        import_active_tree(&active, &[]).expect("import_active_tree should succeed");
+    let (writes, warnings, meta) = import_active_tree(&active, &[])
+        .expect("import_active_tree should succeed");
 
     assert!(
         warnings.is_empty(),
@@ -134,7 +137,8 @@ fn active_tree_mapping_normalizes_proposal_h1() {
         root: root.join("add-foo"),
         change_id: "add-foo".to_string(),
     };
-    let (writes, _, _) = import_active_tree(&active, &[]).expect("import should succeed");
+    let (writes, _, _) =
+        import_active_tree(&active, &[]).expect("import should succeed");
     let proposal = writes
         .iter()
         .find(|w| w.title == "proposal")
@@ -161,7 +165,8 @@ fn active_tree_mapping_preserves_decision_filename() {
         root: root.join("add-foo"),
         change_id: "add-foo".to_string(),
     };
-    let (writes, _, _) = import_active_tree(&active, &[]).expect("import should succeed");
+    let (writes, _, _) =
+        import_active_tree(&active, &[]).expect("import should succeed");
     let decision = writes
         .iter()
         .find(|w| w.title == "clone-topology-decisions")
@@ -184,11 +189,13 @@ fn active_tree_mapping_warns_on_modified_delta() {
         root: root.join("add-foo"),
         change_id: "add-foo".to_string(),
     };
-    let (writes, warnings, _) = import_active_tree(&active, &[]).expect("import should succeed");
+    let (writes, warnings, _) =
+        import_active_tree(&active, &[]).expect("import should succeed");
     assert!(
-        warnings
-            .iter()
-            .any(|w| matches!(w.kind, nbspec::interchange::DeltaWarningKind::Modified)),
+        warnings.iter().any(|w| matches!(
+            w.kind,
+            nbspec::interchange::DeltaWarningKind::Modified
+        )),
         "expected MODIFIED warning, got {warnings:?}"
     );
     // Import still proceeds: the warnings are surfaced in the
@@ -255,7 +262,8 @@ fn active_tree_preserves_checkbox_state_in_work_note() {
         root: root.join("add-foo"),
         change_id: "add-foo".to_string(),
     };
-    let (writes, _, _) = import_active_tree(&active, &[]).expect("import should succeed");
+    let (writes, _, _) =
+        import_active_tree(&active, &[]).expect("import should succeed");
     let work = writes
         .iter()
         .find(|w| w.title == "work")

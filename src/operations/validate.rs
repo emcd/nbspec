@@ -29,7 +29,8 @@ pub async fn validate(
     change_id: &str,
 ) -> OperationResult {
     let context = load_change_context(client, notebook, change_id).await?;
-    let diagnostics = validate_change(&context.documents, &context.schema, &context.folder);
+    let diagnostics =
+        validate_change(&context.documents, &context.schema, &context.folder);
     if !diagnostics.is_empty() {
         return Err(crate::operations::OperationError::Invalid(
             ValidationFailure {

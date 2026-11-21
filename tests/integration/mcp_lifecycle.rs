@@ -21,30 +21,13 @@
 //! before responding. Per `nbspec:issues/4`.
 
 use std::path::Path;
-use std::{
-    process::Stdio,
-    sync::atomic::{AtomicI64, Ordering},
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
 
-use rmcp::model::{
-    CallToolRequest, CallToolRequestParams, ClientCapabilities, ClientJsonRpcMessage,
-    Implementation, InitializeRequest, InitializeRequestParams, InitializedNotification,
-    ListToolsRequest, PaginatedRequestParams, RequestId,
-};
-use serde_json::{Map, Value, json};
-use tokio::{
-    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
-    process::{Child, ChildStdin, ChildStdout, Command as TokioCommand},
-    task::JoinHandle,
-};
+use serde_json::{Value, json};
 
 use super::harness::Fixture;
+use super::mcp_client::McpHarness;
 
 const CHANGE_ID: &str = "add-mcp-demo";
-const READ_TIMEOUT: Duration = Duration::from_secs(30);
-const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 const SPECIFICATION: &str = "\
 # user-auth
@@ -58,224 +41,6 @@ The system SHALL authenticate users before granting access.
 - **WHEN** a user submits correct credentials
 - **THEN** a session begins
 ";
-
-/// Spawns the `nbspec serve mcp` subprocess and speaks JSON-RPC over
-/// its stdin/stdout. The harness owns the child for its lifetime and
-/// kills it on drop. Stderr is drained into a shared buffer so the
-/// EOF-on-stdout panic can surface the subprocess's exit reason
-/// (startup log + anyhow banner) when `nbspec serve mcp` exits
-/// before responding. Diagnostic per nbspec:issues/4.
-struct McpHarness {
-    child: Child,
-    stdin: Option<ChildStdin>,
-    stdout: BufReader<ChildStdout>,
-    stderr_buffer: Arc<Mutex<Vec<u8>>>,
-    stderr_task: JoinHandle<()>,
-    next_id: AtomicI64,
-}
-
-impl McpHarness {
-    async fn spawn(fixture: &Fixture) -> Self {
-        let mut command = TokioCommand::new(env!("CARGO_BIN_EXE_nbspec"));
-        fixture.configure_tokio(&mut command);
-        command
-            .arg("serve")
-            .arg("mcp")
-            .arg("--notebook")
-            .arg(fixture.notebook())
-            .env("NBSPEC_CONFIG_DIR", fixture.configuration_directory())
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        let mut child = command.spawn().expect("spawn nbspec serve mcp");
-        let stdin = child.stdin.take().expect("take mcp stdin");
-        let stdout = child.stdout.take().expect("take mcp stdout");
-        let stderr = child.stderr.take().expect("take mcp stderr");
-        // stdin is held in an Option so the EOF panic path can
-        // take it and signal the subprocess to exit gracefully;
-        // see McpHarness::read_response.
-
-        let stderr_buffer: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
-        let stderr_drain_target = Arc::clone(&stderr_buffer);
-        // Drain the subprocess's stderr into a shared buffer. The
-        // task ends naturally when the subprocess closes its stderr
-        // (i.e., on exit). EOF-on-stdout panic awaits the task
-        // before reading the buffer so all output is captured.
-        let stderr_task = tokio::spawn(async move {
-            let mut reader = BufReader::new(stderr);
-            let mut line = String::new();
-            loop {
-                line.clear();
-                match reader.read_line(&mut line).await {
-                    Ok(0) => break,
-                    Ok(_) => {
-                        if let Ok(mut buffer) = stderr_drain_target.lock() {
-                            buffer.extend_from_slice(line.as_bytes());
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-
-        let mut harness = Self {
-            child,
-            stdin: Some(stdin),
-            stdout: BufReader::new(stdout),
-            stderr_buffer,
-            stderr_task,
-            next_id: AtomicI64::new(1),
-        };
-        harness.initialize().await;
-        harness
-    }
-
-    fn next_id(&self) -> i64 {
-        self.next_id.fetch_add(1, Ordering::SeqCst)
-    }
-
-    /// Returns the captured stderr text from the subprocess. Empty
-    /// if nothing was emitted (e.g., the test panicked before any
-    /// stderr was produced).
-    fn captured_stderr(&self) -> String {
-        let buffer = self
-            .stderr_buffer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        String::from_utf8_lossy(&buffer).into_owned()
-    }
-
-    async fn initialize(&mut self) {
-        let initialize = InitializeRequest::new(InitializeRequestParams::new(
-            ClientCapabilities::default(),
-            Implementation::new("nbspec-mcp-itest", "0.0.0"),
-        ));
-        let id = self.next_id();
-        self.send_request(initialize.into(), id).await;
-        let response = self.read_response(id).await;
-        assert!(
-            response.get("result").is_some(),
-            "initialize response must contain result: {response}"
-        );
-
-        self.send_notification(InitializedNotification::default().into())
-            .await;
-    }
-
-    async fn list_tools(&mut self) -> Value {
-        let id = self.next_id();
-        self.send_request(
-            ListToolsRequest::with_param(PaginatedRequestParams::default()).into(),
-            id,
-        )
-        .await;
-        self.read_response(id).await
-    }
-
-    async fn call_tool(&mut self, name: &str, arguments: Map<String, Value>) -> Value {
-        let id = self.next_id();
-        let request = CallToolRequest::new(
-            CallToolRequestParams::new(name.to_string()).with_arguments(arguments),
-        );
-        self.send_request(request.into(), id).await;
-        self.read_response(id).await
-    }
-
-    async fn send_request(&mut self, request: rmcp::model::ClientRequest, id: i64) {
-        let message = ClientJsonRpcMessage::request(request, RequestId::Number(id));
-        self.send(message).await;
-    }
-
-    async fn send_notification(&mut self, notification: rmcp::model::ClientNotification) {
-        let message = ClientJsonRpcMessage::notification(notification);
-        self.send(message).await;
-    }
-
-    async fn send(&mut self, message: ClientJsonRpcMessage) {
-        let stdin = self
-            .stdin
-            .as_mut()
-            .expect("mcp stdin closed; cannot send more requests");
-        let line = serde_json::to_string(&message).expect("encode mcp request");
-        stdin
-            .write_all(line.as_bytes())
-            .await
-            .expect("write mcp request");
-        stdin.write_all(b"\n").await.expect("write mcp newline");
-        stdin.flush().await.expect("flush mcp request");
-    }
-
-    async fn read_response(&mut self, id: i64) -> Value {
-        let expected = RequestId::Number(id);
-        let deadline = Instant::now() + READ_TIMEOUT;
-        let mut line = String::new();
-        loop {
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for MCP response id {id}"
-            );
-            line.clear();
-            match tokio::time::timeout(
-                deadline.saturating_duration_since(Instant::now()),
-                self.stdout.read_line(&mut line),
-            )
-            .await
-            {
-                Ok(Ok(0)) => {
-                    // EOF: subprocess closed stdout. Bound the wait
-                    // so a misbehaving subprocess that ignores stdout
-                    // close (and stays blocked on our still-piped
-                    // stdin) cannot wedge cargo test indefinitely.
-                    // Drop stdin to signal graceful shutdown; if the
-                    // subprocess doesn't exit within SHUTDOWN_TIMEOUT,
-                    // send SIGKILL. Per Codex review of PR #1.
-                    drop(self.stdin.take());
-                    let exit_status =
-                        match tokio::time::timeout(SHUTDOWN_TIMEOUT, self.child.wait()).await {
-                            Ok(Ok(status)) => Some(status),
-                            Ok(Err(_)) | Err(_) => {
-                                let _ = self.child.start_kill();
-                                self.child.wait().await.ok()
-                            }
-                        };
-                    // Take ownership of the stderr drain task via
-                    // mem::replace so we can await it (JoinHandle
-                    // is not Clone and IntoFuture consumes self).
-                    // The replacement is a no-op task that never
-                    // gets awaited again.
-                    let stderr_task = std::mem::replace(
-                        &mut self.stderr_task,
-                        tokio::spawn(std::future::ready(())),
-                    );
-                    let _ = stderr_task.await;
-                    let stderr_text = self.captured_stderr();
-                    panic!(
-                        "mcp process closed stdout (exit status: {exit_status:?}); \
-                         captured stderr:\n{stderr_text}"
-                    );
-                }
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => panic!("read mcp response line: {error}"),
-                Err(_) => panic!("timed out waiting for MCP response id {id}"),
-            }
-            let decoded: Value =
-                serde_json::from_str(line.trim_end()).expect("decode mcp response");
-            let response_id = decoded
-                .get("id")
-                .and_then(|id_value| serde_json::from_value::<RequestId>(id_value.clone()).ok());
-            if response_id.as_ref() == Some(&expected) {
-                return decoded;
-            }
-        }
-    }
-}
-
-impl Drop for McpHarness {
-    fn drop(&mut self) {
-        let _ = self.child.start_kill();
-    }
-}
 
 /// Reads the first text content block from a `CallToolResult`. Tools
 /// other than `validate` return success as a text block; `validate`
@@ -335,7 +100,8 @@ async fn mcp_server_drives_change_lifecycle() {
     assert_eq!(
         names,
         vec![
-            "create", "display", "export", "import", "merge", "render", "review", "validate",
+            "create", "display", "export", "import", "merge", "render",
+            "review", "validate",
         ],
         "tools/list must expose exactly the eight CLI verbs"
     );
@@ -442,11 +208,14 @@ async fn mcp_server_drives_change_lifecycle() {
 
     // Author the proposal and specification directly on the notebook
     // filesystem, as an agent's editor would.
-    let change_directory = fixture.notebook_path().join("proposals").join(CHANGE_ID);
-    let mut proposal = std::fs::read_to_string(change_directory.join("proposal.md")).unwrap();
+    let change_directory =
+        fixture.notebook_path().join("proposals").join(CHANGE_ID);
+    let mut proposal =
+        std::fs::read_to_string(change_directory.join("proposal.md")).unwrap();
     proposal.push_str("\n## Why\n\nDrive the MCP lifecycle.\n");
     std::fs::write(change_directory.join("proposal.md"), proposal).unwrap();
-    let specification_note = change_directory.join("specifications/user-auth.md");
+    let specification_note =
+        change_directory.join("specifications/user-auth.md");
     std::fs::write(&specification_note, SPECIFICATION).unwrap();
     super::lifecycle::commit_notebook(&fixture);
 
@@ -550,7 +319,8 @@ async fn mcp_server_drives_change_lifecycle() {
         .await;
     let refused_result = assert_tool_error(&unreviewed);
     assert!(
-        first_text(refused_result).contains("review gate unsatisfied: no verdict"),
+        first_text(refused_result)
+            .contains("review gate unsatisfied: no verdict"),
         "refusal text: {}",
         first_text(refused_result)
     );
@@ -584,7 +354,8 @@ async fn mcp_server_drives_change_lifecycle() {
         .await;
     let reviewed_result = assert_success(&reviewed);
     assert!(
-        first_text(reviewed_result).contains("Recorded approve verdict by itest"),
+        first_text(reviewed_result)
+            .contains("Recorded approve verdict by itest"),
         "review text: {}",
         first_text(reviewed_result)
     );
@@ -613,10 +384,11 @@ async fn mcp_server_drives_change_lifecycle() {
         .split_once(':')
         .map(|(_, rest)| rest)
         .unwrap_or(structured_note);
-    let structured_note_basename = std::path::Path::new(structured_note_relpath)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .expect("structured note must have a UTF-8 basename");
+    let structured_note_basename =
+        std::path::Path::new(structured_note_relpath)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("structured note must have a UTF-8 basename");
     assert!(
         structured_note_basename.ends_with(".md"),
         "structured note filename must end with `.md`: {structured_note_basename:?}"
@@ -652,8 +424,14 @@ async fn mcp_server_drives_change_lifecycle() {
         .await;
     let merged_result = assert_success(&merged);
     let merged_text = first_text(merged_result);
-    assert!(merged_text.contains("wrote documentation/specifications/user-auth.md"));
-    assert!(merged_text.contains("archived documentation/archives/add-mcp-demo.tar.zst"));
+    assert!(
+        merged_text
+            .contains("wrote documentation/specifications/user-auth.md")
+    );
+    assert!(
+        merged_text
+            .contains("archived documentation/archives/add-mcp-demo.tar.zst")
+    );
     // Structured payload: written/unchanged/archived lists so
     // agents can verify merge effects without scraping the
     // multi-line text report.
@@ -665,9 +443,8 @@ async fn mcp_server_drives_change_lifecycle() {
         .as_array()
         .expect("written array");
     assert!(
-        written
-            .iter()
-            .any(|p| p.as_str() == Some("documentation/specifications/user-auth.md")),
+        written.iter().any(|p| p.as_str()
+            == Some("documentation/specifications/user-auth.md")),
         "written list must include the spec: {merge_structured}"
     );
     assert_eq!(
@@ -680,7 +457,10 @@ async fn mcp_server_drives_change_lifecycle() {
         .project_root()
         .join("documentation/specifications/user-auth.md");
     let merged_content = std::fs::read_to_string(&target).unwrap();
-    assert!(merged_content.starts_with("<!-- nbspec: change=add-mcp-demo notebook="));
+    assert!(
+        merged_content
+            .starts_with("<!-- nbspec: change=add-mcp-demo notebook=")
+    );
     assert!(merged_content.ends_with(SPECIFICATION));
     assert!(
         fixture
@@ -707,7 +487,8 @@ async fn mcp_merge_warnings_reach_text_and_structured() {
         )
         .await;
     let dir = fixture.notebook_path().join("proposals").join(CHANGE_ID);
-    let mut proposal = std::fs::read_to_string(dir.join("proposal.md")).unwrap();
+    let mut proposal =
+        std::fs::read_to_string(dir.join("proposal.md")).unwrap();
     proposal.push_str("\n## Why\n\nProve warning parity.\n");
     std::fs::write(dir.join("proposal.md"), proposal).unwrap();
     std::fs::write(
@@ -738,7 +519,8 @@ async fn mcp_merge_warnings_reach_text_and_structured() {
     let text = first_text(result);
     assert!(text.contains("warning:"), "text carries warnings: {text}");
     assert!(text.contains("Ghost"), "text names the requirement: {text}");
-    let structured = result.get("structuredContent").expect("structuredContent");
+    let structured =
+        result.get("structuredContent").expect("structuredContent");
     let warnings = structured["warnings"].as_array().expect("warnings array");
     assert_eq!(warnings.len(), 1, "structured carries one warning");
     assert!(
@@ -793,7 +575,8 @@ async fn mcp_import_structured_payload_carries_typed_entries() {
     // Symlink the canonical interchange fixture (one active change
     // `add-foo/` and one legacy archive tree under
     // `openspec/changes/archive/legacy/`) into the scratch fixture.
-    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/import-classic");
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/import-classic");
     let fixture_link = fixture.project_root().join("import-classic");
     std::os::unix::fs::symlink(&fixture_root, &fixture_link)
         .expect("symlinking fixture should succeed");
@@ -852,7 +635,9 @@ async fn mcp_import_structured_payload_carries_typed_entries() {
     // ArchiveWrite typed payload.
     let archive = entries
         .iter()
-        .find(|entry| entry.get("kind").and_then(|v| v.as_str()) == Some("archive-write"))
+        .find(|entry| {
+            entry.get("kind").and_then(|v| v.as_str()) == Some("archive-write")
+        })
         .expect("an archive-write entry must be present");
     assert_eq!(
         archive.get("change_id").and_then(|v| v.as_str()),
@@ -884,9 +669,10 @@ async fn mcp_import_structured_payload_carries_typed_entries() {
         .and_then(|v| v.as_array())
         .expect("written must be an array");
     assert!(
-        written
-            .iter()
-            .any(|v| v.as_str().map(|s| s.contains("legacy")).unwrap_or(false)),
+        written.iter().any(|v| v
+            .as_str()
+            .map(|s| s.contains("legacy"))
+            .unwrap_or(false)),
         "archive write must be reported in `written`: {written:?}"
     );
 }
@@ -904,10 +690,12 @@ async fn mcp_import_structured_payload_carries_typed_entries() {
 /// `build_import_plan`'s filter. Asserts the paused active source
 /// is excluded and only the archive source appears.
 #[tokio::test]
-async fn mcp_import_dry_run_delete_original_exercises_real_pending_deletions_filter() {
+async fn mcp_import_dry_run_delete_original_exercises_real_pending_deletions_filter()
+ {
     let fixture = Fixture::new();
 
-    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/import-classic");
+    let fixture_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/import-classic");
     let fixture_link = fixture.project_root().join("import-classic");
     std::os::unix::fs::symlink(&fixture_root, &fixture_link)
         .expect("symlinking fixture should succeed");
@@ -950,15 +738,17 @@ async fn mcp_import_dry_run_delete_original_exercises_real_pending_deletions_fil
         "both archive and active sources must be pending deletion: {pending:?}"
     );
     assert!(
-        pending
-            .iter()
-            .any(|v| v.as_str().map(|s| s.contains("legacy")).unwrap_or(false)),
+        pending.iter().any(|v| v
+            .as_str()
+            .map(|s| s.contains("legacy"))
+            .unwrap_or(false)),
         "pending deletion must include the archive source: {pending:?}"
     );
     assert!(
-        pending
-            .iter()
-            .any(|v| v.as_str().map(|s| s.contains("add-foo")).unwrap_or(false)),
+        pending.iter().any(|v| v
+            .as_str()
+            .map(|s| s.contains("add-foo"))
+            .unwrap_or(false)),
         "pending deletion must include the active source after resume: {pending:?}"
     );
 

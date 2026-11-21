@@ -55,7 +55,9 @@ pub struct NamespaceSnapshot {
 /// with its hash and bytes. Bookkeeping files are skipped. Any
 /// unreadable file or directory fails closed: a namespace that
 /// cannot be fully inventoried must never be deleted.
-pub fn capture_snapshot(change_directory: &Path) -> Result<NamespaceSnapshot, OperationError> {
+pub fn capture_snapshot(
+    change_directory: &Path,
+) -> Result<NamespaceSnapshot, OperationError> {
     let mut files = Vec::new();
     walk_snapshot(change_directory, change_directory, &mut files)?;
     Ok(NamespaceSnapshot { files })
@@ -79,7 +81,7 @@ pub fn verify_snapshot(
             Some(hash) if *hash == &file.hash => seen += 1,
             _ => {
                 return Err(snapshot_drift(&file.relative));
-            }
+            },
         }
     }
     if seen != snapshot.files.len() {
@@ -126,9 +128,11 @@ fn walk_snapshot(
         }
         let path = current.join(&file_name);
         let file_type =
-            std::fs::symlink_metadata(&path).map_err(|source| OperationError::NoteRead {
-                path: path.clone(),
-                source,
+            std::fs::symlink_metadata(&path).map_err(|source| {
+                OperationError::NoteRead {
+                    path: path.clone(),
+                    source,
+                }
             })?;
         if file_type.is_dir() {
             walk_snapshot(root, &path, files)?;
@@ -140,9 +144,11 @@ fn walk_snapshot(
                 source: std::io::Error::other("not a regular file"),
             });
         }
-        let bytes = std::fs::read(&path).map_err(|source| OperationError::NoteRead {
-            path: path.clone(),
-            source,
+        let bytes = std::fs::read(&path).map_err(|source| {
+            OperationError::NoteRead {
+                path: path.clone(),
+                source,
+            }
         })?;
         // One canonical key helper shared with persisted
         // verification: forward slashes on every platform, with
@@ -160,7 +166,10 @@ fn walk_snapshot(
 
 /// Builds the `namespace/` tarball entries from a snapshot: original
 /// relative paths, raw bytes, no normalization.
-pub fn namespace_entries(change_id: &str, snapshot: &NamespaceSnapshot) -> Vec<ArchiveEntry> {
+pub fn namespace_entries(
+    change_id: &str,
+    snapshot: &NamespaceSnapshot,
+) -> Vec<ArchiveEntry> {
     snapshot
         .files
         .iter()
@@ -181,9 +190,11 @@ pub fn verify_persisted_archive(
     change_id: &str,
     snapshot: &NamespaceSnapshot,
 ) -> Result<(), OperationError> {
-    let bytes = std::fs::read(archive_path).map_err(|source| OperationError::NoteRead {
-        path: archive_path.to_path_buf(),
-        source,
+    let bytes = std::fs::read(archive_path).map_err(|source| {
+        OperationError::NoteRead {
+            path: archive_path.to_path_buf(),
+            source,
+        }
     })?;
     let scratch = scratch_dir(change_id)?;
     let outcome = verify_extracted(&bytes, &scratch, change_id, snapshot);
@@ -200,9 +211,11 @@ fn scratch_dir(change_id: &str) -> Result<PathBuf, OperationError> {
         "nbspec-retirement-verify-{change_id}-{}-{nanos}",
         std::process::id()
     ));
-    std::fs::create_dir_all(&scratch).map_err(|source| OperationError::NoteRead {
-        path: scratch.clone(),
-        source,
+    std::fs::create_dir_all(&scratch).map_err(|source| {
+        OperationError::NoteRead {
+            path: scratch.clone(),
+            source,
+        }
     })?;
     Ok(scratch)
 }
@@ -230,9 +243,11 @@ fn verify_extracted(
     let mut seen = 0;
     let mut stack = vec![extract_root.clone()];
     while let Some(current) = stack.pop() {
-        let entries = std::fs::read_dir(&current).map_err(|source| OperationError::NoteRead {
-            path: current.clone(),
-            source,
+        let entries = std::fs::read_dir(&current).map_err(|source| {
+            OperationError::NoteRead {
+                path: current.clone(),
+                source,
+            }
         })?;
         for entry in entries {
             let entry = entry.map_err(|source| OperationError::NoteRead {
@@ -247,12 +262,17 @@ fn verify_extracted(
             // Canonical key shared with snapshot capture: forward
             // slashes, validated components. A tarball entry with a
             // literal backslash cannot masquerade as a slash path.
-            let relative = relative_key(&path, &extract_root).map_err(|_| {
-                archive_problem("tarball holds an unrepresentable path".to_string())
-            })?;
-            let bytes = std::fs::read(&path).map_err(|source| OperationError::NoteRead {
-                path: path.clone(),
-                source,
+            let relative =
+                relative_key(&path, &extract_root).map_err(|_| {
+                    archive_problem(
+                        "tarball holds an unrepresentable path".to_string(),
+                    )
+                })?;
+            let bytes = std::fs::read(&path).map_err(|source| {
+                OperationError::NoteRead {
+                    path: path.clone(),
+                    source,
+                }
             })?;
             match expected.get(relative.as_str()) {
                 Some(want) if *want == bytes.as_slice() => seen += 1,
@@ -260,13 +280,14 @@ fn verify_extracted(
                     return Err(archive_problem(format!(
                         "persisted tarball diverges at {relative}"
                     )));
-                }
+                },
             }
         }
     }
     if seen != snapshot.files.len() {
         return Err(archive_problem(
-            "persisted tarball file count diverges from the inventory".to_string(),
+            "persisted tarball file count diverges from the inventory"
+                .to_string(),
         ));
     }
     Ok(())
@@ -286,31 +307,41 @@ fn archive_problem(reason: String) -> OperationError {
 /// `<change-id>/` prefix, and an embedded meta snapshot naming this
 /// change id. Anything else fails closed — presence alone never
 /// proves already-merged.
-pub fn validate_archive_identity(bytes: &[u8], change_id: &str) -> Result<(), OperationError> {
+pub fn validate_archive_identity(
+    bytes: &[u8],
+    change_id: &str,
+) -> Result<(), OperationError> {
     let decoded = zstd::decode_all(bytes).map_err(|_| {
-        archive_problem("existing tarball is not a readable zstd archive".to_string())
+        archive_problem(
+            "existing tarball is not a readable zstd archive".to_string(),
+        )
     })?;
     let mut archive = tar::Archive::new(decoded.as_slice());
     let entries = archive.entries().map_err(|_| {
-        archive_problem("existing tarball is not a readable tar archive".to_string())
+        archive_problem(
+            "existing tarball is not a readable tar archive".to_string(),
+        )
     })?;
     let mut meta_count = 0;
     for entry in entries {
         let mut entry = entry.map_err(|_| {
-            archive_problem("existing tarball holds an unreadable entry".to_string())
+            archive_problem(
+                "existing tarball holds an unreadable entry".to_string(),
+            )
         })?;
         let path = entry.path().map_err(|_| {
-            archive_problem("existing tarball holds an unmappable path".to_string())
+            archive_problem(
+                "existing tarball holds an unmappable path".to_string(),
+            )
         })?;
         if path.is_absolute() {
             return Err(archive_problem(
                 "existing tarball holds an absolute path".to_string(),
             ));
         }
-        if path
-            .components()
-            .any(|component| matches!(component, std::path::Component::ParentDir))
-        {
+        if path.components().any(|component| {
+            matches!(component, std::path::Component::ParentDir)
+        }) {
             return Err(archive_problem(
                 "existing tarball escapes its prefix".to_string(),
             ));
@@ -325,12 +356,15 @@ pub fn validate_archive_identity(bytes: &[u8], change_id: &str) -> Result<(), Op
         // `add-demometa.md` or `add-demo-other/x` must not pass for
         // `add-demo`.
         let text = path.to_str().ok_or_else(|| {
-            archive_problem("existing tarball holds a non-UTF-8 path".to_string())
+            archive_problem(
+                "existing tarball holds a non-UTF-8 path".to_string(),
+            )
         })?;
         let mut parts = text.split('/');
         if parts.next() != Some(change_id) {
             return Err(archive_problem(
-                "existing tarball holds an entry outside this change".to_string(),
+                "existing tarball holds an entry outside this change"
+                    .to_string(),
             ));
         }
         if parts.collect::<Vec<&str>>() != ["meta.md"] {
@@ -338,13 +372,15 @@ pub fn validate_archive_identity(bytes: &[u8], change_id: &str) -> Result<(), Op
         }
         let mut content = Vec::new();
         use std::io::Read;
-        entry
-            .read_to_end(&mut content)
-            .map_err(|_| archive_problem("existing tarball meta is unreadable".to_string()))?;
-        let text = String::from_utf8(content)
-            .map_err(|_| archive_problem("existing tarball meta is not UTF-8".to_string()))?;
-        let metadata = parse_meta_note(&text)
-            .map_err(|_| archive_problem("existing tarball meta does not parse".to_string()))?;
+        entry.read_to_end(&mut content).map_err(|_| {
+            archive_problem("existing tarball meta is unreadable".to_string())
+        })?;
+        let text = String::from_utf8(content).map_err(|_| {
+            archive_problem("existing tarball meta is not UTF-8".to_string())
+        })?;
+        let metadata = parse_meta_note(&text).map_err(|_| {
+            archive_problem("existing tarball meta does not parse".to_string())
+        })?;
         if metadata.change_id != change_id {
             return Err(archive_problem(
                 "existing tarball meta names a different change".to_string(),
@@ -371,12 +407,12 @@ pub fn validate_archive_identity(bytes: &[u8], change_id: &str) -> Result<(), Op
 /// not a plain relative component (prefixes, parent or current dir)
 /// fails closed too.
 fn relative_key(path: &Path, root: &Path) -> Result<String, OperationError> {
-    let relative = path
-        .strip_prefix(root)
-        .map_err(|source| OperationError::NoteRead {
+    let relative = path.strip_prefix(root).map_err(|source| {
+        OperationError::NoteRead {
             path: path.to_path_buf(),
             source: std::io::Error::other(source),
-        })?;
+        }
+    })?;
     let mut parts = Vec::new();
     for component in relative.components() {
         match component {
@@ -396,7 +432,7 @@ fn relative_key(path: &Path, root: &Path) -> Result<String, OperationError> {
                     });
                 }
                 parts.push(text);
-            }
+            },
             _ => {
                 return Err(OperationError::NoteRead {
                     path: path.to_path_buf(),
@@ -404,13 +440,15 @@ fn relative_key(path: &Path, root: &Path) -> Result<String, OperationError> {
                         "non-relative inventory path; refusing retirement",
                     ),
                 });
-            }
+            },
         }
     }
     if parts.is_empty() {
         return Err(OperationError::NoteRead {
             path: path.to_path_buf(),
-            source: std::io::Error::other("empty inventory path; refusing retirement"),
+            source: std::io::Error::other(
+                "empty inventory path; refusing retirement",
+            ),
         });
     }
     Ok(parts.join("/"))
@@ -428,9 +466,13 @@ pub enum ArchiveOccupant {
 /// symlinks. Only a missing path maps to [`ArchiveOccupant::Absent`];
 /// symlinks and non-files are [`ArchiveOccupant::Invalid`], never
 /// silently treated as unclaimed.
-pub fn read_archive_occupant(path: &Path) -> Result<ArchiveOccupant, OperationError> {
+pub fn read_archive_occupant(
+    path: &Path,
+) -> Result<ArchiveOccupant, OperationError> {
     match std::fs::symlink_metadata(path) {
-        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(ArchiveOccupant::Absent),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            Ok(ArchiveOccupant::Absent)
+        },
         Err(source) => Err(OperationError::NoteRead {
             path: path.to_path_buf(),
             source,
@@ -443,14 +485,14 @@ pub fn read_archive_occupant(path: &Path) -> Result<ArchiveOccupant, OperationEr
                     "path is not a regular file".to_string(),
                 ))
             } else {
-                std::fs::read(path)
-                    .map(ArchiveOccupant::File)
-                    .map_err(|source| OperationError::NoteRead {
+                std::fs::read(path).map(ArchiveOccupant::File).map_err(
+                    |source| OperationError::NoteRead {
                         path: path.to_path_buf(),
                         source,
-                    })
+                    },
+                )
             }
-        }
+        },
     }
 }
 
@@ -485,7 +527,9 @@ pub fn classify_commit_outcome(
         }),
         Err(error) => Err(OperationError::RetirementFailed {
             phases: phases.to_string(),
-            guidance: format!("namespace left wholly in place ({error}); re-run merge to resume"),
+            guidance: format!(
+                "namespace left wholly in place ({error}); re-run merge to resume"
+            ),
         }),
     }
 }
@@ -494,7 +538,9 @@ pub fn classify_commit_outcome(
 /// the deletion transaction's `AssertRevision` precondition. A
 /// notebook without a readable HEAD cannot retire: deletion without
 /// a revision binding is refused, never silent.
-pub fn capture_notebook_head(notebook_path: &Path) -> Result<String, OperationError> {
+pub fn capture_notebook_head(
+    notebook_path: &Path,
+) -> Result<String, OperationError> {
     let mut command = std::process::Command::new("git");
     crate::git_env::scrub_git_env(&mut command);
     let output = command
