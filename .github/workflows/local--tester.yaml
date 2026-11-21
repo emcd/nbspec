@@ -99,10 +99,35 @@ jobs:
       - name: Run Conformance Oracle
         run: bash tests/conformance/oracle.sh
 
-  openspec-gate:
+  # Test-support regression, executed (not merely compiled): the drift-
+  # injection seam test needs a real nb binary, so it runs here
+  # provisioned, by name, on top of the live-nb selection.
+  test-support:
     runs-on: ubuntu-latest
     steps:
 
+      - name: Check Out
+        uses: actions/checkout@v6
+
+      - name: Install nb
+        id: setup-nb
+        uses: emcd/nb-api/.github/actions/setup-nb@v0.3.1
+        with:
+          version: '7.24.0'
+
+      - name: Set Up Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Run Test-Support Regression
+        run: cargo test --locked --features live-nb,test-support --test integration drift_after_materialization
+        env:
+          NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
+
+  openspec-gate:
+    runs-on: ubuntu-latest
+    steps:
       - name: Check Out
         uses: actions/checkout@v6
 

@@ -64,7 +64,10 @@ These specialize `@.auxiliary/agents/procedures/notebook.md` for this project:
 - Full maintainer validation: `cargo test-live` (alias for
   `cargo test --features live-nb --locked`) with pinned nb 7.24.0
   provisioned and `NB_API_TEST_NB` set — the same invocation as the
-  project-owned CI gates. Live tests fail closed without nb by design;
+  project-owned CI gates. The `test-support` drift-injection regression
+  runs in CI by name (`test-support` job, `--features
+  live-nb,test-support`); run it locally the same way when touching the
+  merge/retirement path. Live tests fail closed without nb by design;
   never add skip-when-absent.
 - Prefer tests under `tests/unit` and `tests/integration` over inline `#[cfg(test)]` modules in `src/**`.
 - Prefer tests that exercise public interfaces; avoid source-inclusion patterns used only to reach private internals.
