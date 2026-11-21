@@ -121,7 +121,11 @@ jobs:
           components: clippy
 
       - name: Run Test-Support Regression
-        run: cargo test --locked --features live-nb,test-support --test integration drift_after_materialization
+        # Guard the by-name filter first: a renamed test must fail loudly,
+        # never pass vacuously with zero tests run.
+        run: |
+          cargo test --locked --features live-nb,test-support --test integration -- --list 2>/dev/null | grep -q drift_after_materialization || { echo 'test-support filter matched zero tests' >&2; exit 1; }
+          cargo test --locked --features live-nb,test-support --test integration drift_after_materialization
         env:
           NB_API_TEST_NB: ${{ steps.setup-nb.outputs.nb-exec }}
 
