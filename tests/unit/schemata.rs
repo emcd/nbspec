@@ -511,3 +511,160 @@ fn global_setting_relocates_project_directory_below_environment() {
 
     fs::remove_dir_all(&root).unwrap();
 }
+
+/// Absolute roots resolve through approots; the temporary base is
+/// absolute by construction, so these tests exercise the declared
+/// tiers rather than the relative-root legacy path.
+fn unique_absolute_temp_root(label: &str) -> PathBuf {
+    let unique = format!(
+        "{label}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+    std::env::temp_dir().join("nbspec-approots").join(unique)
+}
+
+#[test]
+fn absolute_default_composes_conventional_local_directory() {
+    let root = unique_absolute_temp_root("approots-default");
+    assert!(root.is_absolute());
+    fs::create_dir_all(&root).unwrap();
+    let configuration =
+        resolve_configuration(&root, SettingsDocument::default(), None)
+            .unwrap();
+    assert_eq!(
+        configuration.project_directory,
+        root.join(PROJECT_CONFIGURATION_DIR_DEFAULT)
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn absolute_setting_resolves_relative_against_project_root() {
+    let root = unique_absolute_temp_root("approots-setting");
+    let setting = root.join("custom/nbspec");
+    fs::create_dir_all(&setting).unwrap();
+    fs::write(setting.join(SETTINGS_FILE), "schema = \"setting\"\n").unwrap();
+    let global = SettingsDocument {
+        project_configuration_directory: Some(PathBuf::from("custom/nbspec")),
+        ..SettingsDocument::default()
+    };
+    let configuration = resolve_configuration(&root, global, None).unwrap();
+    assert_eq!(configuration.project_directory, setting);
+    assert_eq!(configuration.schema.as_deref(), Some("setting"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn absolute_explicit_environment_beats_setting() {
+    let root = unique_absolute_temp_root("approots-precedence");
+    let from_env = root.join("env-choice");
+    let from_setting = root.join("setting-choice");
+    fs::create_dir_all(&from_env).unwrap();
+    fs::create_dir_all(&from_setting).unwrap();
+    fs::write(from_env.join(SETTINGS_FILE), "schema = \"env-dir\"\n").unwrap();
+    fs::write(
+        from_setting.join(SETTINGS_FILE),
+        "schema = \"setting-dir\"\n",
+    )
+    .unwrap();
+    let global = SettingsDocument {
+        project_configuration_directory: Some(from_setting),
+        ..SettingsDocument::default()
+    };
+    let configuration = resolve_configuration(
+        &root,
+        global,
+        Some(PathBuf::from("env-choice")),
+    )
+    .unwrap();
+    assert_eq!(configuration.project_directory, from_env);
+    assert_eq!(configuration.schema.as_deref(), Some("env-dir"));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn absolute_explicit_absolute_directory_is_literal() {
+    let root = unique_absolute_temp_root("approots-literal");
+    let elsewhere = unique_absolute_temp_root("approots-elsewhere");
+    fs::create_dir_all(&root).unwrap();
+    fs::create_dir_all(&elsewhere).unwrap();
+    let configuration = resolve_configuration(
+        &root,
+        SettingsDocument::default(),
+        Some(elsewhere.clone()),
+    )
+    .unwrap();
+    assert_eq!(configuration.project_directory, elsewhere);
+    fs::remove_dir_all(&root).unwrap();
+    fs::remove_dir_all(&elsewhere).unwrap();
+}
+
+#[test]
+fn absolute_empty_explicit_directory_is_refused() {
+    let root = unique_absolute_temp_root("approots-empty");
+    fs::create_dir_all(&root).unwrap();
+    let error = resolve_configuration(
+        &root,
+        SettingsDocument::default(),
+        Some(PathBuf::from("")),
+    )
+    .unwrap_err();
+    assert!(
+        matches!(
+            error,
+            nbspec::configuration::ConfigurationError::Location(_)
+        ),
+        "empty explicit directory must be a typed location refusal, not a silent join: {error:?}"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn absolute_empty_file_setting_is_refused() {
+    let root = unique_absolute_temp_root("approots-empty-setting");
+    fs::create_dir_all(&root).unwrap();
+    let global = SettingsDocument {
+        project_configuration_directory: Some(PathBuf::from("")),
+        ..SettingsDocument::default()
+    };
+    let error = resolve_configuration(&root, global, None).unwrap_err();
+    assert!(
+        matches!(
+            error,
+            nbspec::configuration::ConfigurationError::Location(_)
+        ),
+        "empty file setting must be a typed location refusal on absolute starts: {error:?}"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn relative_empty_file_setting_keeps_legacy_join() {
+    let root = unique_temp_root("configuration-empty-setting");
+    fs::create_dir_all(&root).unwrap();
+    let global = SettingsDocument {
+        project_configuration_directory: Some(PathBuf::from("")),
+        ..SettingsDocument::default()
+    };
+    let configuration = resolve_configuration(&root, global, None).unwrap();
+    assert_eq!(configuration.project_directory, root);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn relative_empty_explicit_directory_keeps_legacy_join() {
+    let root = unique_temp_root("configuration-empty-explicit");
+    fs::create_dir_all(&root).unwrap();
+    let configuration = resolve_configuration(
+        &root,
+        SettingsDocument::default(),
+        Some(PathBuf::from("")),
+    )
+    .unwrap();
+    assert_eq!(configuration.project_directory, root);
+    fs::remove_dir_all(&root).unwrap();
+}

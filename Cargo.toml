@@ -44,6 +44,9 @@ path = "src/bin/nbspec.rs"
 # nb API primitives
 nb-api = "0.4.6"
 
+# Directory locations (platform tiers, local roots, declared env).
+approots = "0.4.1"
+
 # CLI parsing
 clap = { version = "4.5", features = ["derive"] }
 
@@ -63,9 +66,6 @@ schemars = "1.0"
 # features; `transport-io` enables the stdio transport used by the
 # `nbspec serve mcp` subcommand.
 rmcp = { version = "1.7.0", features = ["transport-io"] }
-
-# Platform configuration directories
-directories = "6.0"
 
 # Timestamps for the meta note control plane
 jiff = { version = "0.2", features = ["serde"] }

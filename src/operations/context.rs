@@ -108,10 +108,19 @@ pub(crate) fn render_destination(
     notebook_name: &str,
     change_id: &str,
 ) -> PathBuf {
+    use approots::{DirectoryClass, platform_root};
+    /// Render segment beneath the platform cache root. Matches the
+    /// legacy `directories::ProjectDirs` layout, where only Windows
+    /// nests an extra class word.
+    #[cfg(windows)]
+    const RENDERS_SUFFIX: &[&str] = &["cache", "renders"];
+    #[cfg(not(windows))]
+    const RENDERS_SUFFIX: &[&str] = &["renders"];
     let base = configuration.scratch_directory.clone().unwrap_or_else(|| {
-        directories::ProjectDirs::from("", "", "nbspec")
-            .map(|dirs| dirs.cache_dir().join("renders"))
-            .unwrap_or_else(|| {
+        platform_root("nbspec", DirectoryClass::Cache)
+            .and_then(|root| root.join(RENDERS_SUFFIX))
+            .map(|root| root.path)
+            .unwrap_or_else(|_| {
                 PathBuf::from(".auxiliary/temporary/nbspec/renders")
             })
     });
