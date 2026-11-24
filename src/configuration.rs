@@ -11,9 +11,24 @@
 //! against the project root. Workflow schemata live beside the project
 //! settings under `schemata/<name>/schema.toml`. Missing files yield
 //! defaults; unknown keys are ignored for forward compatibility.
+//!
+//! Directory resolution is [`approots`]-backed on absolute project
+//! roots: the global file comes from the platform tier, the
+//! `NBSPEC_CONFIG_DIR` override from a declared environment variable
+//! (exact directory, validated like the explicit tier), the file
+//! setting from the explicit tier, and the default from the local
+//! root composition. Per-value `project.or(global)` merge and archive
+//! confinement stay nbspec-owned. Outside a repository the project
+//! root can be relative (`.` fallback), where approots refuses
+//! relative starts by contract — that edge keeps the legacy lexical
+//! behavior verbatim.
 
 use std::path::{Path, PathBuf};
 
+use approots::{
+    DirectoryClass, LocalStructure, Provenance, ResolvedRoot, Resolver,
+    local_root, platform_root,
+};
 use serde::Deserialize;
 use thiserror::Error;
 
@@ -42,6 +57,9 @@ pub enum ConfigurationError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("configuration location failure: {0}")]
+    Location(#[from] approots::ResolutionError),
 }
 
 /// Reports why a path would escape its confining root, or `None`
@@ -136,13 +154,31 @@ pub struct Configuration {
     pub archive_directory: PathBuf,
 }
 
+/// Legacy `directories::ProjectDirs::from("", "", "nbspec")` layout
+/// segments beneath the approots platform root. Only Windows nests an
+/// extra class word (`config` for settings, `cache` for renders);
+/// Linux and macOS address the application directory directly.
+/// Preserved verbatim: existing user files must not move silently.
+#[cfg(windows)]
+const PLATFORM_CONFIG_SUFFIX: &[&str] = &["config", SETTINGS_FILE];
+#[cfg(not(windows))]
+const PLATFORM_CONFIG_SUFFIX: &[&str] = &[SETTINGS_FILE];
+
 /// Loads layered configuration for a project: the user-global settings
 /// file, the `NBSPEC_CONFIG_DIR` environment override, and the
 /// per-project settings file.
 ///
+/// The environment override is read through a declared approots
+/// variable on absolute project roots: a zero-length value is a hard
+/// `EmptyPath` refusal, not silent absence. Relative roots keep the
+/// legacy ambient read and silent join. Production always passes the
+/// read result into [`resolve_configuration`], which itself never
+/// touches ambient environment — injected inputs stay deterministic.
+///
 /// # Errors
 ///
-/// Returns [`ConfigurationError::Parse`] for malformed TOML and
+/// Returns [`ConfigurationError::Parse`] for malformed TOML,
+/// [`ConfigurationError::Location`] for unresolvable locations, and
 /// [`ConfigurationError::Io`] for unreadable files.
 pub fn load_configuration(
     project_root: &Path,
@@ -151,33 +187,80 @@ pub fn load_configuration(
         Some(path) => load_settings_document(&path)?,
         None => SettingsDocument::default(),
     };
-    let environment_directory =
-        std::env::var_os(CONFIGURATION_DIR_ENV).map(PathBuf::from);
+    // Production environment lookup lives here, never inside
+    // resolve_configuration: the resolver itself stays deterministic
+    // given explicit inputs. Relative roots keep the legacy ambient
+    // read; absolute roots use the declared variable.
+    let environment_directory = if project_root.is_absolute() {
+        declared_environment_directory(project_root)?
+    } else {
+        std::env::var_os(CONFIGURATION_DIR_ENV).map(PathBuf::from)
+    };
     resolve_configuration(project_root, global, environment_directory)
+}
+
+/// Reads the declared `NBSPEC_CONFIG_DIR` variable through approots.
+///
+/// An unset variable — or an unusable platform base beneath it, which
+/// can only matter when no variable is set — resolves to `None` so
+/// the file setting and local default still apply. A set but
+/// zero-length value is a hard refusal.
+///
+/// Only called with absolute project roots; the approots probe needs
+/// an absolute start. Relative roots keep the legacy silent join, so
+/// the `EmptyPath` hardening applies to absolute starts only — see
+/// [`resolve_configuration`].
+fn declared_environment_directory(
+    project_root: &Path,
+) -> Result<Option<PathBuf>, ConfigurationError> {
+    let resolver = Resolver::new("nbspec")?
+        .env_directory(DirectoryClass::Configuration, CONFIGURATION_DIR_ENV);
+    match resolver.resolve(
+        DirectoryClass::Configuration,
+        None,
+        Some(project_root),
+    ) {
+        Ok(root) if root.provenance == Provenance::AppvarDirectory => {
+            Ok(Some(root.path))
+        },
+        // No declared value: the variable is unset, so the platform
+        // tier the probe falls through to is irrelevant here.
+        Ok(_) => Ok(None),
+        // Unusable platform base with no declared value: same as
+        // unset — the local default below needs no platform root.
+        Err(approots::ResolutionError::Unavailable(_)) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Layers configuration sources into a resolved [`Configuration`].
 /// Exposed so tests can inject the user-global document and
 /// environment override explicitly.
 ///
+/// This function never reads ambient environment: production passes
+/// the declared-variable read from [`load_configuration`], tests pass
+/// explicit values. Precedence is explicit override, then file
+/// setting, then the conventional local default.
+///
 /// # Errors
 ///
 /// Returns [`ConfigurationError::Parse`] for malformed TOML,
 /// [`ConfigurationError::Invalid`] for an `archive_directory` that
-/// would escape the repository, and [`ConfigurationError::Io`] for
+/// would escape the repository, [`ConfigurationError::Location`] for
+/// unresolvable locations, and [`ConfigurationError::Io`] for
 /// unreadable files.
 pub fn resolve_configuration(
     project_root: &Path,
     global: SettingsDocument,
     environment_directory: Option<PathBuf>,
 ) -> Result<Configuration, ConfigurationError> {
-    let directory = environment_directory
-        .or_else(|| global.project_configuration_directory.clone())
-        .unwrap_or_else(|| PathBuf::from(PROJECT_CONFIGURATION_DIR_DEFAULT));
-    let directory = if directory.is_absolute() {
-        directory
+    // approots refuses relative starts by contract; outside a
+    // repository the root can be relative (`.` fallback), where the
+    // legacy lexical behavior is preserved verbatim.
+    let directory = if project_root.is_absolute() {
+        resolve_absolute(project_root, &global, environment_directory)?
     } else {
-        project_root.join(directory)
+        resolve_relative_legacy(project_root, &global, environment_directory)?
     };
     let project = load_settings_document(&directory.join(SETTINGS_FILE))?;
     let scratch_directory = project
@@ -215,9 +298,75 @@ pub fn resolve_configuration(
     })
 }
 
+/// approots-backed project directory resolution for absolute roots.
+///
+/// Precedence is the explicit override, then the file setting, then
+/// the conventional local default. Declared-environment reads happen
+/// in [`load_configuration`]; by the time values arrive here they are
+/// ordinary explicit inputs, so this function never falls through to
+/// the platform tier.
+fn resolve_absolute(
+    project_root: &Path,
+    global: &SettingsDocument,
+    environment_directory: Option<PathBuf>,
+) -> Result<PathBuf, ConfigurationError> {
+    let resolver = Resolver::new("nbspec")?;
+    if let Some(directory) = environment_directory {
+        return Ok(resolver
+            .resolve(
+                DirectoryClass::Configuration,
+                Some(&directory),
+                Some(project_root),
+            )?
+            .path);
+    }
+    match &global.project_configuration_directory {
+        Some(setting) => Ok(resolver
+            .resolve(
+                DirectoryClass::Configuration,
+                Some(setting),
+                Some(project_root),
+            )?
+            .path),
+        None => Ok(local_root(
+            &ResolvedRoot {
+                path: project_root.to_path_buf(),
+                provenance: Provenance::ExplicitBase,
+            },
+            DirectoryClass::Configuration,
+            "nbspec",
+            &LocalStructure::default(),
+        )?
+        .path),
+    }
+}
+
+/// Legacy lexical project directory resolution for relative roots,
+/// preserved verbatim: approots refuses relative starts by contract.
+///
+/// Takes the environment override as an ordinary explicit input —
+/// ambient reads happen in [`load_configuration`], never here.
+fn resolve_relative_legacy(
+    project_root: &Path,
+    global: &SettingsDocument,
+    environment_directory: Option<PathBuf>,
+) -> Result<PathBuf, ConfigurationError> {
+    let directory = environment_directory
+        .or_else(|| global.project_configuration_directory.clone())
+        .unwrap_or_else(|| PathBuf::from(PROJECT_CONFIGURATION_DIR_DEFAULT));
+    Ok(if directory.is_absolute() {
+        directory
+    } else {
+        project_root.join(directory)
+    })
+}
+
 fn global_settings_path() -> Option<PathBuf> {
-    directories::ProjectDirs::from("", "", "nbspec")
-        .map(|dirs| dirs.config_dir().join(SETTINGS_FILE))
+    platform_root("nbspec", DirectoryClass::Configuration)
+        .ok()?
+        .join(PLATFORM_CONFIG_SUFFIX)
+        .ok()
+        .map(|root| root.path)
 }
 
 fn load_settings_document(
