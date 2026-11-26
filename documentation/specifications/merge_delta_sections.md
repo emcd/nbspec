@@ -1,4 +1,4 @@
-<!-- nbspec: change=add-delta-merge notebook=nbspec note=proposals/add-delta-merge/specifications/merge_delta_sections.md hash=sha256:89068c47ddfcf342c1bc1a2b59f420869452b4d3280f9f9e25dd0a1fcf3f6c8e -->
+<!-- nbspec: change=add-scenario-drop-warning notebook=nbspec note=proposals/add-scenario-drop-warning/specifications/merge_delta_sections.md hash=sha256:3b37fb913a3c811c520734344e3a1c3b6f57a8da432893b192532220f9ec408c -->
 # Merge delta sections
 
 ## ADDED Requirements
@@ -72,8 +72,13 @@ content is a no-op. Under `--force`, an `ADDED` collision against
 drifted text resolves delta-wins (the difference may itself be
 the drift); absences never resolve under force.
 A case/whitespace near-miss present in the target SHALL refuse as
-a typo in every operation. `MODIFIED` SHALL NOT drop scenarios
-present in the current block.
+a typo in every operation. In non-strict mode, `MODIFIED` dropping
+`#### Scenario:` subsections present in the current target block
+SHALL warn with one `ScenarioDropped` diagnostic per dropped
+scenario, in deterministic requirement-then-scenario order, and
+apply the drop; the merge continues. Under strict mode the same
+drop SHALL refuse during planning before any write (see the
+typed-diagnostics requirement).
 
 #### Scenario: REMOVED-missing warns on an existing target
 
@@ -104,6 +109,25 @@ present in the current block.
   different body text
 - **THEN** merge without `--force` refuses with `Drifted`
 - **AND** `--force` replaces the block with the delta content
+
+#### Scenario: MODIFIED scenario-drop warns and applies outside strict
+
+- **WHEN** the merge runs without `--strict` (and without the strict
+  MCP merge parameter)
+- **AND** the delta `MODIFIED` block omits `#### Scenario: Old`
+  present in the hash-valid target block
+- **THEN** merge warns `ScenarioDropped` naming the requirement
+  and the dropped scenario, and continues
+- **AND** the merged target no longer contains that scenario
+
+#### Scenario: Strict mode refuses scenario-drop before any write
+
+- **WHEN** the merge runs with `--strict` (or the strict MCP merge
+  parameter)
+- **AND** the delta drops a scenario as above
+- **THEN** merge refuses during planning instead of warning
+- **AND** no target is written, no archive is published, and no
+  namespace is retired
 
 ### Requirement: Delta incoherence refuses without force override
 
@@ -195,3 +219,85 @@ idempotent remerges.
 - **AND** the target body equals the rebuilt body
 - **THEN** merge reports the target `unchanged`
 - **AND** no rewrite occurs
+
+### Requirement: Warnings are typed diagnostics with a strict preflight mode
+
+Every preflight merge diagnostic (already-removed names, vacuous
+skips, ignored delta `Purpose`, `ScenarioDropped` drops, `ADDED`
+overwrite notices) SHALL be a typed diagnostic carrying a stable
+code, a human-readable message, and scope-appropriate identity:
+the target document path or capability where applicable, plus the
+requirement name and (where applicable) scenario name. Multiple
+scenario drops SHALL yield one diagnostic per dropped scenario in
+deterministic order. The text report SHALL name each diagnostic
+code with its identity, and the structured report SHALL carry the
+same codes and identity fields; the existing structured `warnings`
+string array stays as a compatibility projection of the messages.
+Document-level diagnostics (ignored `Purpose`, vacuous skips) carry
+the document path and no requirement or scenario identity.
+A `--strict` CLI flag and a strict MCP `merge` parameter SHALL
+promote every preflight diagnostic to a refusal decided during
+planning, before any target write, archive publication, or
+namespace retirement — including multi-document merges, where one
+strict refusal writes nothing. Retention and status notices
+(archives-disabled retention, LFS coverage, successions, drift and
+review-gate overrides, stale targets) are not preflight
+diagnostics and SHALL NOT trigger strict refusal. `--force` SHALL
+NOT bypass strict: when both are present, strict refusal prevails.
+Strict refusals SHALL expose the same diagnostic codes and identity
+in CLI text and in the structured MCP error, never prose alone.
+
+#### Scenario: Diagnostics carry identity in both reports
+
+- **WHEN** the delta triggers a requirement-scoped warning (e.g. an
+  already-removed `REMOVED`, or a scenario drop)
+- **THEN** the text report names the diagnostic code and the
+  requirement (and scenario, where applicable)
+- **AND** the structured report carries the same code and
+  identity fields
+
+#### Scenario: Document-level diagnostics carry the document path
+
+- **WHEN** the delta carries a `## Purpose` section the target
+  already settles differently
+- **THEN** the diagnostic carries the target document path with no
+  requirement or scenario identity
+- **AND** both the text and structured reports name that path
+
+#### Scenario: Strict promotes a non-scenario preflight warning
+
+- **WHEN** the delta removes `### Requirement: Gone` with no exact
+  target match and no near-miss variant
+- **AND** strict mode is on
+- **THEN** merge refuses during planning instead of warning
+- **AND** no target is written
+
+#### Scenario: Archives-disabled retention stays outside strict
+
+- **WHEN** the merge runs with `--strict` and `archives = false`
+- **AND** the change carries no preflight diagnostic
+- **THEN** merge materializes, emits the archives-disabled
+  retention notice, and leaves the namespace in place
+- **AND** strict does not refuse the retention notice itself
+
+#### Scenario: Force does not bypass strict
+
+- **WHEN** the merge runs with both `--force` and `--strict`
+- **AND** the delta drops a scenario as above
+- **THEN** merge refuses under strict instead of applying under
+  force
+- **AND** no target is written
+
+#### Scenario: Strict refusal exposes codes without prose parsing
+
+- **WHEN** strict mode refuses a scenario drop
+- **THEN** the CLI text names the `ScenarioDropped` code with the
+  requirement and scenario identity
+- **AND** the structured MCP error carries the same code and
+  identity fields
+
+#### Scenario: No-warning strict success merges
+
+- **WHEN** the merge runs with `--strict`
+- **AND** the delta triggers no preflight diagnostic
+- **THEN** merge applies and reports normally with no refusal
