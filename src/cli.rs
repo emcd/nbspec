@@ -83,6 +83,10 @@ pub enum Command {
         /// Overwrites merge targets that drifted since the last merge.
         #[arg(long)]
         force: bool,
+
+        /// Promotes every preflight merge diagnostic to a refusal.
+        #[arg(long)]
+        strict: bool,
     },
 
     /// Validates a change against the OpenSpec grammar and its schema.

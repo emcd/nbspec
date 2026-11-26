@@ -106,9 +106,17 @@ pub struct MergeArgs {
     /// non-file occupants. Force adopts an unmanaged surgical base
     /// only with addressable blocks. ADDED collisions against
     /// drifted text resolve delta-wins under force; hash-valid
-    /// collisions refuse regardless.
+    /// collisions refuse regardless. Force never bypasses strict.
     #[serde(default)]
     pub force: bool,
+
+    /// Promotes every preflight merge diagnostic (already-removed,
+    /// vacuous skips, ignored Purpose, ScenarioDropped drops, ADDED
+    /// overwrite notices) to a planning-time refusal before any
+    /// target write, archive publication, or namespace retirement.
+    /// Retention and status notices stay outside strict scope.
+    #[serde(default)]
+    pub strict: bool,
 }
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]

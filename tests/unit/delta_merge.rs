@@ -92,6 +92,7 @@ The system SHALL gamma.
         "home",
         None,
         false,
+        false,
     )
     .unwrap();
     assert_eq!(
@@ -135,14 +136,16 @@ The system SHALL gamma.
 ### Requirement: Beta
 ";
     let documents = vec![document("alpha", delta)];
-    let first =
-        merge_documents(&documents, &root, "add-demo", "home", None, false)
-            .unwrap();
+    let first = merge_documents(
+        &documents, &root, "add-demo", "home", None, false, false,
+    )
+    .unwrap();
     assert_eq!(first.written.len(), 1);
     let stamped = fs::read_to_string(target_of(&root, "alpha")).unwrap();
-    let second =
-        merge_documents(&documents, &root, "add-demo", "home", None, false)
-            .unwrap();
+    let second = merge_documents(
+        &documents, &root, "add-demo", "home", None, false, false,
+    )
+    .unwrap();
     assert!(second.written.is_empty(), "no rewrite on remerge");
     assert_eq!(
         second.unchanged,
@@ -188,6 +191,7 @@ The system SHALL gamma.
         "home",
         None,
         false,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
@@ -229,6 +233,7 @@ The system SHALL gamma.
         "home",
         None,
         false,
+        false,
     )
     .unwrap();
     assert_eq!(report.written.len(), 1);
@@ -265,6 +270,7 @@ Changed text.
         "home",
         None,
         true,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
@@ -298,6 +304,7 @@ fn removed_only_against_absent_target_warns_and_skips() {
         "add-demo",
         "home",
         None,
+        false,
         false,
     )
     .unwrap();
@@ -337,6 +344,7 @@ fn drifted_surgical_target_refuses_then_force_applies() {
         "home",
         None,
         false,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
@@ -353,6 +361,7 @@ fn drifted_surgical_target_refuses_then_force_applies() {
         "home",
         None,
         true,
+        false,
     )
     .unwrap();
     assert_eq!(report.written.len(), 1, "force applies onto drifted body");
@@ -383,6 +392,7 @@ fn unmanaged_parseable_target_adopts_under_force() {
         "home",
         None,
         false,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = refused else {
@@ -396,6 +406,7 @@ fn unmanaged_parseable_target_adopts_under_force() {
         "home",
         None,
         true,
+        false,
     )
     .unwrap();
     assert_eq!(
@@ -434,6 +445,7 @@ fn unmanaged_unparseable_target_refuses_even_with_force() {
         "home",
         None,
         true,
+        false,
     )
     .unwrap_err();
     let message = error.to_string();
@@ -480,6 +492,7 @@ The system SHALL beta.
         "home",
         None,
         true,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
@@ -542,6 +555,7 @@ The system SHALL gamma.
         "home",
         None,
         false,
+        false,
     )
     .unwrap();
     assert_eq!(report.written.len(), 1);
@@ -581,6 +595,7 @@ Text.
         "home",
         None,
         false,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
@@ -615,6 +630,7 @@ The system SHALL beta, restated.
         "home",
         None,
         true,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
@@ -650,6 +666,7 @@ The system SHALL beta, restated.
         "home",
         None,
         true,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
@@ -687,6 +704,7 @@ The system SHALL beta, from the delta.
         "home",
         None,
         true,
+        false,
     )
     .unwrap();
     assert_eq!(

@@ -87,9 +87,10 @@ fn merge_writes_new_documents_with_provenance() {
         render_only_document("# proposal\n"),
         document("alpha", ADDED_SPEC),
     ];
-    let report =
-        merge_documents(&documents, &root, "add-demo", "home", None, false)
-            .unwrap();
+    let report = merge_documents(
+        &documents, &root, "add-demo", "home", None, false, false,
+    )
+    .unwrap();
     assert_eq!(
         report.written,
         vec!["documentation/specifications/alpha.md".to_string()]
@@ -109,14 +110,15 @@ fn remerge_of_identical_content_is_unchanged() {
     let root = unique_temp_root("merging-idempotent");
     fs::create_dir_all(&root).unwrap();
     let documents = vec![document("alpha", ADDED_SPEC)];
-    merge_documents(&documents, &root, "add-demo", "home", None, false)
+    merge_documents(&documents, &root, "add-demo", "home", None, false, false)
         .unwrap();
     let first =
         fs::read_to_string(root.join("documentation/specifications/alpha.md"))
             .unwrap();
-    let report =
-        merge_documents(&documents, &root, "add-demo", "home", None, false)
-            .unwrap();
+    let report = merge_documents(
+        &documents, &root, "add-demo", "home", None, false, false,
+    )
+    .unwrap();
     assert!(report.written.is_empty());
     assert_eq!(
         report.unchanged,
@@ -141,6 +143,7 @@ fn hand_edited_target_refuses_and_writes_nothing() {
         "home",
         None,
         false,
+        false,
     )
     .unwrap();
     let target = root.join("documentation/specifications/alpha.md");
@@ -158,6 +161,7 @@ fn hand_edited_target_refuses_and_writes_nothing() {
         "add-demo",
         "home",
         None,
+        false,
         false,
     )
     .unwrap_err();
@@ -183,6 +187,7 @@ fn force_overwrites_drift_with_fresh_provenance() {
         "home",
         None,
         false,
+        false,
     )
     .unwrap();
     let target = root.join("documentation/specifications/alpha.md");
@@ -198,6 +203,7 @@ fn force_overwrites_drift_with_fresh_provenance() {
         "home",
         None,
         true,
+        false,
     )
     .unwrap();
     assert_eq!(report.written.len(), 1);
@@ -222,6 +228,7 @@ fn unmanaged_target_refuses_without_force() {
         "home",
         None,
         false,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
@@ -244,6 +251,7 @@ fn directory_at_target_refuses_and_writes_nothing() {
         "add-demo",
         "home",
         None,
+        false,
         false,
     )
     .unwrap_err();
@@ -268,6 +276,7 @@ fn directory_at_target_refuses_even_with_force() {
         "home",
         None,
         true,
+        false,
     )
     .unwrap_err();
     let MergeError::Refused { refusals } = error else {
@@ -301,6 +310,7 @@ fn clean_succession_proceeds_without_force() {
         "home",
         None,
         false,
+        false,
     )
     .unwrap();
     // The successor's content differs from the inherited body; what
@@ -315,6 +325,7 @@ fn clean_succession_proceeds_without_force() {
         "add-second",
         "home",
         None,
+        false,
         false,
     )
     .unwrap();
@@ -346,6 +357,7 @@ fn foreign_drifted_takeover_refuses_without_force() {
         "home",
         None,
         false,
+        false,
     )
     .unwrap();
     let target = root.join("documentation/specifications/alpha.md");
@@ -357,6 +369,7 @@ fn foreign_drifted_takeover_refuses_without_force() {
         "add-second",
         "home",
         None,
+        false,
         false,
     )
     .unwrap_err();
@@ -386,6 +399,7 @@ fn foreign_drifted_takeover_yields_to_force() {
         "home",
         None,
         false,
+        false,
     )
     .unwrap();
     let target = root.join("documentation/specifications/alpha.md");
@@ -398,6 +412,7 @@ fn foreign_drifted_takeover_yields_to_force() {
         "home",
         None,
         true,
+        false,
     )
     .unwrap();
     assert_eq!(report.written.len(), 1);
@@ -427,6 +442,7 @@ fn succession_does_not_bypass_review_gate() {
         "home",
         None,
         false,
+        false,
     )
     .unwrap();
     let error = merge_documents(
@@ -435,6 +451,7 @@ fn succession_does_not_bypass_review_gate() {
         "add-second",
         "home",
         Some("no verdict recorded for gate merge"),
+        false,
         false,
     )
     .unwrap_err();
@@ -471,6 +488,7 @@ The system SHALL alpha.
         "home",
         None,
         true,
+        false,
     )
     .unwrap_err();
     let message = error.to_string();
@@ -501,6 +519,7 @@ fn target_status_reflects_lifecycle() {
         "add-demo",
         "home",
         None,
+        false,
         false,
     )
     .unwrap();
@@ -566,6 +585,7 @@ fn review_gate_state_refuses_without_force() {
         "home",
         Some("no verdict recorded for the merge gate"),
         false,
+        false,
     )
     .unwrap_err();
     match error {
@@ -598,6 +618,7 @@ fn review_gate_force_override_is_recorded() {
         "home",
         Some("latest verdict is revise by owner"),
         true,
+        false,
     )
     .unwrap();
     assert_eq!(
@@ -621,6 +642,7 @@ fn satisfied_review_gate_leaves_no_override_marker() {
         "home",
         None,
         true,
+        false,
     )
     .unwrap();
     assert_eq!(report.review_gate_overridden, None);

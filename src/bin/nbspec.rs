@@ -118,8 +118,13 @@ async fn run_change_verb(
         Command::Render { change_id, diff } => {
             operations::render(&client, notebook, change_id, *diff).await
         },
-        Command::Merge { change_id, force } => {
-            operations::merge(&client, notebook, change_id, *force).await
+        Command::Merge {
+            change_id,
+            force,
+            strict,
+        } => {
+            operations::merge(&client, notebook, change_id, *force, *strict)
+                .await
         },
         Command::Validate { change_id } => {
             operations::validate(&client, notebook, change_id).await

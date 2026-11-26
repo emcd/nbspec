@@ -73,6 +73,7 @@ fn h1_slug_rename_leaves_stale_target_refusal() {
         "home",
         None,
         false,
+        false,
     );
     let Err(MergeError::Refused { refusals }) = result else {
         panic!("expected refusal, got {result:?}");
@@ -116,6 +117,7 @@ fn h1_slug_rename_force_override_announces_stale_target() {
         "home",
         None,
         true,
+        false,
     )
     .unwrap();
     assert_eq!(
@@ -150,6 +152,7 @@ fn stale_scan_refuses_symlinked_target_directory() {
         "home",
         None,
         false,
+        false,
     );
     let Err(MergeError::Io { path, source }) = result else {
         panic!("expected Io error for symlinked target dir, got {result:?}");
@@ -182,6 +185,7 @@ fn stale_scan_fails_closed_on_unreadable_target_directory() {
         "home",
         None,
         false,
+        false,
     );
 
     fs::set_permissions(&target_dir, fs::Permissions::from_mode(0o755))
@@ -213,6 +217,7 @@ fn stale_scan_fails_closed_on_unreadable_candidate_file() {
         "add-demo",
         "home",
         None,
+        false,
         false,
     );
 
@@ -259,6 +264,7 @@ fn stale_scan_skips_symlink_entries_inside_real_directory() {
         "home",
         None,
         false,
+        false,
     )
     .expect("symlink entries must be skipped, not followed");
     assert!(report.stale_target_overrides.is_empty());
@@ -287,6 +293,7 @@ fn merge_refuses_symlinked_ancestor_without_external_effects() {
         "add-demo",
         "home",
         None,
+        false,
         false,
     );
     assert!(
@@ -331,6 +338,7 @@ fn merge_refuses_live_target_symlink_without_external_effects() {
         "home",
         None,
         false,
+        false,
     );
     assert!(
         matches!(result, Err(MergeError::Io { .. })),
@@ -366,6 +374,7 @@ fn merge_refuses_dangling_target_symlink_without_creating_external() {
         "home",
         None,
         false,
+        false,
     );
     assert!(
         matches!(result, Err(MergeError::Io { .. })),
@@ -396,7 +405,7 @@ fn non_directory_target_parent_blocks_all_writes() {
     // the shared/other path isn't the issue. Both use specifications.
     let docs = vec![alpha, beta];
     let result =
-        merge_documents(&docs, &root, "add-demo", "home", None, false);
+        merge_documents(&docs, &root, "add-demo", "home", None, false, false);
     assert!(
         matches!(result, Err(MergeError::Io { .. })),
         "non-directory parent must fail during planning, got {result:?}"
@@ -440,6 +449,7 @@ fn non_directory_parent_blocks_even_when_earlier_target_is_clean() {
         "add-demo",
         "home",
         None,
+        false,
         false,
     );
     assert!(

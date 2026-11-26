@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 
 use thiserror::Error;
 
+pub use crate::delta_apply::MergeDiagnostic;
 use crate::delta_apply::plan_delta_merge;
 use crate::grammar::{parse_delta_specification, parse_target_blocks};
 use crate::provenance;
@@ -99,6 +100,10 @@ pub enum RefusalReason {
         source_note: String,
         new_target: String,
     },
+    /// One or more preflight diagnostics fired under `--strict`.
+    /// Strict promotes every preflight diagnostic to a planning-time
+    /// refusal before any write; `--force` never bypasses it.
+    StrictDiagnostics(Vec<MergeDiagnostic>),
 }
 
 impl std::fmt::Display for RefusalReason {
@@ -150,6 +155,20 @@ impl std::fmt::Display for RefusalReason {
                  to {new_target} (H1-derived slug changed); remove this stale \
                  file or rerun with --force to proceed"
             ),
+            RefusalReason::StrictDiagnostics(diagnostics) => {
+                let detail = diagnostics
+                    .iter()
+                    .map(|diagnostic| {
+                        format!("[{}] {}", diagnostic.code, diagnostic.message)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                write!(
+                    formatter,
+                    "strict mode refuses {count} preflight diagnostic(s): {detail} (--force does not override strict)",
+                    count = diagnostics.len(),
+                )
+            },
         }
     }
 }
@@ -273,7 +292,12 @@ pub struct MergeReport {
     /// Non-blocking merge warnings (already-removed names, ignored
     /// delta Purpose, skipped vacuous documents). Never silent: merge
     /// output prints each, and the structured report carries them.
+    /// Compatibility projection of [`MergeReport::diagnostics`]
+    /// messages; new consumers should prefer `diagnostics`.
     pub warnings: Vec<String>,
+    /// Typed preflight diagnostics with stable codes and identity.
+    /// The structured report carries these alongside `warnings`.
+    pub diagnostics: Vec<MergeDiagnostic>,
 }
 
 /// One confined inspection of a merge target: absent, a non-file
@@ -310,6 +334,8 @@ struct PlannedDoc {
     new_body: String,
     /// Non-blocking diagnostics for merge reporting.
     warnings: Vec<String>,
+    /// Typed preflight diagnostics with codes and identity.
+    diagnostics: Vec<MergeDiagnostic>,
     /// True when no effective operation remains: warn, write nothing.
     skipped: bool,
 }
@@ -329,6 +355,7 @@ fn plan_document_body(
         return Ok(PlannedDoc {
             new_body: document.content.clone(),
             warnings: Vec::new(),
+            diagnostics: Vec::new(),
             skipped: false,
         });
     }
@@ -353,11 +380,20 @@ fn plan_document_body(
         fallback,
         overwrite_collisions,
     ) {
-        Ok(applied) => Ok(PlannedDoc {
-            new_body: applied.body,
-            warnings: applied.warnings,
-            skipped: applied.skipped,
-        }),
+        Ok(applied) => {
+            let mut diagnostics = applied.diagnostics;
+            for diagnostic in &mut diagnostics {
+                if diagnostic.target.is_none() {
+                    diagnostic.target = Some(target_path.to_string());
+                }
+            }
+            Ok(PlannedDoc {
+                new_body: applied.body,
+                warnings: applied.warnings,
+                diagnostics,
+                skipped: applied.skipped,
+            })
+        },
         Err(failure) => Err(if failure.incoherent {
             RefusalReason::IncoherentDelta(failure.message)
         } else {
@@ -504,7 +540,9 @@ fn is_surgical_document(document: &RenderedDocument) -> bool {
 /// Transfers a change's durable documents to their merge targets,
 /// stamped with provenance. Plans first — collecting every refusal
 /// across every target — and writes only when the whole plan is
-/// clean, so a refused merge modifies nothing.
+/// clean, so a refused merge modifies nothing. When `strict` is set,
+/// every preflight diagnostic promotes to a planning-time refusal
+/// before any write; `--force` never bypasses that gate.
 ///
 /// # Errors
 ///
@@ -517,6 +555,7 @@ pub fn merge_documents(
     notebook: &str,
     review_gate_state: Option<&str>,
     force: bool,
+    strict: bool,
 ) -> Result<MergeReport, MergeError> {
     let mut refusals = Vec::new();
     let mut writes: Vec<(String, String)> = Vec::new();
@@ -663,7 +702,24 @@ pub fn merge_documents(
             },
         };
         if planned.skipped {
-            report.warnings.extend(planned.warnings);
+            if strict && !planned.diagnostics.is_empty() {
+                refusals.push(Refusal {
+                    target: target_path.clone(),
+                    reason: RefusalReason::StrictDiagnostics(
+                        planned.diagnostics,
+                    ),
+                });
+            } else {
+                report.warnings.extend(planned.warnings);
+                report.diagnostics.extend(planned.diagnostics);
+            }
+            continue;
+        }
+        if strict && !planned.diagnostics.is_empty() {
+            refusals.push(Refusal {
+                target: target_path.clone(),
+                reason: RefusalReason::StrictDiagnostics(planned.diagnostics),
+            });
             continue;
         }
         // Refine the clean-proceed placeholder against the planned
@@ -683,10 +739,12 @@ pub fn merge_documents(
         }
         if status == TargetStatus::Current {
             report.warnings.extend(planned.warnings);
+            report.diagnostics.extend(planned.diagnostics);
             report.unchanged.push(target_path.clone());
             continue;
         }
         report.warnings.extend(planned.warnings);
+        report.diagnostics.extend(planned.diagnostics);
         // Stamp the PLANNED body (rebuilt for surgical documents),
         // never the raw delta note.
         let stamped = provenance::stamp(
