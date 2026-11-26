@@ -13,6 +13,8 @@
 
 use std::collections::HashMap;
 
+use serde::Serialize;
+
 use crate::grammar::{
     UnpairedSide, duplicate_section_kinds, extract_purpose_section,
     find_unpaired_renames, fold_requirement_name, mask_fenced_lines,
@@ -21,12 +23,35 @@ use crate::grammar::{
 
 pub use crate::grammar::has_requirements_section;
 
+/// One typed preflight merge diagnostic: a stable code plus a
+/// human-readable message and scope-appropriate identity. The
+/// `target` (repository-relative document path) is filled by the
+/// merging layer, which knows the plan target; `delta_apply`
+/// produces diagnostics with `target: None`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct MergeDiagnostic {
+    /// Stable diagnostic code (e.g. `ScenarioDropped`).
+    pub code: String,
+    /// Human-readable message naming the affected names.
+    pub message: String,
+    /// Repository-relative merge target, when known.
+    pub target: Option<String>,
+    /// Affected requirement name, when applicable.
+    pub requirement: Option<String>,
+    /// Affected scenario name, when applicable.
+    pub scenario: Option<String>,
+}
+
 /// Outcome of planning one surgical document against its target.
 pub struct AppliedDoc {
     /// Rebuilt durable body to stamp and write (unused when skipped).
     pub body: String,
-    /// Non-blocking diagnostics for merge text + structured reporting.
+    /// Compatibility projection of [`AppliedDoc::diagnostics`]
+    /// messages: the same human-readable strings the structured
+    /// `warnings` report field has always carried.
     pub warnings: Vec<String>,
+    /// Typed preflight diagnostics with codes and identity.
+    pub diagnostics: Vec<MergeDiagnostic>,
     /// True when no effective operation remains: warn, write nothing.
     pub skipped: bool,
 }
@@ -39,6 +64,26 @@ pub struct ApplyFailure {
     pub incoherent: bool,
     /// Human-readable diagnostic naming names and lines.
     pub message: String,
+}
+
+/// Records one preflight diagnostic, keeping the `warnings` string
+/// projection in sync with the typed entry.
+fn push_diagnostic(
+    warnings: &mut Vec<String>,
+    diagnostics: &mut Vec<MergeDiagnostic>,
+    code: &str,
+    message: String,
+    requirement: Option<String>,
+    scenario: Option<String>,
+) {
+    warnings.push(message.clone());
+    diagnostics.push(MergeDiagnostic {
+        code: code.to_string(),
+        message,
+        target: None,
+        requirement,
+        scenario,
+    });
 }
 
 impl ApplyFailure {
@@ -82,12 +127,21 @@ pub fn plan_delta_merge(
         && delta.renamed.is_empty()
         && added_names.is_empty()
     {
+        let message = format!(
+            "no effective operation remains ({} REMOVED requirement(s) against an absent target); skipping without creating a target",
+            delta.removed.len()
+        );
+        let diagnostic = MergeDiagnostic {
+            code: "VacuousSkip".to_string(),
+            message: message.clone(),
+            target: None,
+            requirement: None,
+            scenario: None,
+        };
         return Ok(AppliedDoc {
             body: String::new(),
-            warnings: vec![format!(
-                "no effective operation remains ({} REMOVED requirement(s) against an absent target); skipping without creating a target",
-                delta.removed.len()
-            )],
+            warnings: vec![message],
+            diagnostics: vec![diagnostic],
             skipped: true,
         });
     }
@@ -102,16 +156,24 @@ pub fn plan_delta_merge(
     }
 
     let mut warnings = Vec::new();
+    let mut diagnostics = Vec::new();
     if target_body.is_none() {
-        if !delta.removed.is_empty() {
-            let names = delta.removed.join(", ");
-            warnings.push(format!(
-                "REMOVED requirement(s) ignored for a new document (nothing to remove): {names}"
-            ));
+        for name in &delta.removed {
+            push_diagnostic(
+                &mut warnings,
+                &mut diagnostics,
+                "AlreadyRemoved",
+                format!(
+                    "REMOVED requirement \"{name}\" ignored for a new document (nothing to remove)"
+                ),
+                Some(name.clone()),
+                None,
+            );
         }
         return Ok(AppliedDoc {
             body: build_new_document(delta_content, &delta, title_fallback),
             warnings,
+            diagnostics,
             skipped: false,
         });
     }
@@ -121,6 +183,7 @@ pub fn plan_delta_merge(
         &delta,
         target,
         &mut warnings,
+        &mut diagnostics,
         overwrite_collisions,
     )
 }
@@ -348,13 +411,15 @@ fn build_new_document(
 /// Applies a pre-validated delta onto an existing target body:
 /// `RENAMED → REMOVED → MODIFIED → ADDED` against the target block
 /// map with exact-name matching, then recomposes preserving title,
-/// prose, and order. Collects non-blocking warnings into `warnings`.
+/// prose, and order. Collects non-blocking diagnostics into
+/// `warnings` (compatibility strings) and `diagnostics` (typed).
 #[allow(clippy::too_many_lines)]
 fn apply_onto_existing(
     delta_content: &str,
     delta: &crate::grammar::DeltaSpecification,
     target: &str,
     warnings: &mut Vec<String>,
+    diagnostics: &mut Vec<MergeDiagnostic>,
     overwrite_collisions: bool,
 ) -> Result<AppliedDoc, ApplyFailure> {
     let blocks = parse_target_blocks(target);
@@ -504,9 +569,16 @@ fn apply_onto_existing(
             if let Some(near) = near_miss(&by_name, &order, name, None) {
                 return Err(typo_error("REMOVED", name, &near));
             }
-            warnings.push(format!(
-                "REMOVED requirement \"{name}\" is not in the current target; treating it as already removed"
-            ));
+            push_diagnostic(
+                warnings,
+                diagnostics,
+                "AlreadyRemoved",
+                format!(
+                    "REMOVED requirement \"{name}\" is not in the current target; treating it as already removed"
+                ),
+                Some(name.clone()),
+                None,
+            );
         }
     }
 
@@ -534,16 +606,18 @@ fn apply_onto_existing(
                     .any(|updated| updated.name == **scenario)
             })
             .collect();
-        if !missing.is_empty() {
-            return Err(ApplyFailure::dangling(format!(
-                "MODIFIED failed for \"### Requirement: {}\": current target contains scenario(s) not present in the modified block: {}. Refresh the delta note before merging to avoid dropping scenarios",
-                modified.name,
-                missing
-                    .iter()
-                    .map(|scenario| format!("\"{scenario}\""))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )));
+        for scenario in &missing {
+            push_diagnostic(
+                warnings,
+                diagnostics,
+                "ScenarioDropped",
+                format!(
+                    "MODIFIED drops scenario \"{scenario}\" from \"### Requirement: {}\"; applying the drop",
+                    modified.name
+                ),
+                Some(modified.name.clone()),
+                Some((*scenario).to_string()),
+            );
         }
         if current.raw.trim_end() != modified.raw.trim_end() {
             let block = &blocks[slot];
@@ -565,10 +639,17 @@ fn apply_onto_existing(
             }
             if overwrite_collisions {
                 let block = &blocks[slot];
-                warnings.push(format!(
-                    "ADDED collision for \"### Requirement: {}\" resolved by overwrite under --force",
-                    added.name
-                ));
+                push_diagnostic(
+                    warnings,
+                    diagnostics,
+                    "OverwriteCollision",
+                    format!(
+                        "ADDED collision for \"### Requirement: {}\" resolved by overwrite under --force",
+                        added.name
+                    ),
+                    Some(added.name.clone()),
+                    None,
+                );
                 span_edits.push((
                     block.start_line,
                     SpanEdit::Replace(
@@ -592,13 +673,23 @@ fn apply_onto_existing(
     if let Some(delta_purpose) = extract_purpose_section(delta_content) {
         match extract_purpose_section(target) {
             Some(target_purpose) if target_purpose == delta_purpose => {}
-            Some(_) => warnings.push(
+            Some(_) => push_diagnostic(
+                warnings,
+                diagnostics,
+                "IgnoredPurpose",
                 "delta Purpose ignored; the target already has one (edit the target directly to change it)"
                     .to_string(),
+                None,
+                None,
             ),
-            None => warnings.push(
+            None => push_diagnostic(
+                warnings,
+                diagnostics,
+                "IgnoredPurpose",
                 "delta Purpose ignored; the target has none (edit the target directly to add one)"
                     .to_string(),
+                None,
+                None,
             ),
         }
     }
@@ -606,6 +697,7 @@ fn apply_onto_existing(
     Ok(AppliedDoc {
         body: recompose(target, span_edits, appended),
         warnings: std::mem::take(warnings),
+        diagnostics: std::mem::take(diagnostics),
         skipped: false,
     })
 }

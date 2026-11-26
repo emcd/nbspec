@@ -12,3 +12,5 @@ mod mcp_client;
 mod mcp_lifecycle;
 #[cfg(all(unix, feature = "live-nb"))]
 mod retirement;
+#[cfg(all(unix, feature = "live-nb"))]
+mod strict_lifecycle;

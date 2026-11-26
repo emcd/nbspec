@@ -33,8 +33,62 @@ pub fn operation_result(
         Err(OperationError::ImportFailed { outcome, .. }) => {
             Ok(outcome_to_result(*outcome, true))
         },
+        Err(
+            error @ OperationError::Merge(
+                crate::merging::MergeError::Refused { .. },
+            ),
+        ) if strict_diagnostics(&error).is_some() => {
+            let diagnostics = strict_diagnostics(&error).unwrap_or_default();
+            Ok(strict_refusal_result(error.to_string(), diagnostics))
+        },
         Err(error) => Ok(tool_error(error.to_string())),
     }
+}
+
+/// Extracts strict preflight diagnostics from a merge refusal,
+/// collecting every strict entry even alongside legacy reasons
+/// (drift, non-file, review gate) from other targets. Returns `None`
+/// only when no refusal entry carries strict diagnostics, preserving
+/// the legacy text-only error shape for non-strict failures.
+fn strict_diagnostics(error: &OperationError) -> Option<Vec<Value>> {
+    let OperationError::Merge(crate::merging::MergeError::Refused {
+        refusals,
+    }) = error
+    else {
+        return None;
+    };
+    let mut collected = Vec::new();
+    for refusal in refusals {
+        let crate::merging::RefusalReason::StrictDiagnostics(diagnostics) =
+            &refusal.reason
+        else {
+            continue;
+        };
+        for diagnostic in diagnostics {
+            collected
+                .push(serde_json::to_value(diagnostic).unwrap_or(Value::Null));
+        }
+    }
+    if collected.is_empty() {
+        None
+    } else {
+        Some(collected)
+    }
+}
+
+/// Wraps a strict refusal as a tool-level error carrying both the
+/// conventional failure text (which names each diagnostic code with
+/// its identity) and a structured `diagnostics` array serialized
+/// verbatim from each [`MergeDiagnostic`].
+///
+/// [`MergeDiagnostic`]: crate::merging::MergeDiagnostic
+fn strict_refusal_result(
+    message: String,
+    diagnostics: Vec<Value>,
+) -> CallToolResult {
+    let mut structured = Map::new();
+    structured.insert("diagnostics".to_string(), Value::Array(diagnostics));
+    text_and_structured(message, structured, true)
 }
 
 /// Maps a `validate` operation outcome, returning text + structured

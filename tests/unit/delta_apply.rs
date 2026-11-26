@@ -159,7 +159,7 @@ New text.
 }
 
 #[test]
-fn modified_dropping_scenario_refuses() {
+fn modified_dropping_scenario_warns_and_applies() {
     let delta = "\
 # alpha
 
@@ -168,10 +168,34 @@ fn modified_dropping_scenario_refuses() {
 ### Requirement: Alpha
 The system SHALL alpha loudly.
 ";
-    let message = plan(delta, Some(TARGET)).unwrap_err();
+    let applied =
+        plan_delta_merge(delta, Some(TARGET), "alpha", false).unwrap();
     assert!(
-        message.contains("Alphas"),
-        "names the dropped scenario: {message}"
+        !applied.body.contains("#### Scenario: Alphas"),
+        "dropped scenario gone: {}",
+        applied.body
+    );
+    assert!(
+        applied.body.contains("alpha loudly"),
+        "modified text applied: {}",
+        applied.body
+    );
+    assert_eq!(
+        applied.diagnostics.len(),
+        1,
+        "one diagnostic per dropped scenario"
+    );
+    let diagnostic = &applied.diagnostics[0];
+    assert_eq!(diagnostic.code, "ScenarioDropped");
+    assert_eq!(diagnostic.requirement.as_deref(), Some("Alpha"));
+    assert_eq!(diagnostic.scenario.as_deref(), Some("Alphas"));
+    assert!(
+        diagnostic.message.contains("Alphas"),
+        "message names the dropped scenario"
+    );
+    assert!(
+        applied.warnings.iter().any(|w| w.contains("Alphas")),
+        "compatibility warnings carry the name"
     );
 }
 

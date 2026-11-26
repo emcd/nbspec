@@ -18,6 +18,7 @@ mod rendering;
 mod retirement;
 mod reviews;
 mod schemata;
+mod strict_merge;
 #[cfg(all(unix, feature = "live-nb"))]
 mod transaction_atomicity;
 mod validation;

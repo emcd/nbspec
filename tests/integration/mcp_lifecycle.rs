@@ -768,3 +768,222 @@ async fn mcp_import_dry_run_delete_original_exercises_real_pending_deletions_fil
         "dry-run must not write the archive"
     );
 }
+
+/// Strict MCP merge refusal carries typed diagnostics in both
+/// channels: the text names the ScenarioDropped code with identity,
+/// and structuredContent carries the same codes without prose
+/// parsing.
+#[tokio::test]
+async fn mcp_strict_merge_refusal_carries_typed_diagnostics() {
+    let fixture = Fixture::new();
+    let mut harness = McpHarness::spawn(&fixture).await;
+    harness
+        .call_tool(
+            "create",
+            json!({"change_id": CHANGE_ID, "title": "Demo"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let dir = fixture.notebook_path().join("proposals").join(CHANGE_ID);
+    let mut proposal =
+        std::fs::read_to_string(dir.join("proposal.md")).unwrap();
+    proposal.push_str("\n## Why\n\nProve strict diagnostics.\n");
+    std::fs::write(dir.join("proposal.md"), proposal).unwrap();
+    // ADDED applies cleanly but the REMOVED Ghost warns; strict
+    // promotes that preflight warning to a refusal.
+    std::fs::write(
+        dir.join("specifications/user-auth.md"),
+        "# user-auth\n\n## ADDED Requirements\n\n### Requirement: New\nText.\n\n#### Scenario: S\n- **WHEN** x\n- **THEN** y\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n",
+    )
+    .unwrap();
+    super::lifecycle::commit_notebook(&fixture);
+    harness
+        .call_tool(
+            "review",
+            json!({"change_id": CHANGE_ID, "verdict": "approve", "reviewer": "itest"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let refused = harness
+        .call_tool(
+            "merge",
+            json!({"change_id": CHANGE_ID, "strict": true})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let result = assert_tool_error(&refused);
+    let text = first_text(result);
+    assert!(
+        text.contains("AlreadyRemoved") && text.contains("Ghost"),
+        "error text names code and identity: {text}"
+    );
+    let structured = result
+        .get("structuredContent")
+        .expect("structuredContent on strict refusal");
+    let diagnostics = structured["diagnostics"]
+        .as_array()
+        .expect("diagnostics array");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["code"], json!("AlreadyRemoved"));
+    assert!(
+        diagnostics[0]["message"]
+            .as_str()
+            .expect("message")
+            .contains("Ghost"),
+        "diagnostic message names the requirement"
+    );
+    // Non-strict merge of the same change warns and applies with the
+    // same code in the success structured payload.
+    let merged = harness
+        .call_tool(
+            "merge",
+            json!({"change_id": CHANGE_ID})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let ok = assert_success(&merged);
+    let ok_text = first_text(ok);
+    assert!(
+        ok_text.contains("AlreadyRemoved"),
+        "success text names the code: {ok_text}"
+    );
+    let ok_structured = ok
+        .get("structuredContent")
+        .expect("structuredContent on success");
+    let ok_diagnostics = ok_structured["diagnostics"]
+        .as_array()
+        .expect("diagnostics array");
+    assert!(
+        ok_diagnostics
+            .iter()
+            .any(|d| d["code"] == json!("AlreadyRemoved")),
+        "success diagnostics carry the code"
+    );
+    // Compatibility: the legacy warnings string array stays populated.
+    let warnings = ok_structured["warnings"]
+        .as_array()
+        .expect("warnings array");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.as_str().is_some_and(|s| s.contains("Ghost"))),
+        "warnings projection kept"
+    );
+}
+
+/// Mixed strict refusal: one target fires a preflight diagnostic
+/// while another is blocked by a non-file occupant. The MCP error
+/// must still carry the strict diagnostics (not fall back to
+/// text-only), and neither target, the archive, nor the namespace
+/// may change.
+#[tokio::test]
+async fn mcp_mixed_strict_refusal_keeps_diagnostics_and_writes_nothing() {
+    let fixture = Fixture::new();
+    let mut harness = McpHarness::spawn(&fixture).await;
+    harness
+        .call_tool(
+            "create",
+            json!({"change_id": CHANGE_ID, "title": "Demo"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let dir = fixture.notebook_path().join("proposals").join(CHANGE_ID);
+    let mut proposal =
+        std::fs::read_to_string(dir.join("proposal.md")).unwrap();
+    proposal.push_str("\n## Why\n\nProve mixed strict refusal.\n");
+    std::fs::write(dir.join("proposal.md"), proposal).unwrap();
+    std::fs::write(
+        dir.join("specifications/user-auth.md"),
+        "# user-auth\n\n## ADDED Requirements\n\n### Requirement: New\nText.\n\n## REMOVED Requirements\n\n### Requirement: Ghost\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("specifications/blocked.md"),
+        "# blocked\n\n## ADDED Requirements\n\n### Requirement: Fresh\nText.\n",
+    )
+    .unwrap();
+    // Occupy the blocked target with a directory (non-file).
+    let blocked_target = fixture
+        .project_root()
+        .join("documentation/specifications/blocked.md");
+    std::fs::create_dir_all(&blocked_target).unwrap();
+    super::lifecycle::commit_notebook(&fixture);
+    harness
+        .call_tool(
+            "review",
+            json!({"change_id": CHANGE_ID, "verdict": "approve", "reviewer": "itest"})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let refused = harness
+        .call_tool(
+            "merge",
+            json!({"change_id": CHANGE_ID, "strict": true})
+                .as_object()
+                .cloned()
+                .expect("args"),
+        )
+        .await;
+    let result = assert_tool_error(&refused);
+    let text = first_text(result);
+    assert!(
+        text.contains("AlreadyRemoved") && text.contains("Ghost"),
+        "error text keeps strict identity alongside legacy: {text}"
+    );
+    let structured = result
+        .get("structuredContent")
+        .expect("structuredContent on mixed refusal");
+    let diagnostics = structured["diagnostics"]
+        .as_array()
+        .expect("diagnostics array");
+    assert!(
+        diagnostics
+            .iter()
+            .any(|d| d["code"] == json!("AlreadyRemoved")),
+        "strict diagnostics survive the mixed refusal: {diagnostics:?}"
+    );
+    // Neither target changed: user-auth unwritten, blocked still a dir.
+    assert!(
+        !fixture
+            .project_root()
+            .join("documentation/specifications/user-auth.md")
+            .exists(),
+        "strict target unwritten"
+    );
+    assert!(
+        fixture
+            .project_root()
+            .join("documentation/specifications/blocked.md")
+            .is_dir(),
+        "non-file occupant untouched"
+    );
+    // No archive published, namespace retained.
+    assert!(
+        !fixture
+            .project_root()
+            .join("documentation/archives")
+            .join(format!("{CHANGE_ID}.tar.zst"))
+            .exists(),
+        "no archive on refusal"
+    );
+    assert!(
+        fixture
+            .notebook_path()
+            .join("proposals")
+            .join(CHANGE_ID)
+            .exists(),
+        "namespace retained on refusal"
+    );
+}

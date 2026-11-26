@@ -68,6 +68,7 @@ pub async fn merge(
     notebook: Option<&str>,
     change_id: &str,
     force: bool,
+    strict: bool,
 ) -> OperationResult {
     validate_change_id(change_id)?;
     let notebook_name = resolve_notebook_name(notebook)?;
@@ -83,7 +84,7 @@ pub async fn merge(
         let context = load_change_context(client, notebook, change_id).await?;
         refuse_dead_status(read_metadata(&context.change_directory)?.status)?;
         let (mut output, mut structured) =
-            materialize(&context, change_id, force, None)?;
+            materialize(&context, change_id, force, strict, None)?;
         let retention_warning = "warning: archives disabled; the namespace is left in place as \
             the only record; retirement skipped\n";
         output.push_str(retention_warning);
@@ -181,6 +182,7 @@ pub async fn merge(
                     "written": [],
                     "unchanged": [],
                     "warnings": [],
+                    "diagnostics": [],
                 }),
             ));
         }
@@ -196,7 +198,7 @@ pub async fn merge(
     }
 
     let (mut output, mut structured) =
-        materialize(&context, change_id, force, Some(&snapshot))?;
+        materialize(&context, change_id, force, strict, Some(&snapshot))?;
 
     // Private test seam for the deterministic post-materialization
     // drift regression. Compiled ONLY with the non-default
@@ -324,6 +326,7 @@ fn materialize(
     context: &ChangeContext,
     change_id: &str,
     force: bool,
+    strict: bool,
     snapshot: Option<&NamespaceSnapshot>,
 ) -> Result<(String, Value), OperationError> {
     if let Some(snapshot) = snapshot {
@@ -359,6 +362,7 @@ fn materialize(
         &context.notebook_name,
         review_gate_state.as_deref(),
         force,
+        strict,
     )?;
 
     let mut output = String::new();
@@ -385,8 +389,21 @@ fn materialize(
             previous = succession.previous_owner,
         ));
     }
-    for warning in &report.warnings {
-        output.push_str(&format!("warning: {warning}\n"));
+    for diagnostic in &report.diagnostics {
+        let mut identity = String::new();
+        if let Some(target) = &diagnostic.target {
+            identity.push_str(&format!(" target={target}"));
+        }
+        if let Some(requirement) = &diagnostic.requirement {
+            identity.push_str(&format!(" requirement=\"{requirement}\""));
+        }
+        if let Some(scenario) = &diagnostic.scenario {
+            identity.push_str(&format!(" scenario=\"{scenario}\""));
+        }
+        output.push_str(&format!(
+            "warning: [{}]{identity} {}\n",
+            diagnostic.code, diagnostic.message
+        ));
     }
     for path in &report.written {
         output.push_str(&format!("wrote {path}\n"));
@@ -417,6 +434,19 @@ fn materialize(
             })
         })
         .collect();
+    let diagnostics: Vec<Value> = report
+        .diagnostics
+        .iter()
+        .map(|diagnostic| {
+            json!({
+                "code": diagnostic.code,
+                "message": diagnostic.message,
+                "target": diagnostic.target,
+                "requirement": diagnostic.requirement,
+                "scenario": diagnostic.scenario,
+            })
+        })
+        .collect();
     let structured = json!({
         "change_id": change_id,
         "written": report.written,
@@ -426,6 +456,7 @@ fn materialize(
         "drift_overrides": drift_overrides,
         "stale_target_overrides": report.stale_target_overrides,
         "warnings": report.warnings,
+        "diagnostics": diagnostics,
         "retired": false,
         "already_merged": false,
         "archived": Value::Null,
@@ -639,6 +670,7 @@ fn already_merged(
             "written": [],
             "unchanged": [],
             "warnings": [],
+            "diagnostics": [],
         }),
     )
 }

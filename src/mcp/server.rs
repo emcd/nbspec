@@ -270,7 +270,7 @@ impl McpServer {
     }
 
     /// Transfers a change's durable artifacts into the repository
-    /// (CLI: `nbspec merge [--force]`). This is the only nbspec
+    /// (CLI: `nbspec merge [--force] [--strict]`). This is the only nbspec
     /// operation that writes to the repository.
     #[tool(
         name = "merge",
@@ -290,9 +290,14 @@ impl McpServer {
                        unmanaged surgical base only with addressable \
                        blocks. ADDED collisions against drifted text \
                        resolve delta-wins under force; hash-valid \
-                       collisions refuse regardless. A successful merge \
-                       with archiving enabled retires the namespace: \
-                       the verified tarball is published, then \
+                       collisions refuse regardless. strict=true promotes \
+                       every preflight diagnostic (already-removed, vacuous, \
+                       ignored Purpose, ScenarioDropped, overwrite notices) \
+                       to a planning-time refusal before any write, archive, \
+                       or retirement; force never bypasses strict; retention \
+                       and status notices stay outside strict scope. A \
+                       successful merge with archiving enabled retires the \
+                       namespace: the verified tarball is published, then \
                        proposals/<id> is deleted (re-merge reports \
                        already-merged); with archives=false the \
                        namespace is retained with a warning. \
@@ -307,6 +312,7 @@ impl McpServer {
             Some(&self.context.notebook),
             &args.change_id,
             args.force,
+            args.strict,
         )
         .await;
         operation_result(output)
